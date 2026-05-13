@@ -12,7 +12,7 @@
   "sms_url": "https://api.tililtech.com/sms/v3/sendsms",
   "sms_api_key": "PeiEHh69f28wMvbQL7ykNunDGpOI1rRxqoCYK3mazX0tUjABWTSJ5l4dcsFgVZ",
   "notification_url": "",
-  "token_expires": "40200",
+  "token_expires": "40000",
   "jwt_secret": "MDIzIDE2OjUwOjQ1IEdNVCswMzAwIChFYXN0IEFmcmljYSBUaW1lKSIsInVzZXJJZCI6MTIsImlhdCI6MTY6Nz",
   "algorithm": "HS256",
   "expires_in": "360m"
