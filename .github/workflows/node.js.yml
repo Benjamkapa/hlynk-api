@@ -17,13 +17,28 @@ jobs:
     strategy:
       matrix:
         node-version: [24.x]
-        # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
 
     steps:
     - uses: actions/checkout@v5
+
     - name: Use Node.js ${{ matrix.node-version }}
       uses: actions/setup-node@v5
       with:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
-    - run: npm install
+
+    - name: Install dependencies
+      run: npm install
+
+    # - name: Build
+    #   run: npm run build --if-present
+
+    # - name: Install PM2 globally (if not installed)
+    #   run: npm list -g pm2 || npm install -g pm2
+
+    - name: Start or Restart app with PM2
+      # run: pm2 startOrRestart ecosystem.config.js --env production || pm2 start ecosystem.config.js --env production
+      run: pm2 startOrRestart hlynk-server --update-env
+
+    - name: Save PM2 process list
+      run: pm2 save
