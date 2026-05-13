@@ -1,0 +1,97 @@
+import { db } from '../dbms/mysql.js';
+import bcrypt from 'bcryptjs';
+import { ulid } from 'ulid';
+
+export const getStaff = async (req, res) => {
+  const { tenantId } = req.user;
+  try {
+    const [staff] = await db.query(`
+      SELECT u.id, u.name, u.email, u.phone, u.role, u.permissions, u.commissionType, u.commissionRate, u.baseSalary, u.isActive, u.createdAt, u.photoUrl,
+      SUM(s.totalAmount) as totalSales, COUNT(s.id) as salesCount
+      FROM User u
+      LEFT JOIN Sale s ON u.id = s.userId
+      WHERE u.tenantId = ? AND u.role = 'STAFF'
+      GROUP BY u.id
+    `, [tenantId]);
+
+    const formatted = staff.map((s) => ({
+      ...s,
+      permissions: typeof s.permissions === 'string' ? JSON.parse(s.permissions) : (s.permissions || [])
+    }));
+
+    return res.json({ success: true, data: formatted });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to fetch staff' });
+  }
+};
+
+export const createStaff = async (req, res) => {
+  const { tenantId } = req.user;
+  const { name, phone, email, password, permissions, commissionType, commissionRate, baseSalary } = req.body;
+
+  try {
+    const [existing] = await db.query(`SELECT id FROM User WHERE phone = ? OR (email IS NOT NULL AND email = ?) LIMIT 1`, [phone, email || '']);
+    if (existing.length > 0) return res.status(409).json({ success: false, message: 'Phone or email already registered' });
+
+    const [subs] = await db.query(`SELECT planName FROM Subscription WHERE tenantId = ? LIMIT 1`, [tenantId]);
+    const plan = subs[0]?.planName || 'LITE';
+    
+    const [staffCountRes] = await db.query(`SELECT COUNT(*) as total FROM User WHERE tenantId = ? AND role = 'STAFF'`, [tenantId]);
+    const currentCount = Number(staffCountRes[0]?.total || 0);
+
+    const limits = { 'LITE': 3, 'PLUS': 15, 'MAX': 999999 };
+    const limit = limits[plan] || 3;
+
+    if (currentCount >= limit) {
+      return res.status(403).json({ success: false, message: `Your ${plan} plan is limited to ${limit} team members.` });
+    }
+
+    const passwordHash = await bcrypt.hash(password || ulid(), 10);
+    const id = ulid();
+
+    await db.query(`
+      INSERT INTO User (id, tenantId, name, phone, email, passwordHash, role, permissions, commissionType, commissionRate, baseSalary, phoneVerified, isActive, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, 'STAFF', ?, ?, ?, ?, 1, 1, NOW(), NOW())
+    `, [id, tenantId, name, phone, email || null, passwordHash, JSON.stringify(permissions || []), commissionType || 'NONE', parseFloat(commissionRate) || 0, parseFloat(baseSalary) || 0]);
+
+    return res.json({ success: true, data: { staffId: id } });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+export const updateStaff = async (req, res) => {
+  const { tenantId } = req.user;
+  const { staffId } = req.params;
+  const data = req.body;
+
+  try {
+    let updateQuery = 'UPDATE User SET updatedAt = NOW()';
+    const updateParams = [];
+
+    if (data.name !== undefined) { updateQuery += ', name = ?'; updateParams.push(data.name); }
+    if (data.email !== undefined) { updateQuery += ', email = ?'; updateParams.push(data.email); }
+    if (data.phone !== undefined) { updateQuery += ', phone = ?'; updateParams.push(data.phone); }
+    if (data.permissions !== undefined) { updateQuery += ', permissions = ?'; updateParams.push(JSON.stringify(data.permissions)); }
+    if (data.isActive !== undefined) { updateQuery += ', isActive = ?'; updateParams.push(data.isActive ? 1 : 0); }
+
+    updateQuery += ' WHERE id = ? AND tenantId = ?';
+    updateParams.push(staffId, tenantId);
+
+    await db.query(updateQuery, updateParams);
+    return res.json({ success: true, data: { staffId } });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+export const deleteStaff = async (req, res) => {
+  const { tenantId } = req.user;
+  const { staffId } = req.params;
+  try {
+    await db.query(`DELETE FROM User WHERE id = ? AND tenantId = ?`, [staffId, tenantId]);
+    return res.json({ success: true, data: { message: 'Staff deleted' } });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Delete failed' });
+  }
+};

@@ -1,0 +1,19 @@
+{
+  "port": 3000,
+  "file_path": "/var/log/hlynk/",
+  "b2c_url": "https://api.safaricom.co.ke/mpesa/b2c/v1/paymentrequest",
+  "auth_url": "https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
+  "stkpush_url": "https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
+  "c2b_url": "https://api.safaricom.co.ke/mpesa/c2b/v1/simulate",
+  "c2b_register": "https://api.safaricom.co.ke/mpesa/c2b/v1/registerurl",
+  "env": "PROD",
+  "sms_service_id": "0",
+  "sms_response_type": "json",
+  "sms_url": "https://api.tililtech.com/sms/v3/sendsms",
+  "sms_api_key": "PeiEHh69f28wMvbQL7ykNunDGpOI1rRxqoCYK3mazX0tUjABWTSJ5l4dcsFgVZ",
+  "notification_url": "",
+  "token_expires": "43200",
+  "jwt_secret": "MDIzIDE2OjUwOjQ1IEdNVCswMzAwIChFYXN0IEFmcmljYSBUaW1lKSIsInVzZXJJZCI6MTIsImlhdCI6MTY6Nz",
+  "algorithm": "HS256",
+  "expires_in": "360m"
+}
