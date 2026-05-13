@@ -1,0 +1,171 @@
+import { db } from '../dbms/mysql.js';
+import { redis } from '../utils/redis.js';
+import jwt from 'jsonwebtoken';
+import { ulid } from 'ulid';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const params = JSON.parse(fs.readFileSync(path.join(__dirname, '../configs/params.json'), 'utf8'));
+
+const JWT_SECRET = params.jwt_secret || 'default_secret';
+const JWT_EXPIRES_IN = params.expires_in || '360m';
+
+const slugify = (name) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+async function uniqueSlug(base) {
+  let slug = slugify(base);
+  let [rows] = await db.query(`SELECT slug FROM Tenant WHERE slug = ?`, [slug]);
+  let exists = rows.length > 0;
+  let i = 1;
+  while (exists) {
+    slug = `${slugify(base)}-${i++}`;
+    [rows] = await db.query(`SELECT slug FROM Tenant WHERE slug = ?`, [slug]);
+    exists = rows.length > 0;
+  }
+  return slug;
+}
+
+const issueTokens = async (user, userAgent = 'Unknown', ipAddress = 'Unknown') => {
+  const sessionId = ulid();
+  const payload = { userId: user.id, tenantId: user.tenantId, role: user.role, sessionId };
+  
+  const accessToken = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+  const refreshToken = jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' });
+
+  await db.query(
+    `INSERT INTO Session (id, userId, token, userAgent, ipAddress, isActive, createdAt, lastActive) VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())`,
+    [sessionId, user.id, refreshToken, userAgent, ipAddress]
+  );
+
+  return { accessToken, refreshToken };
+};
+
+export const googleAuth = async (req, res) => {
+  const { credential, registration } = req.body;
+  const ipAddress = req.ip;
+  const userAgent = req.get('user-agent');
+
+  try {
+    const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${credential}`);
+    if (!response.ok) return res.status(400).json({ success: false, message: 'Invalid Google credential' });
+    
+    const payload = await response.json();
+    const email = payload.email;
+
+    const [userRows] = await db.query(`
+      SELECT u.*, t.isActive as tenantIsActive, t.slug as tenantSlug, t.businessName, s.planName
+      FROM User u
+      JOIN Tenant t ON u.tenantId = t.id
+      LEFT JOIN Subscription s ON s.tenantId = t.id
+      WHERE u.email = ?
+    `, [email]);
+
+    let user = userRows[0];
+
+    if (!user) {
+      if (!registration) {
+        return res.json({ 
+          success: true,
+          data: {
+            action: 'REQUIRES_REGISTRATION', 
+            googleDetails: { email, name: payload.name, picture: payload.picture, credential } 
+          }
+        });
+      }
+
+      // Registration logic
+      const tenantId = ulid();
+      const userId = ulid();
+      const slug = await uniqueSlug(registration.businessName);
+
+      const connection = await db.getConnection();
+      try {
+        await connection.beginTransaction();
+        await connection.query(`INSERT INTO Tenant (id, slug, businessName, isActive, createdAt, updatedAt) VALUES (?, ?, ?, 1, NOW(), NOW())`, [tenantId, slug, registration.businessName]);
+        await connection.query(`INSERT INTO User (id, tenantId, name, phone, email, role, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 'PROVIDER', 1, NOW(), NOW())`, [userId, tenantId, registration.ownerName || payload.name, registration.phone, email]);
+        await connection.query(`INSERT INTO Provider (id, tenantId, userId, businessName, phone, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())`, [ulid(), tenantId, userId, registration.businessName, registration.phone]);
+        await connection.query(`INSERT INTO Subscription (id, tenantId, planName, status, trialEndDate, createdAt, updatedAt) VALUES (?, ?, 'MAX', 'TRIAL', DATE_ADD(NOW(), INTERVAL 7 DAY), NOW(), NOW())`, [ulid(), tenantId]);
+        await connection.commit();
+        
+        user = { id: userId, tenantId, role: 'PROVIDER', tenantIsActive: 1 };
+      } catch (err) {
+        await connection.rollback();
+        throw err;
+      } finally {
+        connection.release();
+      }
+    }
+
+    if (user.isActive === 0 || !user.tenantIsActive) return res.status(403).json({ success: false, message: 'Account inactive' });
+
+    const { accessToken, refreshToken } = await issueTokens(user, userAgent, ipAddress);
+    return res.json({ 
+      success: true, 
+      data: { accessToken, refreshToken, user } 
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+export const logout = async (req, res) => {
+  const { sessionId } = req.user;
+  try {
+    await db.query(`UPDATE Session SET isActive = 0 WHERE id = ?`, [sessionId]);
+    return res.json({ success: true, data: { message: 'Logged out' } });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Logout failed' });
+  }
+};
+
+export const me = async (req, res) => {
+  const { userId } = req.user;
+  try {
+    const [rows] = await db.query(`
+      SELECT 
+        u.id, u.name, u.phone, u.email, u.role, u.photoUrl, u.permissions,
+        t.id as tenantId, t.slug as tenantSlug, t.businessName,
+        s.planName, s.status, s.trialEndDate
+      FROM User u
+      JOIN Tenant t ON u.tenantId = t.id
+      LEFT JOIN Subscription s ON s.tenantId = t.id
+      WHERE u.id = ?
+    `, [userId]);
+
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    const user = rows[0];
+    return res.json({
+      success: true,
+      data: {
+        ...user,
+        subscription: {
+          planName: user.planName,
+          status: user.status,
+          trialEndDate: user.trialEndDate
+        },
+        permissions: typeof user.permissions === 'string' ? JSON.parse(user.permissions) : user.permissions || []
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+export const refresh = async (req, res) => {
+  const { refreshToken } = req.body;
+  try {
+    const decoded = jwt.verify(refreshToken, JWT_SECRET);
+    const [sessions] = await db.query(`SELECT * FROM Session WHERE id = ? AND isActive = 1 AND token = ?`, [decoded.sessionId, refreshToken]);
+    if (sessions.length === 0) throw new Error('Invalid session');
+
+    const accessToken = jwt.sign({ userId: decoded.userId, tenantId: decoded.tenantId, role: decoded.role, sessionId: decoded.sessionId }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+    return res.json({ success: true, data: { accessToken } });
+  } catch (err) {
+    return res.status(401).json({ success: false, message: 'Invalid refresh token' });
+  }
+};

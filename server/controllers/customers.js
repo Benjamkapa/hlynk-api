@@ -1,0 +1,68 @@
+import { db } from '../dbms/mysql.js';
+import { ulid } from 'ulid';
+
+export const listCustomers = async (req, res) => {
+  const { tenantId } = req.user;
+  const { search, page = 1, limit = 50, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+
+  try {
+    let whereClause = `
+      WHERE u.role = 'CUSTOMER' 
+      AND (u.tenantId = ? OR EXISTS (SELECT 1 FROM Sale s WHERE s.customerId = u.id AND s.tenantId = ?))
+    `;
+    const queryParams = [tenantId, tenantId];
+
+    if (search) {
+      whereClause += ` AND (u.name LIKE ? OR u.phone LIKE ? OR u.email LIKE ?)`;
+      queryParams.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    }
+
+    const offset = (Number(page) - 1) * Number(limit);
+
+    const [users] = await db.query(`
+      SELECT u.*, 
+        (SELECT SUM(totalAmount) FROM Sale s WHERE s.customerId = u.id AND s.tenantId = ?) as totalSpend,
+        (SELECT MAX(createdAt) FROM Sale s WHERE s.customerId = u.id AND s.tenantId = ?) as lastVisit
+      FROM User u
+      ${whereClause}
+      ORDER BY u.${sortBy} ${sortOrder}
+      LIMIT ? OFFSET ?
+    `, [tenantId, tenantId, ...queryParams, Number(limit), offset]);
+
+    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM User u ${whereClause}`, queryParams);
+    const total = Number(countRes[0].total);
+
+    return res.json({ 
+      success: true,
+      items: users,
+      total,
+      page: Number(page),
+      limit: Number(limit),
+      totalPages: Math.ceil(total / Number(limit))
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to fetch customers' });
+  }
+};
+
+export const createCustomer = async (req, res) => {
+  const { tenantId } = req.user;
+  const { name, phone, email } = req.body;
+
+  try {
+    const [existing] = await db.query(`SELECT * FROM User WHERE phone = ? AND role = 'CUSTOMER'`, [phone]);
+    
+    if (existing.length > 0) {
+      return res.json({ success: true, data: { customerId: existing[0].id } });
+    }
+
+    const id = ulid();
+    await db.query(
+      `INSERT INTO User (id, tenantId, name, phone, email, role, passwordHash, phoneVerified, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 'CUSTOMER', '', 0, 1, NOW(), NOW())`,
+      [id, tenantId, name, phone, email || null]
+    );
+    return res.json({ success: true, data: { customerId: id } });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
