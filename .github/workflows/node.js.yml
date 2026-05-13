@@ -34,7 +34,7 @@ jobs:
 
     - name: Start or Restart app with PM2
       working-directory: server
-      run: pm2 restart hlynk-server --update-env || pm2 start index.js --name hlynk-server --interpreter node
+      run: pm2 delete hlynk-server || true && pm2 start index.js --name hlynk-server --interpreter node --update-env
 
     - name: Save PM2 process list
       run: pm2 save
