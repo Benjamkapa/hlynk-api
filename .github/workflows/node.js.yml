@@ -34,7 +34,7 @@ jobs:
 
     - name: Start or Restart app with PM2
       working-directory: server
-      run: pm2 restart hlynk-server --update-env || pm2 start index.js --name hlynk-server
+      run: pm2 startOrRestart hlynk-server --update-env || pm2 startOrRestart index.js --name hlynk-server
 
     - name: Save PM2 process list
       run: pm2 save
