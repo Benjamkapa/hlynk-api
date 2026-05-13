@@ -15,5 +15,5 @@
   "token_expires": "43200",
   "jwt_secret": "MDIzIDE2OjUwOjQ1IEdNVCswMzAwIChFYXN0IEFmcmljYSBUaW1lKSIsInVzZXJJZCI6MTIsImlhdCI6MTY6Nz",
   "algorithm": "HS256",
-  "expires_in": "365m"
+  "expires_in": "360m"
 }
