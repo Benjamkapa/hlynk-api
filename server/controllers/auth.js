@@ -55,7 +55,8 @@ export const googleAuth = async (req, res) => {
     const email = payload.email;
 
     const [userRows] = await db.query(`
-      SELECT u.*, t.isActive as tenantIsActive, t.slug as tenantSlug, t.businessName, s.planName
+      SELECT u.*, t.isActive as tenantIsActive, t.slug as tenantSlug, t.businessName, 
+             s.planName, s.status, s.trialEndDate, s.endDate
       FROM User u
       JOIN Tenant t ON u.tenantId = t.id
       LEFT JOIN Subscription s ON s.tenantId = t.id
@@ -63,6 +64,12 @@ export const googleAuth = async (req, res) => {
     `, [email]);
 
     let user = userRows[0];
+
+    // SYNC PHOTO: Always update the photo from Google if it exists
+    if (user && payload.picture && user.photoUrl !== payload.picture) {
+      await db.query(`UPDATE User SET photoUrl = ?, updatedAt = NOW() WHERE id = ?`, [payload.picture, user.id]);
+      user.photoUrl = payload.picture;
+    }
 
     if (!user) {
       if (!registration) {
@@ -84,7 +91,7 @@ export const googleAuth = async (req, res) => {
       try {
         await connection.beginTransaction();
         await connection.query(`INSERT INTO Tenant (id, slug, businessName, isActive, createdAt, updatedAt) VALUES (?, ?, ?, 1, NOW(), NOW())`, [tenantId, slug, registration.businessName]);
-        await connection.query(`INSERT INTO User (id, tenantId, name, phone, email, role, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 'PROVIDER', 1, NOW(), NOW())`, [userId, tenantId, registration.ownerName || payload.name, registration.phone, email]);
+        await connection.query(`INSERT INTO User (id, tenantId, name, phone, email, role, photoUrl, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 'PROVIDER', ?, 1, NOW(), NOW())`, [userId, tenantId, registration.ownerName || payload.name, registration.phone, email, payload.picture || null]);
         await connection.query(`INSERT INTO Provider (id, tenantId, userId, businessName, phone, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())`, [ulid(), tenantId, userId, registration.businessName, registration.phone]);
         await connection.query(`INSERT INTO Subscription (id, tenantId, planName, status, trialEndDate, createdAt, updatedAt) VALUES (?, ?, 'MAX', 'TRIAL', DATE_ADD(NOW(), INTERVAL 7 DAY), NOW(), NOW())`, [ulid(), tenantId]);
         await connection.commit();
@@ -103,7 +110,20 @@ export const googleAuth = async (req, res) => {
     const { accessToken, refreshToken } = await issueTokens(user, userAgent, ipAddress);
     return res.json({ 
       success: true, 
-      data: { accessToken, refreshToken, user } 
+      data: { 
+        accessToken, 
+        refreshToken, 
+        user: {
+          ...user,
+          subscription: {
+            planName: user.planName,
+            status: user.status,
+            trialEndDate: user.trialEndDate,
+            endDate: user.endDate
+          },
+          permissions: typeof user.permissions === 'string' ? JSON.parse(user.permissions) : user.permissions || []
+        } 
+      } 
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
@@ -127,7 +147,7 @@ export const me = async (req, res) => {
       SELECT 
         u.id, u.name, u.phone, u.email, u.role, u.photoUrl, u.permissions,
         t.id as tenantId, t.slug as tenantSlug, t.businessName,
-        s.planName, s.status, s.trialEndDate
+        s.planName, s.status, s.trialEndDate, s.endDate
       FROM User u
       JOIN Tenant t ON u.tenantId = t.id
       LEFT JOIN Subscription s ON s.tenantId = t.id
@@ -139,6 +159,13 @@ export const me = async (req, res) => {
     }
 
     const user = rows[0];
+
+    // SYNC PHOTO IF MISSING: If the DB has no photo but we can get it from Google, sync it
+    if (!user.photoUrl && req.user?.picture) {
+       await db.query(`UPDATE User SET photoUrl = ?, updatedAt = NOW() WHERE id = ?`, [req.user.picture, userId]);
+       user.photoUrl = req.user.picture;
+    }
+
     return res.json({
       success: true,
       data: {
@@ -146,7 +173,8 @@ export const me = async (req, res) => {
         subscription: {
           planName: user.planName,
           status: user.status,
-          trialEndDate: user.trialEndDate
+          trialEndDate: user.trialEndDate,
+          endDate: user.endDate
         },
         permissions: typeof user.permissions === 'string' ? JSON.parse(user.permissions) : user.permissions || []
       }

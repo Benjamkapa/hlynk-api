@@ -22,16 +22,30 @@ export const authenticate = async (req, res, next) => {
     const decoded = jwt.verify(token, params.jwt_secret);
     req.user = decoded;
 
-    // Remote Logout Check: verify session is still active in DB
-    const [sessions] = await db.query(`SELECT id, isActive FROM Session WHERE id = ? LIMIT 1`, [decoded.sessionId]);
-    const session = sessions[0];
+    // Verify session and fetch LATEST user data (role/permissions)
+    const [userRows] = await db.query(`
+      SELECT s.id as sessionId, s.isActive, u.role, u.permissions 
+      FROM Session s
+      JOIN User u ON s.userId = u.id
+      WHERE s.id = ? LIMIT 1
+    `, [decoded.sessionId]);
+    
+    const sessionUser = userRows[0];
 
-    if (!session || !session.isActive) {
+    if (!sessionUser || !sessionUser.isActive) {
       return res.status(401).json({ success: false, message: 'Session expired or terminated' });
     }
 
+    // Enrich req.user with latest DB data
+    req.user = {
+      ...decoded,
+      role: sessionUser.role,
+      permissions: typeof sessionUser.permissions === 'string' ? JSON.parse(sessionUser.permissions) : sessionUser.permissions || []
+    };
+    console.log(`[AUTH] User: ${req.user.userId}, Role: ${req.user.role}, Tenant: ${req.user.tenantId}`);
+
     // Update last active (background)
-    db.query(`UPDATE Session SET lastActive = NOW() WHERE id = ?`, [session.id]).catch(() => {});
+    db.query(`UPDATE Session SET lastActive = NOW() WHERE id = ?`, [sessionUser.sessionId]).catch(() => {});
 
     next();
   } catch (err) {

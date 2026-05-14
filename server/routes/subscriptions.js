@@ -7,7 +7,7 @@ const router = express.Router();
 router.use(authenticate);
 
 router.get('/me', getMySubscription);
-router.get('/billing', getBillingHistory);
+router.get('/history', getBillingHistory);
 router.post('/renew', initiateRenewal);
 router.post('/change-plan', changePlan);
 router.get('/verify/:paymentId', verifyPayment);

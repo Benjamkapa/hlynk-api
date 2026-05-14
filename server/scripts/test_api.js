@@ -1,14 +1,22 @@
-import fetch from 'node-fetch'; // If using Node < 18, otherwise native fetch is fine
+import fetch from 'node-fetch';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import 'dotenv/config';
 
-const BASE_URL = 'http://localhost:3000/api';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const params = JSON.parse(fs.readFileSync(path.join(__dirname, '../configs/params.json'), 'utf8'));
+
+const BACKEND_URL = process.env.BACKEND_URL || `http://localhost:${params.port || 3000}`;
+const BASE_URL = `${BACKEND_URL}/api/v1`;
 let TOKEN = '';
 
 async function runTests() {
-  console.log('🚀 Starting HudumaLynk API Test Suite...\n');
+  console.log('🚀 Starting hlynk API Test Suite...\n');
 
   try {
     // 1. Health Check
-    const health = await fetch('http://localhost:3000/').then(r => r.json());
+    const health = await fetch(`${BACKEND_URL}`).then(r => r.json());
     console.log('✅ Server Health:', health.message);
 
     // 2. Auth (Public Stats)

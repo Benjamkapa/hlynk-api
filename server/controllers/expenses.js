@@ -4,10 +4,18 @@ import { ulid } from 'ulid';
 export const listExpenses = async (req, res) => {
   const { tenantId } = req.user;
   const { category, search, limit = 50, page = 1, sortBy = 'date', sortOrder = 'desc' } = req.query;
-
   try {
+    const isStaff = req.user.role === 'STAFF';
+    const { userId } = req.user;
+    console.log(`[DEBUG] listExpenses: user=${userId}, role=${req.user.role}, isStaff=${isStaff}`);
+
     let whereQuery = 'WHERE tenantId = ?';
     const queryParams = [tenantId];
+
+    if (isStaff) {
+      whereQuery += ' AND userId = ?';
+      queryParams.push(userId);
+    }
 
     if (category) { whereQuery += ' AND category = ?'; queryParams.push(category); }
     if (search) { whereQuery += ' AND description LIKE ?'; queryParams.push(`%${search}%`); }
@@ -23,16 +31,45 @@ export const listExpenses = async (req, res) => {
 
     const [countRes] = await db.query(`SELECT COUNT(*) as total FROM Expense ${whereQuery}`, queryParams);
     const total = Number(countRes[0].total);
+    const pages = Math.ceil(total / Number(limit));
 
-    const [totalAgg] = await db.query(`SELECT SUM(amount) as total FROM Expense WHERE tenantId = ?`, [tenantId]);
+    const [totalAgg] = await db.query(`SELECT SUM(amount) as total FROM Expense ${whereQuery}`, queryParams);
     
+    // Get highest category
+    const [categoryAgg] = await db.query(`
+      SELECT category, SUM(amount) as total 
+      FROM Expense 
+      ${whereQuery} 
+      GROUP BY category 
+      ORDER BY total DESC 
+      LIMIT 1
+    `, queryParams);
+
+    const highestCategory = categoryAgg[0]?.category || 'N/A';
+
+    // Calculate burn rate (avg daily spend this month)
+    const [burnAgg] = await db.query(`
+      SELECT SUM(amount) as total 
+      FROM Expense 
+      ${whereQuery} 
+      AND date >= DATE_FORMAT(NOW() ,'%Y-%m-01')
+    `, queryParams);
+    
+    const daysSoFar = Math.max(1, new Date().getDate());
+    const burnRate = Math.round((burnAgg[0]?.total || 0) / daysSoFar);
+
     return res.json({ 
       success: true,
       items: expenses,
       total,
       page: Number(page),
+      pages,
       limit: Number(limit),
-      stats: { totalExpenses: Number(totalAgg[0].total || 0) }
+      stats: { 
+        totalExpenses: Number(totalAgg[0].total || 0),
+        highestCategory,
+        burnRate
+      }
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to fetch expenses' });
@@ -40,14 +77,14 @@ export const listExpenses = async (req, res) => {
 };
 
 export const createExpense = async (req, res) => {
-  const { tenantId } = req.user;
+  const { tenantId, userId } = req.user;
   const data = req.body;
   const id = ulid();
 
   try {
     await db.query(
-      `INSERT INTO Expense (id, tenantId, category, description, amount, date, createdAt) VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-      [id, tenantId, data.category, data.description, data.amount, data.date ? new Date(data.date) : new Date()]
+      `INSERT INTO Expense (id, tenantId, userId, category, description, amount, date, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [id, tenantId, userId, data.category, data.description, data.amount, data.date ? new Date(data.date) : new Date()]
     );
     return res.json({ success: true, data: { expenseId: id } });
   } catch (err) {
@@ -56,10 +93,23 @@ export const createExpense = async (req, res) => {
 };
 
 export const deleteExpense = async (req, res) => {
-  const { tenantId } = req.user;
+  const { tenantId, userId, role } = req.user;
   const { id } = req.params;
   try {
-    await db.query(`DELETE FROM Expense WHERE id = ? AND tenantId = ?`, [id, tenantId]);
+    let query = 'DELETE FROM Expense WHERE id = ? AND tenantId = ?';
+    const params = [id, tenantId];
+
+    if (role === 'STAFF') {
+      query += ' AND userId = ?';
+      params.push(userId);
+    }
+
+    const [result] = await db.query(query, params);
+    
+    if (result.affectedRows === 0) {
+      return res.status(403).json({ success: false, message: 'Unauthorized or record not found' });
+    }
+
     return res.json({ success: true, data: { message: 'Expense deleted' } });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Delete failed' });
