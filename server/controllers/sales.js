@@ -1,5 +1,6 @@
 import { db } from '../dbms/mysql.js';
 import { ulid } from 'ulid';
+import { initiateStkPush } from '../utils/mpesa.js';
 
 export const listSales = async (req, res) => {
   const { tenantId } = req.user;
@@ -155,3 +156,16 @@ export const getSaleDetails = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Failed to fetch sale details' });
   }
 };
+
+export const vendorMpesaPush = async (req, res) => {
+  const { tenantId } = req.user;
+  const { phone, amount, reference } = req.body;
+
+  try {
+    const result = await initiateStkPush({ phone, amount, reference });
+    return res.json({ success: true, data: result });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+

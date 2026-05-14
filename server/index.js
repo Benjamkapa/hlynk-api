@@ -24,6 +24,7 @@ import requestRoutes from "./routes/requests.js";
 import platformRoutes from "./routes/platform.js";
 import { startSubscriptionDaemon } from "./daemon/subscriptions.js";
 import { db } from "./dbms/mysql.js";
+import { initStorage } from "./utils/storage.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const params = JSON.parse(fs.readFileSync(path.join(__dirname, "configs/params.json"), "utf8"));
@@ -38,6 +39,15 @@ startSubscriptionDaemon();
 app.use(cors());
 app.use(morgan("dev"));
 app.use(express.json());
+
+import fileUpload from 'express-fileupload';
+app.use(fileUpload({
+  createParentPath: true,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+}));
+
+// Serve static files from the 'uploads' directory
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Set COOP header for Google Auth popups
 app.use((req, res, next) => {
@@ -92,7 +102,10 @@ const startServer = async () => {
     await db.query("SELECT 1");
     console.log("✅ Database: Connected Successfully");
 
-    // 2. Start Listener
+    // 2. Initialize MinIO Storage
+    await initStorage();
+
+    // 3. Start Listener
     app.listen(PORT, () => {
       console.log(`🚀 hlynk Server running on http://localhost:${PORT}`);
     });

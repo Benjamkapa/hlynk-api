@@ -1,4 +1,5 @@
 import { db } from '../dbms/mysql.js';
+import { uploadFile } from '../utils/storage.js';
 import { ulid } from 'ulid';
 
 const getStartOfDay = (date) => {
@@ -130,3 +131,25 @@ export const deleteProduct = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Delete failed' });
   }
 };
+
+export const uploadProductImage = async (req, res) => {
+  const { tenantId } = req.user;
+  const { id } = req.params;
+
+  if (!req.files || !req.files.file) {
+    return res.status(400).json({ success: false, message: 'No file uploaded' });
+  }
+
+  try {
+    const file = req.files.file;
+    const imageUrl = await uploadFile(file, 'products');
+
+    // Update database
+    await db.query(`UPDATE Product SET imageUrl = ? WHERE id = ? AND tenantId = ?`, [imageUrl, id, tenantId]);
+
+    return res.json({ success: true, data: { imageUrl } });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
