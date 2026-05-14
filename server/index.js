@@ -4,6 +4,9 @@ import morgan from "morgan";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 // Route imports
 import authRoutes from "./routes/auth.js";
@@ -35,6 +38,12 @@ startSubscriptionDaemon();
 app.use(cors());
 app.use(morgan("dev"));
 app.use(express.json());
+
+// Set COOP header for Google Auth popups
+app.use((req, res, next) => {
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+  next();
+});
 
 // API Routes
 app.use("/api/v1/auth", authRoutes);
@@ -88,7 +97,7 @@ const startServer = async () => {
       console.log(`🚀 hlynk Server running on http://localhost:${PORT}`);
     });
   } catch (err) {
-     console.error("🔴 Database: Connection Failed!");
+    console.error("🔴 Database: Connection Failed!");
     // console.error("💥 Fuck!", err.message);
     console.error(err.message);
     process.exit(1);

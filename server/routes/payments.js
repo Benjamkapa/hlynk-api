@@ -32,11 +32,22 @@ router.post('/mpesa/callback', async (req, res) => {
 
     if (payments.length > 0) {
       const payment = payments[0];
-      await handlePaymentCallback(payment.reference, mpesaReceipt, success);
+      await handlePaymentCallback(payment.reference, mpesaReceipt, success, ResultDesc);
       
+      const updateData = [];
+      const updateFields = [];
+
       if (canceled) {
-        await db.query(`UPDATE Payment SET status = 'CANCELLED' WHERE id = ?`, [payment.id]);
+        updateFields.push('status = ?');
+        updateData.push('CANCELLED');
       }
+      
+      updateFields.push('message = ?');
+      updateData.push(ResultDesc);
+      
+      updateData.push(payment.id);
+      
+      await db.query(`UPDATE Payment SET ${updateFields.join(', ')} WHERE id = ?`, updateData);
     } else {
       console.warn(`[MPESA CALLBACK] No pending payment found for ID: ${CheckoutRequestID}`);
     }

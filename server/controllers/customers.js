@@ -6,11 +6,17 @@ export const listCustomers = async (req, res) => {
   const { search, page = 1, limit = 50, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
 
   try {
-    let whereClause = `
-      WHERE u.role = 'CUSTOMER' 
-      AND (u.tenantId = ? OR EXISTS (SELECT 1 FROM Sale s WHERE s.customerId = u.id AND s.tenantId = ?))
-    `;
-    const queryParams = [tenantId, tenantId];
+    // STAFF RESTRICTION: Staff only see their own handled customers
+    let whereClause = `WHERE u.role = 'CUSTOMER' AND u.tenantId = ?`;
+    const queryParams = [tenantId];
+    
+    if (req.user.role === 'STAFF') {
+      whereClause += ` AND EXISTS (SELECT 1 FROM Sale s WHERE s.customerId = u.id AND s.userId = ? AND s.tenantId = ?)`;
+      queryParams.push(req.user.userId, tenantId);
+    } else {
+      whereClause += ` AND (u.tenantId = ? OR EXISTS (SELECT 1 FROM Sale s WHERE s.customerId = u.id AND s.tenantId = ?))`;
+      queryParams.push(tenantId, tenantId);
+    }
 
     if (search) {
       whereClause += ` AND (u.name LIKE ? OR u.phone LIKE ? OR u.email LIKE ?)`;

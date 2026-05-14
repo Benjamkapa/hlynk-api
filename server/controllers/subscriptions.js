@@ -5,7 +5,7 @@ import { ulid } from 'ulid';
 export const PLAN_PRICES = {
   LITE: 1,
   PLUS: 1,
-  MAX: 1
+  MAX: 1,
 };
 
 export const getMySubscription = async (req, res) => {
@@ -76,7 +76,7 @@ export const initiateRenewal = async (req, res) => {
     
     const sub = subs[0];
     const amount = PLAN_PRICES[sub.planName];
-    const reference = `SUB-REN-${tenantId.slice(-6).toUpperCase()}`;
+    const reference = `SUB-REN-${tenantId.slice(-6).toUpperCase()}-${Date.now().toString().slice(-4)}`;
     
     const paymentId = ulid();
     await db.query(`
@@ -102,7 +102,7 @@ export const changePlan = async (req, res) => {
 
   try {
     const amount = PLAN_PRICES[planName];
-    const reference = `SUB-UPG-${tenantId.slice(-6).toUpperCase()}`;
+    const reference = `SUB-UPG-${tenantId.slice(-6).toUpperCase()}-${Date.now().toString().slice(-4)}`;
 
     const paymentId = ulid();
     await db.query(`
@@ -122,7 +122,7 @@ export const changePlan = async (req, res) => {
   }
 };
 
-export const handlePaymentCallback = async (reference, transactionId, success) => {
+export const handlePaymentCallback = async (reference, transactionId, success, message = null) => {
   const [payments] = await db.query(`SELECT * FROM Payment WHERE reference = ? LIMIT 1`, [reference]);
   if (payments.length === 0) return;
   const payment = payments[0];
@@ -132,7 +132,7 @@ export const handlePaymentCallback = async (reference, transactionId, success) =
     try {
       await connection.beginTransaction();
 
-      await connection.query(`UPDATE Payment SET status = 'PAID', mpesaReceipt = ?, reference = ? WHERE id = ?`, [transactionId, transactionId, payment.id]);
+      await connection.query(`UPDATE Payment SET status = 'PAID', mpesaReceipt = ?, reference = ?, message = ? WHERE id = ?`, [transactionId, transactionId, message || 'Success', payment.id]);
 
       const [subs] = await connection.query(`SELECT * FROM Subscription WHERE tenantId = ? LIMIT 1 FOR UPDATE`, [payment.tenantId]);
       
@@ -157,7 +157,7 @@ export const handlePaymentCallback = async (reference, transactionId, success) =
       connection.release();
     }
   } else {
-    await db.query(`UPDATE Payment SET status = 'FAILED', mpesaReceipt = ? WHERE id = ?`, [transactionId, payment.id]);
+    await db.query(`UPDATE Payment SET status = 'FAILED', mpesaReceipt = ?, message = ? WHERE id = ?`, [transactionId, message || 'Failed', payment.id]);
   }
 };
 
@@ -176,13 +176,15 @@ export const verifyPayment = async (req, res) => {
     if (!checkoutRequestId) return res.status(400).json({ success: false, message: 'No CheckoutRequestID' });
 
     const result = await queryStkPush(checkoutRequestId);
+    const message = result.ResultDesc || (result.ResultCode == '0' ? 'Success' : 'Failed');
     
     if (result.ResultCode == '0') {
-      // In a real app, you'd trigger the subscription update logic here too
-      // For now, we'll return the result
-      return res.json({ success: true, data: { status: 'PAID', result } });
+      await handlePaymentCallback(payment.reference, checkoutRequestId, true, message);
+      return res.json({ success: true, data: { status: 'PAID', message, result } });
     } else if (['1032', '1'].includes(String(result.ResultCode))) {
-      return res.json({ success: true, data: { status: 'FAILED', result } });
+      const status = result.ResultCode == '1032' ? 'CANCELLED' : 'FAILED';
+      await db.query(`UPDATE Payment SET status = ?, message = ? WHERE id = ?`, [status, message, payment.id]);
+      return res.json({ success: true, data: { status, message, result } });
     }
     
     return res.json({ success: true, data: payment });

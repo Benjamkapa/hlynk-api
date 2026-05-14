@@ -1,4 +1,5 @@
 import axios from 'axios';
+import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -7,17 +8,17 @@ import { redis, redisKeys } from './redis.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const params = JSON.parse(fs.readFileSync(path.join(__dirname, '../configs/params.json'), 'utf8'));
 
-const MPESA_ENV = params.mpesa_env || 'sandbox';
+const MPESA_ENV = process.env.MPESA_ENV || params.mpesa_env || 'sandbox';
 const BASE_URL = MPESA_ENV === 'production' 
   ? 'https://api.safaricom.co.ke' 
   : 'https://sandbox.safaricom.co.ke';
 
-const CONSUMER_KEY = params.mpesa_consumer_key;
-const CONSUMER_SECRET = params.mpesa_consumer_secret;
-const BUSINESS_SHORT_CODE = params.mpesa_shortcode;
-const PASSKEY = params.mpesa_passkey;
+const CONSUMER_KEY = process.env.MPESA_CONSUMER_KEY || params.mpesa_consumer_key;
+const CONSUMER_SECRET = process.env.MPESA_CONSUMER_SECRET || params.mpesa_consumer_secret;
+const BUSINESS_SHORT_CODE = process.env.MPESA_SHORTCODE || params.mpesa_shortcode;
+const PASSKEY = process.env.MPESA_PASSKEY || params.mpesa_passkey;
 
-const CALLBACK_URL = `${params.backend_url}/api/payments/mpesa/callback`;
+const CALLBACK_URL = `${process.env.BACKEND_URL || params.backend_url}/api/v1/payments/mpesa/callback`;
 
 async function getAccessToken() {
   const cacheKey = redisKeys.mpesaToken;
@@ -33,8 +34,9 @@ async function getAccessToken() {
     await redis.setEx(cacheKey, 3300, token);
     return token;
   } catch (error) {
-    console.error('[MPESA] Auth Error:', error.response?.data || error.message);
-    throw new Error('Failed to authenticate with M-Pesa.');
+    const errorMsg = error.response?.data?.errorMessage || error.response?.data?.message || error.message;
+    console.error('[MPESA] Auth Error:', errorMsg);
+    throw new Error(`M-Pesa Auth: ${errorMsg}`);
   }
 }
 

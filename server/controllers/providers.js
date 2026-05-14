@@ -111,27 +111,103 @@ export const updateProfile = async (req, res) => {
 };
 
 export const getStats = async (req, res) => {
-  const { tenantId } = req.user;
-  // This is a simplified version of the stats logic
+  const { tenantId, userId, role } = req.user;
   try {
+    // If user is STAFF, we only show stats related to them
+    const isStaff = role === 'STAFF';
+    const saleFilter = isStaff ? 'AND userId = ?' : '';
+    const saleParams = isStaff ? [tenantId, userId] : [tenantId];
+
     const [
       [salesToday],
       [totalCustomers],
       [lowStock]
     ] = await Promise.all([
-      db.query(`SELECT SUM(totalAmount) as total FROM Sale WHERE tenantId = ? AND createdAt >= CURDATE()`, [tenantId]),
-      db.query(`SELECT COUNT(*) as total FROM User WHERE tenantId = ? AND role = 'CUSTOMER'`, [tenantId]),
+      db.query(`SELECT SUM(totalAmount) as total FROM Sale WHERE tenantId = ? ${saleFilter} AND createdAt >= CURDATE()`, saleParams),
+      db.query(`
+        SELECT COUNT(DISTINCT u.id) as total 
+        FROM User u 
+        WHERE u.tenantId = ? AND u.role = 'CUSTOMER'
+        ${isStaff ? 'AND EXISTS (SELECT 1 FROM Sale s WHERE s.customerId = u.id AND s.userId = ?)' : ''}
+      `, isStaff ? [tenantId, userId] : [tenantId]),
       db.query(`SELECT COUNT(*) as total FROM Product WHERE tenantId = ? AND stockLevel <= 5`, [tenantId])
     ]);
+
+    // Calculate Estimated Profit (Simplified for demonstration, normally would be revenue - COGS)
+    // For staff, profit is also filtered by their sales
+    const [profitRes] = await db.query(`SELECT SUM(totalAmount) * 0.25 as profit FROM Sale WHERE tenantId = ? ${saleFilter} AND MONTH(createdAt) = MONTH(CURRENT_DATE())`, saleParams);
+
+    // REAL aggregation for chart data (Last 7 Days)
+    const [chartRows] = await db.query(`
+      SELECT 
+        DATE_FORMAT(createdAt, '%a') as name,
+        SUM(totalAmount) as sales,
+        SUM(totalAmount) * 0.25 as profit
+      FROM Sale 
+      WHERE tenantId = ? ${saleFilter}
+      AND createdAt >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+      GROUP BY DATE(createdAt), name
+      ORDER BY DATE(createdAt) ASC
+    `, saleParams);
+
+    const salesChart = chartRows.map(row => ({
+      name: row.name,
+      sales: Number(row.sales || 0),
+      profit: Number(row.profit || 0)
+    }));
 
     return res.json({
       success: true,
       dailySales: Number(salesToday[0]?.total || 0),
       newCustomers: Number(totalCustomers[0]?.total || 0),
       outOfStockCount: Number(lowStock[0]?.total || 0),
+      profit: Number(profitRes[0]?.profit || 0),
+      salesChart,
       rating: 4.8
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to fetch stats' });
   }
 };
+
+export const getActivityLogs = async (req, res) => {
+  const { tenantId } = req.user;
+  const { page = 1, limit = 10 } = req.query;
+  const offset = (Number(page) - 1) * Number(limit);
+
+  const isStaff = req.user.role === 'STAFF';
+  const { userId } = req.user;
+
+  try {
+    let whereQuery = 'WHERE l.tenantId = ?';
+    const queryParams = [tenantId];
+
+    if (isStaff) {
+      whereQuery += ' AND l.userId = ?';
+      queryParams.push(userId);
+    }
+
+    const [logs] = await db.query(`
+      SELECT l.*, u.name as userName
+      FROM ActivityLog l
+      LEFT JOIN User u ON l.userId = u.id
+      ${whereQuery}
+      ORDER BY l.createdAt DESC
+      LIMIT ? OFFSET ?
+    `, [...queryParams, Number(limit), offset]);
+
+    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM ActivityLog l ${whereQuery}`, queryParams);
+    const total = Number(countRes[0].total);
+
+    return res.json({
+      success: true,
+      data: {
+        items: logs,
+        pagination: { total, totalPages: Math.ceil(total / Number(limit)), page: Number(page), limit: Number(limit) }
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to fetch logs' });
+  }
+};
+

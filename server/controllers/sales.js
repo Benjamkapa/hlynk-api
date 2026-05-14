@@ -8,6 +8,12 @@ export const listSales = async (req, res) => {
   try {
     let whereQuery = 'WHERE s.tenantId = ?';
     const queryParams = [tenantId];
+
+    // STAFF RESTRICTION: Staff only see their own sales
+    if (req.user.role === 'STAFF') {
+      whereQuery += ' AND s.userId = ?';
+      queryParams.push(req.user.userId);
+    }
     
     if (search) {
       whereQuery += ' AND (s.customerName LIKE ? OR s.paymentMethod LIKE ?)';
@@ -57,11 +63,33 @@ export const listSales = async (req, res) => {
 
     const [countRes] = await db.query(`SELECT COUNT(*) as total FROM Sale s ${whereQuery}`, queryParams);
     const total = Number(countRes[0].total);
+    const pages = Math.ceil(total / Number(limit));
+
+    // Stats for the current filter (which is usually a specific date)
+    const [statsRes] = await db.query(`
+      SELECT 
+        SUM(totalAmount) as totalAmount,
+        COUNT(*) as transactions
+      FROM Sale s
+      ${whereQuery}
+    `, queryParams);
+
+    const totalToday = Number(statsRes[0].totalAmount || 0);
+    const transactions = Number(statsRes[0].transactions || 0);
+    const avgSale = transactions > 0 ? Math.round(totalToday / transactions) : 0;
 
     return res.json({ 
       success: true,
       items: sales,
-      pagination: { total, page: Number(page), limit: Number(limit), totalPages: Math.ceil(total / Number(limit)) }
+      total,
+      page: Number(page),
+      pages,
+      limit: Number(limit),
+      stats: {
+        totalToday,
+        transactions,
+        avgSale
+      }
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to fetch sales' });
