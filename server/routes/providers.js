@@ -11,5 +11,7 @@ router.get('/me', getMyProfile);
 router.patch('/me', updateProfile);
 router.get('/me/activity', getActivityLogs);
 router.get('/stats', getStats);
+import { uploadPhoto } from '../controllers/providers.js';
+router.post('/me/photo', uploadPhoto);
 
 export default router;

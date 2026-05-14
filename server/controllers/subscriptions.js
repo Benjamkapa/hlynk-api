@@ -132,7 +132,7 @@ export const handlePaymentCallback = async (reference, transactionId, success, m
     try {
       await connection.beginTransaction();
 
-      await connection.query(`UPDATE Payment SET status = 'PAID', mpesaReceipt = ?, reference = ?, message = ? WHERE id = ?`, [transactionId, transactionId, message || 'Success', payment.id]);
+      await connection.query(`UPDATE Payment SET status = 'PAID', mpesaReceipt = ?, message = ? WHERE id = ?`, [transactionId, message || 'Success', payment.id]);
 
       const [subs] = await connection.query(`SELECT * FROM Subscription WHERE tenantId = ? LIMIT 1 FOR UPDATE`, [payment.tenantId]);
       

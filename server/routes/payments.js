@@ -1,8 +1,24 @@
 import express from 'express';
 import { db } from '../dbms/mysql.js';
 import { handlePaymentCallback } from '../controllers/subscriptions.js';
+import { initiateStkPush } from '../utils/mpesa.js';
+import { authenticate } from '../middleware/auth.js';
 
 const router = express.Router();
+
+/**
+ * @route POST /api/payments/mpesa/stk-push
+ * @desc General M-Pesa STK Push trigger
+ */
+router.post('/mpesa/stk-push', authenticate, async (req, res) => {
+  const { phone, amount, reference } = req.body;
+  try {
+    const result = await initiateStkPush({ phone, amount, reference });
+    return res.json({ success: true, data: result });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
 
 /**
  * @route POST /api/payments/mpesa/callback
