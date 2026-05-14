@@ -24,13 +24,15 @@ router.post('/mpesa/stk-push', authenticate, async (req, res) => {
  * @route POST /api/payments/mpesa/callback
  * @desc M-Pesa Daraja STK Push Callback
  */
-router.post('/mpesa/callback', async (req, res) => {
-  const { Body } = req.body;
-  console.log('[MPESA CALLBACK] Received:', JSON.stringify(req.body, null, 2));
-
-  if (!Body || !Body.stkCallback) {
+router.post('/mpesa/callback', express.json(), async (req, res) => {
+  console.log('[MPESA CALLBACK] Raw Body:', req.body);
+  
+  if (!req.body || !req.body.Body) {
+    console.error('[MPESA CALLBACK] Error: No Body found in request');
     return res.json({ ResultCode: 1, ResultDesc: 'Invalid body' });
   }
+
+  const { Body } = req.body;
 
   const { ResultCode, ResultDesc, CheckoutRequestID, CallbackMetadata } = Body.stkCallback;
   const success = ResultCode === 0;
