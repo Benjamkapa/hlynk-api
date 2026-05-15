@@ -25,7 +25,7 @@ router.post('/mpesa/stk-push', authenticate, async (req, res) => {
  * @desc M-Pesa Daraja STK Push Callback
  */
 router.post('/mpesa/callback', express.json(), async (req, res) => {
-  console.log('[MPESA CALLBACK] Raw Body:', req.body);
+  console.log('[MPESA CALLBACK] Raw Body:', JSON.stringify(req.body, null, 2));
   
   if (!req.body || !req.body.Body) {
     console.error('[MPESA CALLBACK] Error: No Body found in request');
@@ -33,23 +33,14 @@ router.post('/mpesa/callback', express.json(), async (req, res) => {
   }
 
   const { Body } = req.body;
-
   const { ResultCode, ResultDesc, CheckoutRequestID, CallbackMetadata } = Body.stkCallback;
   const success = ResultCode === 0;
   const canceled = ResultCode === 1032;
 
   let mpesaReceipt = CheckoutRequestID;
-  let amount = 0;
-  let phoneNumber = '';
-
   if (success && CallbackMetadata && CallbackMetadata.Item) {
     const receiptItem = CallbackMetadata.Item.find((i) => i.Name === 'MpesaReceiptNumber');
-    const amountItem = CallbackMetadata.Item.find((i) => i.Name === 'Amount');
-    const phoneItem = CallbackMetadata.Item.find((i) => i.Name === 'PhoneNumber');
-
     if (receiptItem) mpesaReceipt = receiptItem.Value;
-    if (amountItem) amount = amountItem.Value;
-    if (phoneItem) phoneNumber = phoneItem.Value;
   }
 
   try {
@@ -62,7 +53,7 @@ router.post('/mpesa/callback', express.json(), async (req, res) => {
       
       const status = canceled ? 'CANCELLED' : (success ? 'PAID' : 'FAILED');
       await db.query(`UPDATE Payment SET status = ?, message = ? WHERE id = ?`, [status, ResultDesc, payment.id]);
-      console.log(`[MPESA CALLBACK] Subscription Updated: ID=${payment.id}, Status=${status}, Receipt=${mpesaReceipt}, Phone=${phoneNumber}, Amount=${amount}`);
+      console.log(`[MPESA CALLBACK] Updated Subscription Payment: ${payment.id} to ${status}`);
     } 
     // 2. Search in Sale table (POS)
     else {
@@ -72,9 +63,9 @@ router.post('/mpesa/callback', express.json(), async (req, res) => {
         const sale = sales[0];
         const status = success ? 'COMPLETED' : (canceled ? 'CANCELLED' : 'FAILED');
         await db.query(`UPDATE Sale SET status = ?, updatedAt = NOW() WHERE id = ?`, [status, sale.id]);
-        console.log(`[MPESA CALLBACK] Sale Updated: ID=${sale.id}, Status=${status}, Receipt=${mpesaReceipt}, Phone=${phoneNumber}, Amount=${amount}`);
+        console.log(`[MPESA CALLBACK] Updated Sale: ${sale.id} to ${status}`);
       } else {
-        console.warn(`[MPESA CALLBACK] No pending record found for RequestID: ${CheckoutRequestID}`);
+        console.warn(`[MPESA CALLBACK] No pending payment or sale found for RequestID: ${CheckoutRequestID}`);
       }
     }
   } catch (err) {
