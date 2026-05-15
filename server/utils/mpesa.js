@@ -18,7 +18,7 @@ const CONSUMER_SECRET = process.env.MPESA_CONSUMER_SECRET || params.mpesa_consum
 const BUSINESS_SHORT_CODE = process.env.MPESA_SHORTCODE || params.mpesa_shortcode;
 const PASSKEY = process.env.MPESA_PASSKEY || params.mpesa_passkey;
 
-const CALLBACK_URL = `${process.env.BACKEND_URL || params.backend_url}/api/v1/payments/mpesa/callback`;
+const CALLBACK_URL = `${process.env.BACKEND_URL}/api/v1/payments/mpesa/callback`;
 console.log('[MPESA] Generated Callback URL:', CALLBACK_URL);
 
 async function getAccessToken() {

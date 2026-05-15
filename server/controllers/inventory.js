@@ -44,7 +44,7 @@ export const listProducts = async (req, res) => {
     const [countRes] = await db.query(`SELECT COUNT(*) as total FROM Product ${whereQuery}`, queryParams);
     const total = Number(countRes[0].total);
 
-    // Calculate stats
+    // Calculate stats efficiently
     const [totalItemsRes] = await db.query(`SELECT COUNT(*) as total FROM Product WHERE tenantId = ?`, [tenantId]);
     const [lowStockRes] = await db.query(`SELECT COUNT(*) as total FROM Product WHERE tenantId = ? AND type != 'SERVICE' AND stockLevel <= minLevel`, [tenantId]);
     const [totalValueRes] = await db.query(`SELECT SUM(price * stockLevel) as total FROM Product WHERE tenantId = ?`, [tenantId]);
@@ -55,8 +55,8 @@ export const listProducts = async (req, res) => {
       WHERE tenantId = ? AND isPerishable = 1 AND expiryDate >= ? AND expiryDate <= DATE_ADD(?, INTERVAL 30 DAY)
     `, [tenantId, today, today]);
 
-    return res.json({
-      success: true,
+    return res.json({ 
+      success: true, 
       items: products,
       total,
       page: Number(page),
@@ -65,12 +65,13 @@ export const listProducts = async (req, res) => {
       stats: {
         totalItems: Number(totalItemsRes[0].total),
         lowStock: Number(lowStockRes[0].total),
-        expiringSoon: Number(expiringSoonRes[0].total),
-        totalValue: Number(totalValueRes[0].total || 0)
+        totalValue: Number(totalValueRes[0].total || 0),
+        expiringSoon: Number(expiringSoonRes[0].total)
       }
     });
   } catch (err) {
-    return res.status(500).json({ success: false, message: 'Failed to list products' });
+    console.error('[INVENTORY] List error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch inventory' });
   }
 };
 

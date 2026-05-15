@@ -39,35 +39,43 @@ router.post('/mpesa/callback', express.json(), async (req, res) => {
   const canceled = ResultCode === 1032;
 
   let mpesaReceipt = CheckoutRequestID;
+  let amount = 0;
+  let phoneNumber = '';
+
   if (success && CallbackMetadata && CallbackMetadata.Item) {
     const receiptItem = CallbackMetadata.Item.find((i) => i.Name === 'MpesaReceiptNumber');
+    const amountItem = CallbackMetadata.Item.find((i) => i.Name === 'Amount');
+    const phoneItem = CallbackMetadata.Item.find((i) => i.Name === 'PhoneNumber');
+
     if (receiptItem) mpesaReceipt = receiptItem.Value;
+    if (amountItem) amount = amountItem.Value;
+    if (phoneItem) phoneNumber = phoneItem.Value;
   }
 
-  // Find the specific payment by CheckoutRequestID (which we stored in mpesaReceipt field during initiation)
   try {
+    // 1. Search in Payment table (Subscriptions)
     const [payments] = await db.query(`SELECT * FROM Payment WHERE mpesaReceipt = ? LIMIT 1`, [CheckoutRequestID]);
 
     if (payments.length > 0) {
       const payment = payments[0];
       await handlePaymentCallback(payment.reference, mpesaReceipt, success, ResultDesc);
       
-      const updateData = [];
-      const updateFields = [];
-
-      if (canceled) {
-        updateFields.push('status = ?');
-        updateData.push('CANCELLED');
+      const status = canceled ? 'CANCELLED' : (success ? 'PAID' : 'FAILED');
+      await db.query(`UPDATE Payment SET status = ?, message = ? WHERE id = ?`, [status, ResultDesc, payment.id]);
+      console.log(`[MPESA CALLBACK] Subscription Updated: ID=${payment.id}, Status=${status}, Receipt=${mpesaReceipt}, Phone=${phoneNumber}, Amount=${amount}`);
+    } 
+    // 2. Search in Sale table (POS)
+    else {
+      const [sales] = await db.query(`SELECT * FROM Sale WHERE mpesaRequestId = ? LIMIT 1`, [CheckoutRequestID]);
+      
+      if (sales.length > 0) {
+        const sale = sales[0];
+        const status = success ? 'COMPLETED' : (canceled ? 'CANCELLED' : 'FAILED');
+        await db.query(`UPDATE Sale SET status = ?, updatedAt = NOW() WHERE id = ?`, [status, sale.id]);
+        console.log(`[MPESA CALLBACK] Sale Updated: ID=${sale.id}, Status=${status}, Receipt=${mpesaReceipt}, Phone=${phoneNumber}, Amount=${amount}`);
+      } else {
+        console.warn(`[MPESA CALLBACK] No pending record found for RequestID: ${CheckoutRequestID}`);
       }
-      
-      updateFields.push('message = ?');
-      updateData.push(ResultDesc);
-      
-      updateData.push(payment.id);
-      
-      await db.query(`UPDATE Payment SET ${updateFields.join(', ')} WHERE id = ?`, updateData);
-    } else {
-      console.warn(`[MPESA CALLBACK] No pending payment found for ID: ${CheckoutRequestID}`);
     }
   } catch (err) {
     console.error('[MPESA CALLBACK] Error processing:', err);

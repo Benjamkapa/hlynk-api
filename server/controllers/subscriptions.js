@@ -131,6 +131,7 @@ export const handlePaymentCallback = async (reference, transactionId, success, m
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
+      console.log(`[SUBSCRIPTION CALLBACK] Processing ${reference} (Success: ${success})`);
 
       await connection.query(`UPDATE Payment SET status = 'PAID', mpesaReceipt = ?, message = ? WHERE id = ?`, [transactionId, message || 'Success', payment.id]);
 
@@ -138,6 +139,7 @@ export const handlePaymentCallback = async (reference, transactionId, success, m
       
       if (subs.length > 0) {
         const sub = subs[0];
+        console.log(`[SUBSCRIPTION CALLBACK] Updating Subscription for Tenant ${payment.tenantId} to ${payment.plan}`);
         const baseDate = new Date();
         const newEnd = new Date(baseDate);
         newEnd.setDate(newEnd.getDate() + 28);
