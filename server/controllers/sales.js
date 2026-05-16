@@ -1,6 +1,7 @@
 import { db } from '../dbms/mysql.js';
 import { ulid } from 'ulid';
 import { initiateStkPush } from '../utils/mpesa.js';
+import { decrypt } from '../utils/encryption.js';
 
 export const listSales = async (req, res) => {
   const { tenantId } = req.user;
@@ -66,32 +67,37 @@ export const listSales = async (req, res) => {
     const total = Number(countRes[0].total);
     const pages = Math.ceil(total / Number(limit));
 
-    // Stats for the current filter (which is usually a specific date)
-    const [statsRes] = await db.query(`
-      SELECT 
-        SUM(totalAmount) as totalAmount,
-        COUNT(*) as transactions
-      FROM Sale s
-      ${whereQuery}
-    `, queryParams);
-
-    const totalToday = Number(statsRes[0].totalAmount || 0);
-    const transactions = Number(statsRes[0].transactions || 0);
-    const avgSale = transactions > 0 ? Math.round(totalToday / transactions) : 0;
-
-    return res.json({ 
+    const response = { 
       success: true,
       items: sales,
       total,
       page: Number(page),
       pages,
-      limit: Number(limit),
-      stats: {
-        totalToday,
+      limit: Number(limit)
+    };
+
+    // Calculate filter-specific stats efficiently
+    if (req.query.includeStats === 'true') {
+      const [statsRes] = await db.query(`
+        SELECT 
+          SUM(totalAmount) as totalAmount,
+          COUNT(*) as transactions
+        FROM Sale s
+        ${whereQuery}
+      `, queryParams);
+
+      const totalAmount = Number(statsRes[0].totalAmount || 0);
+      const transactions = Number(statsRes[0].transactions || 0);
+      const avgSale = transactions > 0 ? Math.round(totalAmount / transactions) : 0;
+
+      response.stats = {
+        totalToday: totalAmount,
         transactions,
         avgSale
-      }
-    });
+      };
+    }
+
+    return res.json(response);
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to fetch sales' });
   }
@@ -109,7 +115,7 @@ export const createSale = async (req, res) => {
     const saleId = ulid();
     await connection.query(
       `INSERT INTO Sale (id, tenantId, userId, customerName, totalAmount, paymentMethod, status, mpesaRequestId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-      [saleId, tenantId, userId || null, customerName || null, totalAmount, paymentMethod || 'CASH', status || 'COMPLETED', mpesaRequestId || null]
+      [saleId, tenantId, userId || null, customerName || null, totalAmount, paymentMethod || 'CASH', status !== undefined ? status : 0, mpesaRequestId || null]
     );
 
     for (const item of items) {
@@ -122,6 +128,14 @@ export const createSale = async (req, res) => {
       if (item.productId) {
         await connection.query(`UPDATE Product SET stockLevel = stockLevel - ? WHERE id = ? AND tenantId = ?`, [item.quantity, item.productId, tenantId]);
       }
+    }
+
+    // IF MPESA, Record in Master Payment Table
+    if (paymentMethod === 'MPESA' || mpesaRequestId) {
+      await connection.query(`
+        INSERT INTO Payment (id, tenantId, amount, status, reference, mpesaRequestId, transactionType, createdAt)
+        VALUES (?, ?, ?, ?, ?, ?, 'SALE', NOW())
+      `, [ulid(), tenantId, totalAmount, status || 2, saleId, mpesaRequestId]);
     }
 
     // Activity Log
@@ -162,9 +176,47 @@ export const vendorMpesaPush = async (req, res) => {
   const { phone, amount, reference } = req.body;
 
   try {
-    const result = await initiateStkPush({ phone, amount, reference });
+    const [[provider]] = await db.query(`SELECT operationalSettings FROM Provider WHERE tenantId = ?`, [tenantId]);
+    
+    let customCredentials = null;
+    if (provider?.operationalSettings) {
+      const ops = typeof provider.operationalSettings === 'string' 
+        ? JSON.parse(provider.operationalSettings) 
+        : provider.operationalSettings;
+      
+      if (ops.mpesa && ops.mpesa.consumerKey) {
+        customCredentials = { ...ops.mpesa };
+        if (customCredentials.consumerKey && customCredentials.consumerKey.includes(':')) {
+          customCredentials.consumerKey = decrypt(customCredentials.consumerKey);
+        }
+        if (customCredentials.consumerSecret && customCredentials.consumerSecret.includes(':')) {
+          customCredentials.consumerSecret = decrypt(customCredentials.consumerSecret);
+        }
+        if (customCredentials.passkey && customCredentials.passkey.includes(':')) {
+          customCredentials.passkey = decrypt(customCredentials.passkey);
+        }
+      }
+    }
+
+    if (!customCredentials || !customCredentials.consumerKey) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'M-Pesa credentials not configured. Please visit the Developer Console to set up your Paybill/Till integration.' 
+      });
+    }
+
+    const result = await initiateStkPush(
+      { phone, amount, reference }, 
+      customCredentials,
+      {
+        customerName: req.body.customerName || 'Walk-in Customer',
+        initiatorName: req.user.name || 'Staff',
+        tenantName: provider.businessName || 'Business'
+      }
+    );
     return res.json({ success: true, data: result });
   } catch (err) {
+    console.error('[SALES] M-Pesa Push Error:', err);
     return res.status(500).json({ success: false, message: err.message });
   }
 };

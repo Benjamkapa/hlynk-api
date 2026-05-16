@@ -9,12 +9,12 @@
   "env": "PROD",
   "sms_service_id": "0",
   "sms_response_type": "json",
-  "sms_url": "https://api.tililtech.com/sms/v3/sendsms",
-  "sms_api_key": "PeiEHh69f28wMvbQL7ykNunDGpOI1rRxqoCYK3mazX0tUjABWTSJ5l4dcsFgVZ",
+  "sms_url": "https://sms.qorami.io/api/sms/sendsms",
+  "sms_api_key": "psVYFCTFCFG67567xcftcgf798798VHGVH8978GCFCFCFCFG89778vHVVGVGHrfyfy",
   "notification_url": "",
   "token_expires": "40000",
   "jwt_secret": "MDIzIDE2OjUwOjQ1IEdNVCswMzAwIChFYXN0IEFmcmljYSBUaW1lKSIsInVzZXJJZCI6MTIsImlhdCI6MTY6Nz",
   "algorithm": "HS256",
   "expires_in": "360m",
-  "backend_url": "http://localhost:3000"
+  "backend_url": "https://api.hlynk.co.ke"
 }

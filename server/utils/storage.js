@@ -13,7 +13,7 @@ export const initStorage = async () => {
             fs.mkdirSync(uploadDir, { recursive: true });
             console.log(`✅ Storage: Local 'uploads' directory created.`);
         } else {
-            console.log(`✅ Storage: Local storage is ready.`);
+            console.log(`💥 Storage: Local storage is ready.`);
         }
     } catch (err) {
         console.error("🔴 Storage: Initialization failed!", err.message);

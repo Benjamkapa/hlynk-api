@@ -6,7 +6,11 @@ import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 
+// Suppress redundant env injection logs
+const originalLog = console.log;
+console.log = () => {};
 dotenv.config();
+console.log = originalLog;
 
 // Route imports
 import authRoutes from "./routes/auth.js";
