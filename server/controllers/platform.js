@@ -27,14 +27,14 @@ export const getPlatformReviews = async (req, res) => {
       SELECT 
         pr.id, pr.userId, pr.tenantId, pr.rating, 
         pr.reviewText as comment, pr.businessName, pr.ownerName as name, 
-        pr.createdAt, u.photoUrl
+        pr.createdAt, p.photoUrl
       FROM PlatformReview pr
-      LEFT JOIN User u ON pr.userId = u.id
+      LEFT JOIN Provider p ON pr.tenantId = p.tenantId
       ORDER BY pr.createdAt DESC
       LIMIT ?
     `, [Number(limit)]);
 
-    return res.json({ success: true, reviews });
+    return res.json({ success: true, items: reviews });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to fetch reviews' });
   }

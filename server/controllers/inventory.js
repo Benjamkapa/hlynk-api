@@ -44,31 +44,36 @@ export const listProducts = async (req, res) => {
     const [countRes] = await db.query(`SELECT COUNT(*) as total FROM Product ${whereQuery}`, queryParams);
     const total = Number(countRes[0].total);
 
-    // Calculate stats efficiently
-    const [totalItemsRes] = await db.query(`SELECT COUNT(*) as total FROM Product WHERE tenantId = ?`, [tenantId]);
-    const [lowStockRes] = await db.query(`SELECT COUNT(*) as total FROM Product WHERE tenantId = ? AND type != 'SERVICE' AND stockLevel <= minLevel`, [tenantId]);
-    const [totalValueRes] = await db.query(`SELECT SUM(price * stockLevel) as total FROM Product WHERE tenantId = ?`, [tenantId]);
-    
-    const today = getStartOfDay(new Date());
-    const [expiringSoonRes] = await db.query(`
-      SELECT COUNT(*) as total FROM Product 
-      WHERE tenantId = ? AND isPerishable = 1 AND expiryDate >= ? AND expiryDate <= DATE_ADD(?, INTERVAL 30 DAY)
-    `, [tenantId, today, today]);
-
-    return res.json({ 
-      success: true, 
+    const response = {
+      success: true,
       items: products,
       total,
       page: Number(page),
       limit: Number(limit),
-      pages: Math.ceil(total / Number(limit)),
-      stats: {
+      pages: Math.ceil(total / Number(limit))
+    };
+
+    // Only calculate expensive stats if specifically requested (e.g. for dashboard/management, not for POS search)
+    if (req.query.includeStats === 'true') {
+      const [totalItemsRes] = await db.query(`SELECT COUNT(*) as total FROM Product WHERE tenantId = ?`, [tenantId]);
+      const [lowStockRes] = await db.query(`SELECT COUNT(*) as total FROM Product WHERE tenantId = ? AND type != 'SERVICE' AND stockLevel <= minLevel`, [tenantId]);
+      const [totalValueRes] = await db.query(`SELECT SUM(price * stockLevel) as total FROM Product WHERE tenantId = ?`, [tenantId]);
+      
+      const today = getStartOfDay(new Date());
+      const [expiringSoonRes] = await db.query(`
+        SELECT COUNT(*) as total FROM Product 
+        WHERE tenantId = ? AND isPerishable = 1 AND expiryDate >= ? AND expiryDate <= DATE_ADD(?, INTERVAL 30 DAY)
+      `, [tenantId, today, today]);
+
+      response.stats = {
         totalItems: Number(totalItemsRes[0].total),
         lowStock: Number(lowStockRes[0].total),
         totalValue: Number(totalValueRes[0].total || 0),
         expiringSoon: Number(expiringSoonRes[0].total)
-      }
-    });
+      };
+    }
+
+    return res.json(response);
   } catch (err) {
     console.error('[INVENTORY] List error:', err);
     res.status(500).json({ success: false, message: 'Failed to fetch inventory' });

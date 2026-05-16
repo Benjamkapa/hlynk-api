@@ -9,8 +9,8 @@ export const startSubscriptionDaemon = () => {
       // 1. Mark expired trials
       const [trials] = await db.query(`
         UPDATE Subscription 
-        SET status = 'EXPIRED', updatedAt = NOW()
-        WHERE status = 'TRIAL' AND trialEndDate < NOW()
+        SET status = 1, updatedAt = NOW()
+        WHERE status = 2 AND trialEndDate < NOW()
       `);
       if (trials.affectedRows > 0) {
         console.log(`[Daemon] Expired ${trials.affectedRows} trial subscriptions.`);
@@ -19,8 +19,8 @@ export const startSubscriptionDaemon = () => {
       // 2. Mark expired active subscriptions
       const [active] = await db.query(`
         UPDATE Subscription 
-        SET status = 'EXPIRED', updatedAt = NOW()
-        WHERE status = 'ACTIVE' AND endDate < NOW()
+        SET status = 1, updatedAt = NOW()
+        WHERE status = 0 AND endDate < NOW()
       `);
       if (active.affectedRows > 0) {
         console.log(`[Daemon] Expired ${active.affectedRows} active subscriptions.`);
