@@ -10,15 +10,15 @@ import { ulid } from 'ulid';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const params = JSON.parse(fs.readFileSync(path.join(__dirname, '../configs/params.json'), 'utf8'));
 
-const MPESA_ENV = process.env.MPESA_ENV || params.mpesa_env || 'sandbox';
+const MPESA_ENV = (process.env.MPESA_ENV || params.mpesa_env || 'sandbox').trim();
 const BASE_URL = MPESA_ENV === 'production' 
   ? 'https://api.safaricom.co.ke' 
   : 'https://sandbox.safaricom.co.ke';
 
-const CONSUMER_KEY = process.env.MPESA_CONSUMER_KEY || params.mpesa_consumer_key;
-const CONSUMER_SECRET = process.env.MPESA_CONSUMER_SECRET || params.mpesa_consumer_secret;
-const BUSINESS_SHORT_CODE = process.env.MPESA_SHORTCODE || params.mpesa_shortcode;
-const PASSKEY = process.env.MPESA_PASSKEY || params.mpesa_passkey;
+const CONSUMER_KEY = (process.env.MPESA_CONSUMER_KEY || params.mpesa_consumer_key || '').trim();
+const CONSUMER_SECRET = (process.env.MPESA_CONSUMER_SECRET || params.mpesa_consumer_secret || '').trim();
+const BUSINESS_SHORT_CODE = (process.env.MPESA_SHORTCODE || params.mpesa_shortcode || '').trim();
+const PASSKEY = (process.env.MPESA_PASSKEY || params.mpesa_passkey || '').trim();
 
 const CALLBACK_URL = `${process.env.BACKEND_URL}/api/v1/payments/mpesa/callback`;
 
@@ -46,6 +46,10 @@ async function getAccessToken(customCredentials = null) {
   } catch (error) {
     const errorMsg = error.response?.data?.errorMessage || error.response?.data?.message || error.message;
     console.error('[MPESA] Auth Error:', errorMsg);
+    
+    // Clear cache on auth failure so next attempt tries fresh
+    await redis.del(cacheKey);
+    
     throw new Error(`M-Pesa Auth: ${errorMsg}`);
   }
 }
