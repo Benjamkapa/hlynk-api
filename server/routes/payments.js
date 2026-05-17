@@ -13,8 +13,22 @@ const router = express.Router();
  */
 router.post('/mpesa/stk-push', authenticate, async (req, res) => {
   const { phone, amount, reference } = req.body;
+  const { tenantId, name } = req.user;
+
   try {
-    const result = await initiateStkPush({ phone, amount, reference });
+    const [tenants] = await db.query(`SELECT businessName FROM Tenant WHERE id = ?`, [tenantId]);
+    const tenantName = tenants[0]?.businessName || 'Tenant';
+
+    const result = await initiateStkPush(
+      { phone, amount, reference }, 
+      null, 
+      {
+        customerName: name,
+        initiatorName: name,
+        tenantName: tenantName,
+        tenantId: tenantId
+      }
+    );
     return res.json({ success: true, data: result });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
@@ -27,7 +41,8 @@ router.post('/mpesa/stk-push', authenticate, async (req, res) => {
  */
 router.get('/mpesa/logs', authenticate, async (req, res) => {
   const { tenantId, role } = req.user;
-  const { page = 1, limit = 50 } = req.query;
+  const { page = 1, limit = 50, sortOrder = 'desc' } = req.query;
+  const order = sortOrder.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
   const offset = (Number(page) - 1) * Number(limit);
 
   try {
@@ -42,21 +57,25 @@ router.get('/mpesa/logs', authenticate, async (req, res) => {
 
     const [logs] = await db.query(`
       SELECT 
+        l1.id,
         l1.checkoutRequestId,
+        l1.merchantRequestId,
         l1.phone,
         l1.amount,
         l1.reference,
         l1.customerName,
         l1.initiatorName,
         l1.tenantName,
-        (SELECT status FROM MpesaLog l2 WHERE l2.checkoutRequestId = l1.checkoutRequestId ORDER BY type DESC, createdAt DESC LIMIT 1) as status,
-        (SELECT resultDesc FROM MpesaLog l3 WHERE l3.checkoutRequestId = l1.checkoutRequestId ORDER BY type DESC, createdAt DESC LIMIT 1) as resultDesc,
-        (SELECT COUNT(*) FROM MpesaLog l4 WHERE l4.checkoutRequestId = l1.checkoutRequestId AND l4.type = 1) > 0 as isComplete,
-        MAX(l1.createdAt) as createdAt
+        l1.type,
+        l1.status,
+        l1.resultCode,
+        l1.resultDesc,
+        l1.rawPayload,
+        l1.createdAt,
+        (SELECT COUNT(*) FROM MpesaLog l2 WHERE l2.checkoutRequestId = l1.checkoutRequestId AND l2.type = 1) > 0 as isComplete
       FROM MpesaLog l1
       ${whereQuery}
-      GROUP BY l1.checkoutRequestId
-      ORDER BY createdAt DESC 
+      ORDER BY l1.createdAt ${order} 
       LIMIT ? OFFSET ?
     `, [...queryParams, Number(limit), offset]);
 
@@ -80,8 +99,6 @@ router.get('/mpesa/logs', authenticate, async (req, res) => {
  * @desc M-Pesa Daraja STK Push Callback
  */
 router.post('/mpesa/callback', express.json(), async (req, res) => {
-  console.log('[MPESA CALLBACK] Raw Body:', JSON.stringify(req.body, null, 2));
-  
   if (!req.body || !req.body.Body) {
     console.error('[MPESA CALLBACK] Error: No Body found in request');
     
@@ -107,13 +124,13 @@ router.post('/mpesa/callback', express.json(), async (req, res) => {
     
     // Attempt to retrieve metadata from initiation log
     const [[initLog]] = await db.query(
-      `SELECT customerName, initiatorName, tenantName FROM MpesaLog WHERE checkoutRequestId = ? AND type = 0 LIMIT 1`,
+      `SELECT customerName, initiatorName, tenantName, tenantId FROM MpesaLog WHERE checkoutRequestId = ? AND type = 0 LIMIT 1`,
       [CheckoutRequestID]
     );
 
     await db.query(`
-      INSERT INTO MpesaLog (id, merchantRequestId, checkoutRequestId, customerName, initiatorName, tenantName, type, status, resultCode, resultDesc, rawPayload)
-      VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+      INSERT INTO MpesaLog (id, merchantRequestId, checkoutRequestId, customerName, initiatorName, tenantName, tenantId, type, status, resultCode, resultDesc, rawPayload)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
     `, [
       ulid(),
       MerchantRequestID,
@@ -121,6 +138,7 @@ router.post('/mpesa/callback', express.json(), async (req, res) => {
       initLog?.customerName || null,
       initLog?.initiatorName || null,
       initLog?.tenantName || null,
+      initLog?.tenantId || null,
       logStatus,
       ResultCode,
       ResultDesc,
@@ -134,6 +152,12 @@ router.post('/mpesa/callback', express.json(), async (req, res) => {
   if (success && CallbackMetadata && CallbackMetadata.Item) {
     const receiptItem = CallbackMetadata.Item.find((i) => i.Name === 'MpesaReceiptNumber');
     if (receiptItem) mpesaReceipt = receiptItem.Value;
+  }
+
+  if (success) {
+    console.log(`[MONEY] M-Pesa Payment Success | Receipt: ${mpesaReceipt} | Code: ${ResultCode}`);
+  } else {
+    console.log(`[PAYMENT] M-Pesa Request Failed/Cancelled | Desc: ${ResultDesc}`);
   }
 
   try {
@@ -154,7 +178,6 @@ router.post('/mpesa/callback', express.json(), async (req, res) => {
       // 2. TRIGGER BUSINESS LOGIC BASED ON TYPE
       if (payment.transactionType === 'SUBSCRIPTION') {
         await handlePaymentCallback(payment.reference, mpesaReceipt, success, ResultDesc);
-        console.log(`[MASTER CALLBACK] Subscription Processed: ${payment.id}`);
       } 
       else if (payment.transactionType === 'SALE') {
         // Update the related Sale record if it exists
@@ -163,7 +186,6 @@ router.post('/mpesa/callback', express.json(), async (req, res) => {
           await db.query(`UPDATE Sale SET status = ?, mpesaReceipt = ?, updatedAt = NOW() WHERE id = ?`, 
             [status, success ? mpesaReceipt : null, sales[0].id]);
         }
-        console.log(`[MASTER CALLBACK] Sale Processed: ${payment.id}`);
       }
     } else {
       console.warn(`[MASTER CALLBACK] Orphaned callback received for ID: ${CheckoutRequestID}. No matching record in Master Payment table.`);

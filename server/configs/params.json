@@ -16,5 +16,5 @@
   "jwt_secret": "MDIzIDE2OjUwOjQ1IEdNVCswMzAwIChFYXN0IEFmcmljYSBUaW1lKSIsInVzZXJJZCI6MTIsImlhdCI6MTY6Nz",
   "algorithm": "HS256",
   "expires_in": "360m",
-  "backend_url": "https://api.hlynk.co.ke"
+  "backend_url": "https://276e-102-0-8-34.ngrok-free.app"
 }

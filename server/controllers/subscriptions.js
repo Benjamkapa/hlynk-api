@@ -24,19 +24,23 @@ export const getBillingHistory = async (req, res) => {
   const offset = (Number(page) - 1) * Number(limit);
 
   try {
-    let query = `SELECT * FROM Payment WHERE tenantId = ? AND transactionType = 'SUBSCRIPTION'`;
+    let query = `
+      SELECT p.*, (SELECT rawPayload FROM MpesaLog l WHERE l.checkoutRequestId = p.mpesaRequestId ORDER BY type DESC, createdAt DESC LIMIT 1) as rawPayload
+      FROM Payment p
+      WHERE p.tenantId = ? AND p.transactionType = 'SUBSCRIPTION'
+    `;
     const queryParams = [tenantId];
 
     if (status) {
-      query += ` AND status = ?`;
+      query += ` AND p.status = ?`;
       queryParams.push(status);
     }
     if (plan) {
-      query += ` AND plan = ?`;
+      query += ` AND p.plan = ?`;
       queryParams.push(plan);
     }
 
-    query += ` ORDER BY createdAt DESC LIMIT ? OFFSET ?`;
+    query += ` ORDER BY p.createdAt DESC LIMIT ? OFFSET ?`;
     queryParams.push(Number(limit), offset);
 
     const [payments] = await db.query(query, queryParams);
@@ -93,7 +97,8 @@ export const initiateRenewal = async (req, res) => {
       {
         customerName: req.user.name,
         initiatorName: req.user.name,
-        tenantName: tenantName
+        tenantName: tenantName,
+        tenantId: tenantId
       }
     );
 
@@ -130,7 +135,8 @@ export const changePlan = async (req, res) => {
       {
         customerName: req.user.name,
         initiatorName: req.user.name,
-        tenantName: tenantName
+        tenantName: tenantName,
+        tenantId: tenantId
       }
     );
 
@@ -161,7 +167,13 @@ export const handlePaymentCallback = async (reference, transactionId, success, m
       
       if (subs.length > 0) {
         const sub = subs[0];
-        console.log(`[SUBSCRIPTION CALLBACK] Updating Subscription for Tenant ${payment.tenantId} to ${payment.plan}`);
+        const isNewPlan = sub.planName !== payment.plan;
+        const actionLabel = isNewPlan ? 'Plan Change' : 'Subscription Renewal';
+        const notificationTitle = isNewPlan ? 'Plan Activated!' : 'Subscription Renewed!';
+        const notificationMsg = isNewPlan 
+          ? `Your switch to the ${payment.plan} plan was successful. New features are now active.`
+          : `Your ${payment.plan} subscription has been extended for another 28 days.`;
+
         const baseDate = new Date();
         const newEnd = new Date(baseDate);
         newEnd.setDate(newEnd.getDate() + 28);
@@ -171,6 +183,21 @@ export const handlePaymentCallback = async (reference, transactionId, success, m
           SET planName = ?, status = 0, endDate = ?, startDate = ?, isTrial = 0 
           WHERE id = ?
         `, [payment.plan, newEnd, new Date(), sub.id]);
+
+        // 3. UPDATE TENANT STATE (Clear trial flags)
+        await connection.query(`UPDATE Tenant SET isTrial = 0, updatedAt = NOW() WHERE id = ?`, [payment.tenantId]);
+
+        // 4. ACTIVITY LOG
+        await connection.query(`
+          INSERT INTO ActivityLog (id, tenantId, action, logName, details, createdAt) 
+          VALUES (?, ?, ?, 'Billing', ?, NOW())
+        `, [ulid(), payment.tenantId, actionLabel, `${actionLabel} to ${payment.plan} via M-Pesa (${transactionId})`]);
+
+        // 5. SYSTEM NOTIFICATION
+        await connection.query(`
+          INSERT INTO Notification (id, tenantId, title, message, type, status, createdAt) 
+          VALUES (?, ?, ?, ?, 'success', 0, NOW())
+        `, [ulid(), payment.tenantId, notificationTitle, notificationMsg]);
       }
 
       await connection.commit();

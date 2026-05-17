@@ -39,7 +39,8 @@ export const listSales = async (req, res) => {
     const offset = (Number(page) - 1) * Number(limit);
 
     const [sales] = await db.query(`
-      SELECT s.*, u.name as userName 
+      SELECT s.*, u.name as userName,
+             (SELECT rawPayload FROM MpesaLog l WHERE l.checkoutRequestId = s.mpesaRequestId ORDER BY type DESC, createdAt DESC LIMIT 1) as rawPayload
       FROM Sale s
       LEFT JOIN User u ON s.userId = u.id
       ${whereQuery}
@@ -132,17 +133,26 @@ export const createSale = async (req, res) => {
 
     // IF MPESA, Record in Master Payment Table
     if (paymentMethod === 'MPESA' || mpesaRequestId) {
-      await connection.query(`
-        INSERT INTO Payment (id, tenantId, amount, status, reference, mpesaRequestId, transactionType, createdAt)
-        VALUES (?, ?, ?, ?, ?, ?, 'SALE', NOW())
-      `, [ulid(), tenantId, totalAmount, status || 2, saleId, mpesaRequestId]);
+      try {
+        await connection.query(`
+          INSERT INTO Payment (id, tenantId, amount, status, reference, mpesaRequestId, transactionType, createdAt)
+          VALUES (?, ?, ?, ?, ?, ?, 'SALE', NOW())
+        `, [ulid(), tenantId, totalAmount, status || 2, saleId, mpesaRequestId || null]);
+      } catch (payErr) {
+        console.error('[SALE-PAYMENT-LINK] Warning: Failed to link payment record:', payErr.message);
+        // We don't throw here to avoid failing the whole sale if just the payment-log fails
+      }
     }
 
     // Activity Log
-    await connection.query(`
-      INSERT INTO ActivityLog (id, tenantId, userId, action, logName, details, ipAddress, actionId, createdAt) 
-      VALUES (?, ?, ?, 'Sale recorded', 'Sale recorded', ?, ?, ?, NOW())
-    `, [ulid(), tenantId, userId || null, `Sale of ${items.length} items for ${totalAmount}`, clientIp, `#sale-${saleId.slice(-6).toUpperCase()}`]);
+    try {
+      await connection.query(`
+        INSERT INTO ActivityLog (id, tenantId, userId, action, logName, details, ipAddress, actionId, createdAt) 
+        VALUES (?, ?, ?, 'Sale recorded', 'Sale recorded', ?, ?, ?, NOW())
+      `, [ulid(), tenantId, userId || null, `Sale of ${items.length} items for ${totalAmount}`, clientIp, `#sale-${saleId.slice(-6).toUpperCase()}`]);
+    } catch (logErr) {
+      console.error('[SALE-ACTIVITY-LOG] Warning: Failed to record activity:', logErr.message);
+    }
 
     await connection.commit();
     return res.json({ success: true, data: { saleId } });
@@ -184,8 +194,11 @@ export const vendorMpesaPush = async (req, res) => {
         ? JSON.parse(provider.operationalSettings) 
         : provider.operationalSettings;
       
-      if (ops.mpesa && ops.mpesa.consumerKey) {
-        customCredentials = { ...ops.mpesa };
+      const env = ops.mpesa?.env || 'sandbox';
+      const mpesa = ops.mpesa?.[env];
+
+      if (mpesa && mpesa.consumerKey) {
+        customCredentials = { ...mpesa, env };
         if (customCredentials.consumerKey && customCredentials.consumerKey.includes(':')) {
           customCredentials.consumerKey = decrypt(customCredentials.consumerKey);
         }
@@ -211,7 +224,8 @@ export const vendorMpesaPush = async (req, res) => {
       {
         customerName: req.body.customerName || 'Walk-in Customer',
         initiatorName: req.user.name || 'Staff',
-        tenantName: provider.businessName || 'Business'
+        tenantName: provider.businessName || 'Business',
+        tenantId: tenantId
       }
     );
     return res.json({ success: true, data: result });

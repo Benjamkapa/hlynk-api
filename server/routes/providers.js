@@ -9,6 +9,7 @@ router.use(requireProvider);
 
 router.get('/me', getMyProfile);
 router.patch('/me', updateProfile);
+router.put('/me', updateProfile);
 router.get('/me/activity', getActivityLogs);
 router.get('/stats', getStats);
 router.post('/me/photo', uploadPhoto);
