@@ -27,9 +27,9 @@ export const getPlatformReviews = async (req, res) => {
       SELECT 
         pr.id, pr.userId, pr.tenantId, pr.rating, 
         pr.reviewText as comment, pr.businessName, pr.ownerName as name, 
-        pr.createdAt, p.photoUrl
+        pr.createdAt, u.photoUrl
       FROM PlatformReview pr
-      LEFT JOIN Provider p ON pr.tenantId = p.tenantId
+      LEFT JOIN User u ON pr.userId = u.id
       ORDER BY pr.createdAt DESC
       LIMIT ?
     `, [Number(limit)]);

@@ -39,8 +39,8 @@ export const createStaff = async (req, res) => {
     const [staffCountRes] = await db.query(`SELECT COUNT(*) as total FROM User WHERE tenantId = ? AND role = 'STAFF'`, [tenantId]);
     const currentCount = Number(staffCountRes[0]?.total || 0);
 
-    const limits = { 'LITE': 3, 'PLUS': 15, 'MAX': 999999 };
-    const limit = limits[plan] || 3;
+    const limits = { 'LITE': 0, 'PLUS': 1, 'MAX': 999999 };
+    const limit = limits[plan] || 0;
 
     if (currentCount >= limit) {
       return res.status(403).json({ success: false, message: `Your ${plan} plan is limited to ${limit} team members.` });
