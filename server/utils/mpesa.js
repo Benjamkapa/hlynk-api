@@ -20,7 +20,12 @@ const CONSUMER_SECRET = (process.env.MPESA_CONSUMER_SECRET || params.mpesa_consu
 const BUSINESS_SHORT_CODE = (process.env.MPESA_SHORTCODE || params.mpesa_shortcode || '').trim();
 const PASSKEY = (process.env.MPESA_PASSKEY || params.mpesa_passkey || '').trim();
 
-const CALLBACK_URL = `${process.env.BACKEND_URL}/api/v1/payments/mpesa/callback`;
+const BACKEND_URL = (process.env.BACKEND_URL || params.backend_url || '').replace(/\/$/, '');
+const CALLBACK_URL = `${BACKEND_URL}/api/v1/payments/mpesa/callback`;
+
+if (!BACKEND_URL || BACKEND_URL.includes('localhost')) {
+  console.warn('[MPESA] WARNING: BACKEND_URL is set to localhost or empty. Safaricom callbacks will fail.');
+}
 
 async function getAccessToken(customCredentials = null) {
   const cacheKey = customCredentials 
@@ -37,6 +42,7 @@ async function getAccessToken(customCredentials = null) {
 
   const auth = Buffer.from(`${key}:${secret}`).toString('base64');
   try {
+    console.log(`[MPESA] Auth Attempt | Env: ${env} | Key Prefix: ${key.substring(0, 4)}...`);
     const res = await axios.get(`${url}/oauth/v1/generate?grant_type=client_credentials`, {
       headers: { Authorization: `Basic ${auth}` }
     });
@@ -101,8 +107,8 @@ export async function initiateStkPush(pushParams, customCredentials = null, meta
 
     // Log the initiation
     await db.query(`
-      INSERT INTO MpesaLog (id, merchantRequestId, checkoutRequestId, phone, amount, reference, customerName, initiatorName, tenantName, type, status, rawPayload)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 2, ?)
+      INSERT INTO MpesaLog (id, merchantRequestId, checkoutRequestId, phone, amount, reference, customerName, initiatorName, tenantName, tenantId, type, status, rawPayload)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 2, ?)
     `, [
       ulid(), 
       res.data.MerchantRequestID, 
@@ -113,6 +119,7 @@ export async function initiateStkPush(pushParams, customCredentials = null, meta
       metadata.customerName || null,
       metadata.initiatorName || null,
       metadata.tenantName || null,
+      metadata.tenantId || null,
       JSON.stringify(res.data)
     ]);
 
@@ -123,8 +130,8 @@ export async function initiateStkPush(pushParams, customCredentials = null, meta
     
     // Log the failure
     await db.query(`
-      INSERT INTO MpesaLog (id, phone, amount, reference, customerName, initiatorName, tenantName, type, status, resultDesc)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 0, 4, ?)
+      INSERT INTO MpesaLog (id, phone, amount, reference, customerName, initiatorName, tenantName, tenantId, type, status, resultDesc)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 4, ?)
     `, [
       ulid(), 
       pushParams.phone, 
@@ -133,6 +140,7 @@ export async function initiateStkPush(pushParams, customCredentials = null, meta
       metadata.customerName || null,
       metadata.initiatorName || null,
       metadata.tenantName || null,
+      metadata.tenantId || null,
       errorMsg
     ]);
 

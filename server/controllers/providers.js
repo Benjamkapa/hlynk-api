@@ -6,8 +6,19 @@ const decryptOperationalSettings = (operationalSettings) => {
   if (!operationalSettings) return operationalSettings;
   const ops = typeof operationalSettings === 'string' ? JSON.parse(operationalSettings) : { ...operationalSettings };
 
+  const decryptMpesa = (m) => {
+    if (!m) return m;
+    const res = { ...m };
+    if (res.consumerKey) res.consumerKey = decrypt(res.consumerKey);
+    if (res.consumerSecret) res.consumerSecret = decrypt(res.consumerSecret);
+    if (res.passkey) res.passkey = decrypt(res.passkey);
+    return res;
+  };
+
   if (ops.mpesa) {
-    ops.mpesa = { ...ops.mpesa };
+    if (ops.mpesa.sandbox) ops.mpesa.sandbox = decryptMpesa(ops.mpesa.sandbox);
+    if (ops.mpesa.production) ops.mpesa.production = decryptMpesa(ops.mpesa.production);
+    // Backward compatibility
     if (ops.mpesa.consumerKey) ops.mpesa.consumerKey = decrypt(ops.mpesa.consumerKey);
     if (ops.mpesa.consumerSecret) ops.mpesa.consumerSecret = decrypt(ops.mpesa.consumerSecret);
     if (ops.mpesa.passkey) ops.mpesa.passkey = decrypt(ops.mpesa.passkey);
@@ -24,8 +35,19 @@ const encryptOperationalSettings = (operationalSettings) => {
   if (!operationalSettings) return operationalSettings;
   const ops = typeof operationalSettings === 'string' ? JSON.parse(operationalSettings) : { ...operationalSettings };
 
+  const encryptMpesa = (m) => {
+    if (!m) return m;
+    const res = { ...m };
+    if (res.consumerKey && !res.consumerKey.includes(':')) res.consumerKey = encrypt(res.consumerKey);
+    if (res.consumerSecret && !res.consumerSecret.includes(':')) res.consumerSecret = encrypt(res.consumerSecret);
+    if (res.passkey && !res.passkey.includes(':')) res.passkey = encrypt(res.passkey);
+    return res;
+  };
+
   if (ops.mpesa) {
-    ops.mpesa = { ...ops.mpesa };
+    if (ops.mpesa.sandbox) ops.mpesa.sandbox = encryptMpesa(ops.mpesa.sandbox);
+    if (ops.mpesa.production) ops.mpesa.production = encryptMpesa(ops.mpesa.production);
+    // Backward compatibility
     if (ops.mpesa.consumerKey && !ops.mpesa.consumerKey.includes(':')) ops.mpesa.consumerKey = encrypt(ops.mpesa.consumerKey);
     if (ops.mpesa.consumerSecret && !ops.mpesa.consumerSecret.includes(':')) ops.mpesa.consumerSecret = encrypt(ops.mpesa.consumerSecret);
     if (ops.mpesa.passkey && !ops.mpesa.passkey.includes(':')) ops.mpesa.passkey = encrypt(ops.mpesa.passkey);
@@ -95,6 +117,7 @@ export const updateProfile = async (req, res) => {
     if (data.category !== undefined) { provUpdates.push('category = ?'); provParams.push(data.category); }
     if (data.description !== undefined) { provUpdates.push('description = ?'); provParams.push(data.description); }
     if (data.location !== undefined) { provUpdates.push('location = ?'); provParams.push(data.location); }
+    if (data.operationalSettings !== undefined) { provUpdates.push('operationalSettings = ?'); provParams.push(JSON.stringify(data.operationalSettings)); }
 
     if (provUpdates.length > 0) {
       provUpdates.push('updatedAt = NOW()');
