@@ -174,11 +174,18 @@ export const getStats = async (req, res) => {
       ORDER BY DATE(createdAt) ASC
     `, saleParams);
 
-    const salesChart = chartRows.map(row => ({
-      name: row.name,
-      sales: Number(row.sales || 0),
-      profit: Number(row.profit || 0)
-    }));
+    // Generate last 7 days array with 0 values
+    const salesChart = Array.from({ length: 7 }).map((_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - (6 - i));
+      const name = d.toLocaleDateString('en-US', { weekday: 'short' });
+      const row = chartRows.find(r => r.name === name);
+      return {
+        name,
+        sales: Number(row?.sales || 0),
+        profit: Number(row?.profit || 0)
+      };
+    });
 
     return res.json({
       success: true,
