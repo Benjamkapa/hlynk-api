@@ -9,38 +9,40 @@ export const listExpenses = async (req, res) => {
     const { userId } = req.user;
     console.log(`[DEBUG] listExpenses: user=${userId}, role=${req.user.role}, isStaff=${isStaff}`);
 
-    let whereQuery = 'WHERE tenantId = ?';
+    let whereQuery = 'WHERE e.tenantId = ?';
     const queryParams = [tenantId];
 
     if (isStaff) {
-      whereQuery += ' AND userId = ?';
+      whereQuery += ' AND e.userId = ?';
       queryParams.push(userId);
     }
 
-    if (category) { whereQuery += ' AND category = ?'; queryParams.push(category); }
-    if (search) { whereQuery += ' AND description LIKE ?'; queryParams.push(`%${search}%`); }
+    if (category) { whereQuery += ' AND e.category = ?'; queryParams.push(category); }
+    if (search) { whereQuery += ' AND e.description LIKE ?'; queryParams.push(`%${search}%`); }
 
     const offset = (Number(page) - 1) * Number(limit);
 
     const [expenses] = await db.query(`
-      SELECT * FROM Expense 
+      SELECT e.*, u.name as recordedBy 
+      FROM Expense e
+      LEFT JOIN User u ON e.userId = u.id
       ${whereQuery} 
-      ORDER BY ${sortBy} ${sortOrder} 
+      ORDER BY e.${sortBy} ${sortOrder} 
       LIMIT ? OFFSET ?
     `, [...queryParams, Number(limit), offset]);
 
-    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM Expense ${whereQuery}`, queryParams);
+    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM Expense e ${whereQuery}`, queryParams);
     const total = Number(countRes[0].total);
     const pages = Math.ceil(total / Number(limit));
 
-    const [totalAgg] = await db.query(`SELECT SUM(amount) as total FROM Expense ${whereQuery}`, queryParams);
+    const [totalAgg] = await db.query(`SELECT SUM(e.amount) as total FROM Expense e ${whereQuery}`, queryParams);
     
     // Get highest category
     const [categoryAgg] = await db.query(`
-      SELECT category, SUM(amount) as total 
-      FROM Expense 
+      SELECT e.category, SUM(e.amount) as total 
+      FROM Expense e
       ${whereQuery} 
-      GROUP BY category 
+      GROUP BY e.category 
       ORDER BY total DESC 
       LIMIT 1
     `, queryParams);
@@ -49,10 +51,10 @@ export const listExpenses = async (req, res) => {
 
     // Calculate burn rate (avg daily spend this month)
     const [burnAgg] = await db.query(`
-      SELECT SUM(amount) as total 
-      FROM Expense 
+      SELECT SUM(e.amount) as total 
+      FROM Expense e
       ${whereQuery} 
-      AND date >= DATE_FORMAT(NOW() ,'%Y-%m-01')
+      AND e.date >= DATE_FORMAT(NOW() ,'%Y-%m-01')
     `, queryParams);
     
     const daysSoFar = Math.max(1, new Date().getDate());
@@ -113,5 +115,30 @@ export const deleteExpense = async (req, res) => {
     return res.json({ success: true, data: { message: 'Expense deleted' } });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Delete failed' });
+  }
+};
+
+export const getExpenseById = async (req, res) => {
+  const { tenantId, userId, role } = req.user;
+  const { id } = req.params;
+
+  try {
+    let query = 'SELECT e.*, u.name as recordedBy FROM Expense e LEFT JOIN User u ON e.userId = u.id WHERE e.id = ? AND e.tenantId = ?';
+    const params = [id, tenantId];
+
+    if (role === 'STAFF') {
+      query += ' AND e.userId = ?';
+      params.push(userId);
+    }
+
+    const [expenses] = await db.query(query, params);
+
+    if (expenses.length === 0) {
+      return res.status(404).json({ success: false, message: 'Expense not found' });
+    }
+
+    return res.json({ success: true, data: expenses[0] });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to fetch expense details' });
   }
 };
