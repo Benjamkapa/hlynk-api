@@ -44,9 +44,6 @@ export const authenticate = async (req, res, next) => {
       permissions: typeof sessionUser.permissions === 'string' ? JSON.parse(sessionUser.permissions) : sessionUser.permissions || []
     };
 
-    console.log(`[AUTH] User: ${sessionUser.userName}, Role: ${sessionUser.role}, Tenant: ${sessionUser.tenantName}`);
-
-
     // Update last active (background)
     db.query(`UPDATE Session SET lastActive = NOW() WHERE id = ?`, [sessionUser.sessionId]).catch(() => {});
 

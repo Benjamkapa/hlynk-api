@@ -87,13 +87,18 @@ export const googleAuth = async (req, res) => {
       const userId = ulid();
       const slug = await uniqueSlug(registration.businessName);
 
+      const requestedPlan = registration.planName || 'LITE';
+      const isLite = requestedPlan === 'LITE';
+      const subStatus = isLite ? 2 : 1; // 2 = TRIAL, 1 = PENDING/EXPIRED
+      const trialEnd = isLite ? `DATE_ADD(NOW(), INTERVAL 7 DAY)` : `NULL`;
+
       const connection = await db.getConnection();
       try {
         await connection.beginTransaction();
         await connection.query(`INSERT INTO Tenant (id, slug, businessName, isActive, createdAt, updatedAt) VALUES (?, ?, ?, 1, NOW(), NOW())`, [tenantId, slug, registration.businessName]);
-        await connection.query(`INSERT INTO User (id, tenantId, name, phone, email, role, photoUrl, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 'PROVIDER', ?, 1, NOW(), NOW())`, [userId, tenantId, registration.ownerName || payload.name, registration.phone, email, payload.picture || null]);
-        await connection.query(`INSERT INTO Provider (id, tenantId, userId, businessName, phone, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())`, [ulid(), tenantId, userId, registration.businessName, registration.phone]);
-        await connection.query(`INSERT INTO Subscription (id, tenantId, planName, status, trialEndDate, createdAt, updatedAt) VALUES (?, ?, 'MAX', 'TRIAL', DATE_ADD(NOW(), INTERVAL 7 DAY), NOW(), NOW())`, [ulid(), tenantId]);
+        await connection.query(`INSERT INTO User (id, tenantId, name, phone, email, role, photoUrl, passwordHash, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 'PROVIDER', ?, 'GOOGLE_AUTH', 1, NOW(), NOW())`, [userId, tenantId, registration.ownerName || payload.name, registration.phone, email, payload.picture || null]);
+        await connection.query(`INSERT INTO Provider (id, tenantId, userId, businessName, phone, category, county, location, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`, [ulid(), tenantId, userId, registration.businessName, registration.phone, registration.category || 'Other', registration.county || 'Nairobi', registration.location || 'Unknown']);
+        await connection.query(`INSERT INTO Subscription (id, tenantId, planName, status, trialEndDate, createdAt, updatedAt) VALUES (?, ?, ?, ?, ${trialEnd}, NOW(), NOW())`, [ulid(), tenantId, requestedPlan, subStatus]);
         await connection.commit();
         
         user = { id: userId, tenantId, role: 'PROVIDER', tenantIsActive: 1 };

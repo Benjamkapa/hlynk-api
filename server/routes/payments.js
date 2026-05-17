@@ -118,15 +118,18 @@ router.post('/mpesa/callback', express.json(), async (req, res) => {
   const success = ResultCode === 0;
   const canceled = ResultCode === 1032;
 
+  let initLog = null;
+
   // Log the callback
   try {
     const logStatus = success ? 0 : (canceled ? 3 : 1);
     
     // Attempt to retrieve metadata from initiation log
-    const [[initLog]] = await db.query(
+    const [rows] = await db.query(
       `SELECT customerName, initiatorName, tenantName, tenantId FROM MpesaLog WHERE checkoutRequestId = ? AND type = 0 LIMIT 1`,
       [CheckoutRequestID]
     );
+    initLog = rows[0];
 
     await db.query(`
       INSERT INTO MpesaLog (id, merchantRequestId, checkoutRequestId, customerName, initiatorName, tenantName, tenantId, type, status, resultCode, resultDesc, rawPayload)
@@ -155,9 +158,9 @@ router.post('/mpesa/callback', express.json(), async (req, res) => {
   }
 
   if (success) {
-    console.log(`[MONEY] M-Pesa Payment Success | Receipt: ${mpesaReceipt} | Code: ${ResultCode}`);
+    console.log(`[MONEY] M-Pesa Payment Success | Receipt: ${mpesaReceipt} | Tenant: ${initLog?.tenantName} | User: ${initLog?.initiatorName}`);
   } else {
-    console.log(`[PAYMENT] M-Pesa Request Failed/Cancelled | Desc: ${ResultDesc}`);
+    console.log(`[PAYMENT] M-Pesa Request Failed/Cancelled | Desc: ${ResultDesc} | Tenant: ${initLog?.tenantName} | User: ${initLog?.initiatorName}`);
   }
 
   try {
@@ -185,6 +188,21 @@ router.post('/mpesa/callback', express.json(), async (req, res) => {
         if (sales.length > 0) {
           await db.query(`UPDATE Sale SET status = ?, mpesaReceipt = ?, updatedAt = NOW() WHERE id = ?`, 
             [status, success ? mpesaReceipt : null, sales[0].id]);
+            
+          // RESTORE STOCK IF FAILED OR CANCELLED
+          if (!success) {
+            try {
+              const [items] = await db.query(`SELECT productId, quantity FROM SaleItem WHERE saleId = ?`, [sales[0].id]);
+              for (const item of items) {
+                if (item.productId) {
+                  await db.query(`UPDATE Product SET stockLevel = stockLevel + ? WHERE id = ?`, [item.quantity, item.productId]);
+                }
+              }
+              console.log(`[SALE RESTORE] Restored stock for cancelled/failed sale ${sales[0].id}`);
+            } catch (err) {
+              console.error('[SALE RESTORE] Failed to restore stock:', err);
+            }
+          }
         }
       }
     } else {
