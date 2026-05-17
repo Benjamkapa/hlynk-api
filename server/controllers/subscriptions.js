@@ -3,9 +3,9 @@ import { initiateStkPush, queryStkPush } from '../utils/mpesa.js';
 import { ulid } from 'ulid';
 
 export const PLAN_PRICES = {
-  LITE: 1, // Starter
-  PLUS: 1, // Growth
-  MAX: 1, // Business Pro
+  LITE: 2999 , // Starter
+  PLUS: 6999, // Growth
+  MAX: 16999, // Business Pro
 };
 
 export const getMySubscription = async (req, res) => {
