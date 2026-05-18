@@ -5,14 +5,23 @@ import 'dotenv/config';
 // Priority: DATABASE_URL > individual env vars > defaults
 const connectionString = process.env.DATABASE_URL;
 
-const dbConfig = connectionString ? connectionString : {
+const dbConfig = connectionString ? {
+  uri: connectionString,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 0
+} : {
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '',
   database: process.env.DB_NAME || 'hudumalynk',
   waitForConnections: true,
   connectionLimit: 10,
-  queueLimit: 0
+  queueLimit: 0,
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 0
 };
 
 export const pool = mysql.createPool(dbConfig);

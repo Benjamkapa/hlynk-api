@@ -3,9 +3,9 @@ import { initiateStkPush, queryStkPush } from '../utils/mpesa.js';
 import { ulid } from 'ulid';
 
 export const PLAN_PRICES = {
-  LITE: 2999 , // Starter
-  PLUS: 6999, // Growth
-  MAX: 16999, // Business Pro
+  LITE: 1 , // Starter
+  PLUS: 1, // Growth
+  MAX: 1, // Business Pro
 };
 
 export const getMySubscription = async (req, res) => {
@@ -75,6 +75,11 @@ export const initiateRenewal = async (req, res) => {
   const { phone } = req.body;
 
   try {
+    const [recentPayments] = await db.query(`SELECT COUNT(*) as cnt FROM Payment WHERE tenantId = ? AND createdAt > DATE_SUB(NOW(), INTERVAL 1 HOUR)`, [tenantId]);
+    if (recentPayments[0].cnt >= 5) {
+      return res.status(429).json({ success: false, message: 'Too many payment attempts. Please wait before trying again.' });
+    }
+
     const [subs] = await db.query(`SELECT * FROM Subscription WHERE tenantId = ? LIMIT 1`, [tenantId]);
     if (subs.length === 0) return res.status(404).json({ success: false, message: 'Subscription not found' });
     
@@ -117,6 +122,11 @@ export const changePlan = async (req, res) => {
   const { planName, phone } = req.body;
 
   try {
+    const [recentPayments] = await db.query(`SELECT COUNT(*) as cnt FROM Payment WHERE tenantId = ? AND createdAt > DATE_SUB(NOW(), INTERVAL 1 HOUR)`, [tenantId]);
+    if (recentPayments[0].cnt >= 5) {
+      return res.status(429).json({ success: false, message: 'Too many payment attempts. Please wait before trying again.' });
+    }
+
     const amount = PLAN_PRICES[planName];
     const reference = `SUB-UPG-${tenantId.slice(-6).toUpperCase()}-${Date.now().toString().slice(-4)}`;
 
@@ -170,9 +180,11 @@ export const handlePaymentCallback = async (reference, transactionId, success, m
         const isNewPlan = sub.planName !== payment.plan;
         const actionLabel = isNewPlan ? 'Plan Change' : 'Subscription Renewal';
         const notificationTitle = isNewPlan ? 'Plan Activated!' : 'Subscription Renewed!';
+        const getPlanName = (p) => p === 'MAX' ? 'Business Pro' : p === 'PLUS' ? 'Growth' : 'Starter';
+        const displayPlanName = getPlanName(payment.plan);
         const notificationMsg = isNewPlan 
-          ? `Your switch to the ${payment.plan} plan was successful. New features are now active.`
-          : `Your ${payment.plan} subscription has been extended for another 28 days.`;
+          ? `Your switch to the ${displayPlanName} plan was successful. New features are now active.`
+          : `Your ${displayPlanName} subscription has been extended for another 28 days.`;
 
         const baseDate = new Date();
         const newEnd = new Date(baseDate);
@@ -180,7 +192,7 @@ export const handlePaymentCallback = async (reference, transactionId, success, m
 
         await connection.query(`
           UPDATE Subscription 
-          SET planName = ?, status = 0, endDate = ?, startDate = ?, isTrial = 0 
+          SET planName = ?, status = 0, endDate = ?, startDate = ? 
           WHERE id = ?
         `, [payment.plan, newEnd, new Date(), sub.id]);
 

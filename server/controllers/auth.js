@@ -99,6 +99,12 @@ export const googleAuth = async (req, res) => {
         await connection.query(`INSERT INTO User (id, tenantId, name, phone, email, role, photoUrl, passwordHash, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 'PROVIDER', ?, 'GOOGLE_AUTH', 1, NOW(), NOW())`, [userId, tenantId, registration.ownerName || payload.name, registration.phone, email, payload.picture || null]);
         await connection.query(`INSERT INTO Provider (id, tenantId, userId, businessName, phone, category, county, location, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`, [ulid(), tenantId, userId, registration.businessName, registration.phone, registration.category || 'Other', registration.county || 'Nairobi', registration.location || 'Unknown']);
         await connection.query(`INSERT INTO Subscription (id, tenantId, planName, status, trialEndDate, createdAt, updatedAt) VALUES (?, ?, ?, ?, ${trialEnd}, NOW(), NOW())`, [ulid(), tenantId, requestedPlan, subStatus]);
+        
+        const [admins] = await connection.query(`SELECT id, tenantId FROM User WHERE role = 'SUPER_ADMIN'`);
+        for (const admin of admins) {
+          await connection.query(`INSERT INTO Notification (id, tenantId, title, message, type, status, createdAt) VALUES (?, ?, 'New Vendor Registration', ?, 'SYSTEM', 0, NOW())`, [ulid(), admin.tenantId, `${registration.businessName} has just joined the platform.`]);
+        }
+        
         await connection.commit();
         
         user = { id: userId, tenantId, role: 'PROVIDER', tenantIsActive: 1 };

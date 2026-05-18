@@ -41,17 +41,17 @@ export const getPlatformReviews = async (req, res) => {
 };
 
 export const getNotifications = async (req, res) => {
-  const { tenantId, userId } = req.user;
+  const { tenantId } = req.user;
   try {
     const [notifications] = await db.query(`
-      SELECT * FROM SystemNotification 
+      SELECT *, (status = 1) as isRead FROM Notification 
       WHERE (tenantId = ? OR tenantId IS NULL) 
-      AND (userId = ? OR userId IS NULL)
       ORDER BY createdAt DESC 
       LIMIT 50
-    `, [tenantId, userId]);
+    `, [tenantId]);
     return res.json({ success: true, data: notifications });
   } catch (err) {
+    console.error('getNotifications Error:', err);
     return res.status(500).json({ success: false, message: 'Failed to fetch notifications' });
   }
 };
@@ -60,7 +60,11 @@ export const markNotificationRead = async (req, res) => {
   const { id } = req.params;
   const { tenantId } = req.user;
   try {
-    await db.query(`UPDATE SystemNotification SET isRead = 1 WHERE id = ? AND (tenantId = ? OR tenantId IS NULL)`, [id, tenantId]);
+    if (id === 'all') {
+      await db.query(`UPDATE Notification SET status = 1 WHERE tenantId = ? OR tenantId IS NULL`, [tenantId]);
+    } else {
+      await db.query(`UPDATE Notification SET status = 1 WHERE id = ? AND (tenantId = ? OR tenantId IS NULL)`, [id, tenantId]);
+    }
     return res.json({ success: true, data: { message: 'Notification marked as read' } });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to mark notification as read' });
