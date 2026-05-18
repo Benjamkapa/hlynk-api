@@ -99,6 +99,15 @@ router.get('/mpesa/logs', authenticate, async (req, res) => {
  * @desc M-Pesa Daraja STK Push Callback
  */
 router.post('/mpesa/callback', express.json(), async (req, res) => {
+  const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+  const safaricomIPs = ['196.201.214.', '196.201.213.', '196.201.212.'];
+  const isSafaricom = clientIP.includes('127.0.0.1') || safaricomIPs.some(ip => clientIP.includes(ip));
+  
+  if (!isSafaricom) {
+    console.warn(`[SECURITY] Spoofed M-Pesa callback attempt blocked from IP: ${clientIP}`);
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
   if (!req.body || !req.body.Body) {
     console.error('[MPESA CALLBACK] Error: No Body found in request');
     

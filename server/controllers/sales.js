@@ -106,17 +106,32 @@ export const listSales = async (req, res) => {
 
 export const createSale = async (req, res) => {
   const { tenantId, userId } = req.user;
-  const { items, totalAmount, paymentMethod, status, mpesaRequestId, customerName, customerPhone } = req.body;
+  let { items, totalAmount, paymentMethod, status, mpesaRequestId, customerId, customerName, customerPhone } = req.body;
   const clientIp = req.ip;
 
   const connection = await db.getConnection();
   try {
     await connection.beginTransaction();
 
+    // Auto-create or resolve customer if phone is provided but no customerId
+    if (!customerId && customerPhone) {
+      const [existing] = await connection.query(`SELECT id, name FROM User WHERE phone = ? AND role = 'CUSTOMER' AND tenantId = ?`, [customerPhone, tenantId]);
+      if (existing.length > 0) {
+        customerId = existing[0].id;
+        if (!customerName) customerName = existing[0].name;
+      } else {
+        customerId = ulid();
+        await connection.query(
+          `INSERT INTO User (id, tenantId, name, phone, role, passwordHash, phoneVerified, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, 'CUSTOMER', '', 0, 1, NOW(), NOW())`,
+          [customerId, tenantId, customerName || 'Walk-in Customer', customerPhone]
+        );
+      }
+    }
+
     const saleId = ulid();
     await connection.query(
-      `INSERT INTO Sale (id, tenantId, userId, customerName, totalAmount, paymentMethod, status, mpesaRequestId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-      [saleId, tenantId, userId || null, customerName || null, totalAmount, paymentMethod || 'CASH', status !== undefined ? status : 0, mpesaRequestId || null]
+      `INSERT INTO Sale (id, tenantId, userId, customerId, customerName, totalAmount, paymentMethod, status, mpesaRequestId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      [saleId, tenantId, userId || null, customerId || null, customerName || null, totalAmount, paymentMethod || 'CASH', status !== undefined ? status : 0, mpesaRequestId || null]
     );
 
     for (const item of items) {

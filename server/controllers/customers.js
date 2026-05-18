@@ -38,13 +38,31 @@ export const listCustomers = async (req, res) => {
     const [countRes] = await db.query(`SELECT COUNT(*) as total FROM User u ${whereClause}`, queryParams);
     const total = Number(countRes[0].total);
 
+    const [activeRes] = await db.query(`SELECT COUNT(DISTINCT customerId) as activeToday FROM Sale WHERE tenantId = ? AND DATE(createdAt) = CURDATE() AND customerId IS NOT NULL`, [tenantId]);
+    
+    const [topSpenderRes] = await db.query(`
+      SELECT customerName as name, SUM(totalAmount) as total 
+      FROM Sale 
+      WHERE tenantId = ? AND customerName IS NOT NULL
+      GROUP BY customerName 
+      ORDER BY total DESC 
+      LIMIT 1
+    `, [tenantId]);
+
+    const stats = {
+      total,
+      activeToday: Number(activeRes[0]?.activeToday || 0),
+      topSpender: topSpenderRes.length > 0 ? topSpenderRes[0].name : 'N/A'
+    };
+
     return res.json({ 
       success: true,
       items: users,
       total,
       page: Number(page),
       limit: Number(limit),
-      totalPages: Math.ceil(total / Number(limit))
+      pages: Math.ceil(total / Number(limit)),
+      stats
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to fetch customers' });
