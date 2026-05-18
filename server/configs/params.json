@@ -15,6 +15,6 @@
   "token_expires": "40000",
   "jwt_secret": "MDIzIDE2OjUwOjQ1IEdNVCswMzAwIChFYXN0IEFmcmljYSBUaW1lKSIsInVzZXJJZCI6MTIsImlhdCI6MTY6Nz",
   "algorithm": "HS256",
-  "expires_in": "360m",
+  "expires_in": "365m",
   "backend_url": "https://276e-102-0-8-34.ngrok-free.app"
 }
