@@ -66,10 +66,10 @@ export const getMyProfile = async (req, res) => {
     const [profiles] = await db.query(`
       SELECT p.*, u.name as userName, u.email, u.phone as userPhone, u.role, u.photoUrl,
       t.businessName as tenantName, s.planName as subscriptionPlan, s.status as subscriptionStatus
-      FROM Provider p
-      JOIN User u ON p.userId = u.id
-      JOIN Tenant t ON p.tenantId = t.id
-      LEFT JOIN Subscription s ON t.id = s.tenantId
+      FROM provider p
+      JOIN user u ON p.userId = u.id
+      JOIN tenant t ON p.tenantId = t.id
+      LEFT JOIN subscription s ON t.id = s.tenantId
       WHERE p.userId = ?
     `, [userId]);
 
@@ -107,7 +107,7 @@ export const updateProfile = async (req, res) => {
     
     if (userUpdates.length > 0) {
       userUpdates.push('updatedAt = NOW()');
-      await connection.query(`UPDATE User SET ${userUpdates.join(', ')} WHERE id = ?`, [...userParams, userId]);
+      await connection.query(`UPDATE user SET ${userUpdates.join(', ')} WHERE id = ?`, [...userParams, userId]);
     }
 
     // Provider updates
@@ -121,7 +121,7 @@ export const updateProfile = async (req, res) => {
 
     if (provUpdates.length > 0) {
       provUpdates.push('updatedAt = NOW()');
-      await connection.query(`UPDATE Provider SET ${provUpdates.join(', ')} WHERE userId = ?`, [...provParams, userId]);
+      await connection.query(`UPDATE provider SET ${provUpdates.join(', ')} WHERE userId = ?`, [...provParams, userId]);
     }
 
     await connection.commit();
@@ -147,19 +147,19 @@ export const getStats = async (req, res) => {
       [totalCustomers],
       [lowStock]
     ] = await Promise.all([
-      db.query(`SELECT SUM(totalAmount) as total FROM Sale WHERE tenantId = ? ${saleFilter} AND createdAt >= CURDATE()`, saleParams),
+      db.query(`SELECT SUM(totalAmount) as total FROM sale WHERE tenantId = ? ${saleFilter} AND createdAt >= CURDATE()`, saleParams),
       db.query(`
         SELECT COUNT(DISTINCT u.id) as total 
-        FROM User u 
+        FROM user u 
         WHERE u.tenantId = ? AND u.role = 'CUSTOMER'
-        ${isStaff ? 'AND EXISTS (SELECT 1 FROM Sale s WHERE s.customerId = u.id AND s.userId = ?)' : ''}
+        ${isStaff ? 'AND EXISTS (SELECT 1 FROM sale s WHERE s.customerId = u.id AND s.userId = ?)' : ''}
       `, isStaff ? [tenantId, userId] : [tenantId]),
-      db.query(`SELECT COUNT(*) as total FROM Product WHERE tenantId = ? AND stockLevel <= 5`, [tenantId])
+      db.query(`SELECT COUNT(*) as total FROM product WHERE tenantId = ? AND stockLevel <= 5`, [tenantId])
     ]);
 
     // Calculate Estimated Profit (Simplified for demonstration, normally would be revenue - COGS)
     // For staff, profit is also filtered by their sales
-    const [profitRes] = await db.query(`SELECT SUM(totalAmount) * 0.25 as profit FROM Sale WHERE tenantId = ? ${saleFilter} AND MONTH(createdAt) = MONTH(CURRENT_DATE())`, saleParams);
+    const [profitRes] = await db.query(`SELECT SUM(totalAmount) * 0.25 as profit FROM sale WHERE tenantId = ? ${saleFilter} AND MONTH(createdAt) = MONTH(CURRENT_DATE())`, saleParams);
 
     // REAL aggregation for chart data (Last 7 Days)
     const [chartRows] = await db.query(`
@@ -167,7 +167,7 @@ export const getStats = async (req, res) => {
         DATE_FORMAT(createdAt, '%a') as name,
         SUM(totalAmount) as sales,
         SUM(totalAmount) * 0.25 as profit
-      FROM Sale 
+      FROM sale 
       WHERE tenantId = ? ${saleFilter}
       AND createdAt >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
       GROUP BY DATE(createdAt), name
@@ -220,14 +220,14 @@ export const getActivityLogs = async (req, res) => {
 
     const [logs] = await db.query(`
       SELECT l.*, u.name as userName
-      FROM ActivityLog l
-      LEFT JOIN User u ON l.userId = u.id
+      FROM activitylog l
+      LEFT JOIN user u ON l.userId = u.id
       ${whereQuery}
       ORDER BY l.createdAt DESC
       LIMIT ? OFFSET ?
     `, [...queryParams, Number(limit), offset]);
 
-    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM ActivityLog l ${whereQuery}`, queryParams);
+    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM activitylog l ${whereQuery}`, queryParams);
     const total = Number(countRes[0].total);
 
     return res.json({
@@ -254,7 +254,7 @@ export const uploadPhoto = async (req, res) => {
     const photoUrl = await uploadFile(file, 'profiles');
 
     // Update database
-    await db.query(`UPDATE User SET photoUrl = ? WHERE id = ?`, [photoUrl, userId]);
+    await db.query(`UPDATE user SET photoUrl = ? WHERE id = ?`, [photoUrl, userId]);
 
     return res.json({ success: true, data: { photoUrl } });
   } catch (err) {

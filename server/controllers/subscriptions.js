@@ -11,7 +11,7 @@ export const PLAN_PRICES = {
 export const getMySubscription = async (req, res) => {
   const { tenantId } = req.user;
   try {
-    const [subs] = await db.query(`SELECT * FROM Subscription WHERE tenantId = ? LIMIT 1`, [tenantId]);
+    const [subs] = await db.query(`SELECT * FROM subscription WHERE tenantId = ? LIMIT 1`, [tenantId]);
     return res.json({ success: true, data: subs.length > 0 ? subs[0] : null });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to fetch subscription' });
@@ -25,8 +25,8 @@ export const getBillingHistory = async (req, res) => {
 
   try {
     let query = `
-      SELECT p.*, (SELECT rawPayload FROM MpesaLog l WHERE l.checkoutRequestId = p.mpesaRequestId ORDER BY type DESC, createdAt DESC LIMIT 1) as rawPayload
-      FROM Payment p
+      SELECT p.*, (SELECT rawPayload FROM mpesalog l WHERE l.checkoutRequestId = p.mpesaRequestId ORDER BY type DESC, createdAt DESC LIMIT 1) as rawPayload
+      FROM payment p
       WHERE p.tenantId = ? AND p.transactionType = 'SUBSCRIPTION'
     `;
     const queryParams = [tenantId];
@@ -45,7 +45,7 @@ export const getBillingHistory = async (req, res) => {
 
     const [payments] = await db.query(query, queryParams);
 
-    let countQuery = `SELECT COUNT(*) as total FROM Payment WHERE tenantId = ? AND transactionType = 'SUBSCRIPTION'`;
+    let countQuery = `SELECT COUNT(*) as total FROM payment WHERE tenantId = ? AND transactionType = 'SUBSCRIPTION'`;
     const countParams = [tenantId];
     if (status) { countQuery += ` AND status = ?`; countParams.push(status); }
     if (plan) { countQuery += ` AND plan = ?`; countParams.push(plan); }
@@ -75,12 +75,12 @@ export const initiateRenewal = async (req, res) => {
   const { phone } = req.body;
 
   try {
-    const [recentPayments] = await db.query(`SELECT COUNT(*) as cnt FROM Payment WHERE tenantId = ? AND createdAt > DATE_SUB(NOW(), INTERVAL 1 HOUR)`, [tenantId]);
+    const [recentPayments] = await db.query(`SELECT COUNT(*) as cnt FROM payment WHERE tenantId = ? AND createdAt > DATE_SUB(NOW(), INTERVAL 1 HOUR)`, [tenantId]);
     if (recentPayments[0].cnt >= 5) {
       return res.status(429).json({ success: false, message: 'Too many payment attempts. Please wait before trying again.' });
     }
 
-    const [subs] = await db.query(`SELECT * FROM Subscription WHERE tenantId = ? LIMIT 1`, [tenantId]);
+    const [subs] = await db.query(`SELECT * FROM subscription WHERE tenantId = ? LIMIT 1`, [tenantId]);
     if (subs.length === 0) return res.status(404).json({ success: false, message: 'Subscription not found' });
     
     const sub = subs[0];
@@ -89,11 +89,11 @@ export const initiateRenewal = async (req, res) => {
     
     const paymentId = ulid();
     await db.query(`
-      INSERT INTO Payment (id, tenantId, amount, phone, plan, status, reference, transactionType, createdAt) 
+      INSERT INTO payment (id, tenantId, amount, phone, plan, status, reference, transactionType, createdAt) 
       VALUES (?, ?, ?, ?, ?, 2, ?, 'SUBSCRIPTION', NOW())
     `, [paymentId, tenantId, amount, phone, sub.planName, reference]);
 
-    const [tenants] = await db.query(`SELECT businessName FROM Tenant WHERE id = ?`, [tenantId]);
+    const [tenants] = await db.query(`SELECT businessName FROM tenant WHERE id = ?`, [tenantId]);
     const tenantName = tenants[0]?.businessName || 'Tenant';
 
     const result = await initiateStkPush(
@@ -108,7 +108,7 @@ export const initiateRenewal = async (req, res) => {
     );
 
     if (result.CheckoutRequestID) {
-      await db.query(`UPDATE Payment SET mpesaRequestId = ? WHERE id = ?`, [result.CheckoutRequestID, paymentId]);
+      await db.query(`UPDATE payment SET mpesaRequestId = ? WHERE id = ?`, [result.CheckoutRequestID, paymentId]);
     }
 
     return res.json({ success: true, data: { paymentId, message: 'STK Push sent to your phone, Enter your pin to complete the transaction' } });
@@ -122,7 +122,7 @@ export const changePlan = async (req, res) => {
   const { planName, phone } = req.body;
 
   try {
-    const [recentPayments] = await db.query(`SELECT COUNT(*) as cnt FROM Payment WHERE tenantId = ? AND createdAt > DATE_SUB(NOW(), INTERVAL 1 HOUR)`, [tenantId]);
+    const [recentPayments] = await db.query(`SELECT COUNT(*) as cnt FROM payment WHERE tenantId = ? AND createdAt > DATE_SUB(NOW(), INTERVAL 1 HOUR)`, [tenantId]);
     if (recentPayments[0].cnt >= 65) {
       return res.status(429).json({ success: false, message: 'Too many payment attempts. Please wait before trying again.' });
     }
@@ -132,11 +132,11 @@ export const changePlan = async (req, res) => {
 
     const paymentId = ulid();
     await db.query(`
-      INSERT INTO Payment (id, tenantId, amount, phone, plan, status, reference, transactionType, createdAt) 
+      INSERT INTO payment (id, tenantId, amount, phone, plan, status, reference, transactionType, createdAt) 
       VALUES (?, ?, ?, ?, ?, 2, ?, 'SUBSCRIPTION', NOW())
     `, [paymentId, tenantId, amount, phone, planName, reference]);
 
-    const [tenants] = await db.query(`SELECT businessName FROM Tenant WHERE id = ?`, [tenantId]);
+    const [tenants] = await db.query(`SELECT businessName FROM tenant WHERE id = ?`, [tenantId]);
     const tenantName = tenants[0]?.businessName || 'Tenant';
 
     const result = await initiateStkPush(
@@ -151,7 +151,7 @@ export const changePlan = async (req, res) => {
     );
 
     if (result.CheckoutRequestID) {
-      await db.query(`UPDATE Payment SET mpesaRequestId = ? WHERE id = ?`, [result.CheckoutRequestID, paymentId]);
+      await db.query(`UPDATE payment SET mpesaRequestId = ? WHERE id = ?`, [result.CheckoutRequestID, paymentId]);
     }
 
     return res.json({ success: true, data: { paymentId, message: 'Payment initiated for plan upgrade' } });
@@ -161,7 +161,7 @@ export const changePlan = async (req, res) => {
 };
 
 export const handlePaymentCallback = async (reference, transactionId, success, message = null) => {
-  const [payments] = await db.query(`SELECT * FROM Payment WHERE reference = ? LIMIT 1`, [reference]);
+  const [payments] = await db.query(`SELECT * FROM payment WHERE reference = ? LIMIT 1`, [reference]);
   if (payments.length === 0) return;
   const payment = payments[0];
 
@@ -171,9 +171,9 @@ export const handlePaymentCallback = async (reference, transactionId, success, m
       await connection.beginTransaction();
       console.log(`[SUBSCRIPTION CALLBACK] Processing ${reference} (Success: ${success})`);
 
-      await connection.query(`UPDATE Payment SET status = 0, mpesaReceipt = ?, message = ? WHERE id = ?`, [transactionId, message || 'Success', payment.id]);
+      await connection.query(`UPDATE payment SET status = 0, mpesaReceipt = ?, message = ? WHERE id = ?`, [transactionId, message || 'Success', payment.id]);
 
-      const [subs] = await connection.query(`SELECT * FROM Subscription WHERE tenantId = ? LIMIT 1 FOR UPDATE`, [payment.tenantId]);
+      const [subs] = await connection.query(`SELECT * FROM subscription WHERE tenantId = ? LIMIT 1 FOR UPDATE`, [payment.tenantId]);
       
       if (subs.length > 0) {
         const sub = subs[0];
@@ -191,23 +191,23 @@ export const handlePaymentCallback = async (reference, transactionId, success, m
         newEnd.setDate(newEnd.getDate() + 28);
 
         await connection.query(`
-          UPDATE Subscription 
+          UPDATE subscription 
           SET planName = ?, status = 0, endDate = ?, startDate = ? 
           WHERE id = ?
         `, [payment.plan, newEnd, new Date(), sub.id]);
 
         // 3. UPDATE TENANT STATE (Clear trial flags)
-        await connection.query(`UPDATE Tenant SET isTrial = 0, updatedAt = NOW() WHERE id = ?`, [payment.tenantId]);
+        await connection.query(`UPDATE tenant SET isTrial = 0, updatedAt = NOW() WHERE id = ?`, [payment.tenantId]);
 
         // 4. ACTIVITY LOG
         await connection.query(`
-          INSERT INTO ActivityLog (id, tenantId, action, logName, details, createdAt) 
+          INSERT INTO activitylog (id, tenantId, action, logName, details, createdAt) 
           VALUES (?, ?, ?, 'Billing', ?, NOW())
         `, [ulid(), payment.tenantId, actionLabel, `${actionLabel} to ${payment.plan} via M-Pesa (${transactionId})`]);
 
         // 5. SYSTEM NOTIFICATION
         await connection.query(`
-          INSERT INTO Notification (id, tenantId, title, message, type, status, createdAt) 
+          INSERT INTO notification (id, tenantId, title, message, type, status, createdAt) 
           VALUES (?, ?, ?, ?, 'success', 0, NOW())
         `, [ulid(), payment.tenantId, notificationTitle, notificationMsg]);
       }
@@ -221,7 +221,7 @@ export const handlePaymentCallback = async (reference, transactionId, success, m
     }
   } else {
     const status = message?.toLowerCase().includes('cancel') ? 3 : 1;
-    await db.query(`UPDATE Payment SET status = ?, message = ? WHERE id = ?`, [status, message || 'Failed', payment.id]);
+    await db.query(`UPDATE payment SET status = ?, message = ? WHERE id = ?`, [status, message || 'Failed', payment.id]);
   }
 };
 
@@ -230,7 +230,7 @@ export const verifyPayment = async (req, res) => {
   const { paymentId } = req.params;
 
   try {
-    const [payments] = await db.query(`SELECT * FROM Payment WHERE id = ? AND tenantId = ? LIMIT 1`, [paymentId, tenantId]);
+    const [payments] = await db.query(`SELECT * FROM payment WHERE id = ? AND tenantId = ? LIMIT 1`, [paymentId, tenantId]);
     if (payments.length === 0) return res.status(404).json({ success: false, message: 'Payment not found' });
     
     const payment = payments[0];
@@ -249,7 +249,7 @@ export const verifyPayment = async (req, res) => {
     } else if (['1032', '1', '2001', '1037', '1019'].includes(code)) {
       // 1032: Canceled, 1: Insufficient Balance, 2001: Wrong PIN, 1037: Timeout, 1019: Expired
       const status = code === '1032' ? 3 : 1;
-      await db.query(`UPDATE Payment SET status = ?, message = ? WHERE id = ?`, [status, message, payment.id]);
+      await db.query(`UPDATE payment SET status = ?, message = ? WHERE id = ?`, [status, message, payment.id]);
       return res.json({ success: true, data: { status, message, result } });
     }
     

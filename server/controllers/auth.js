@@ -16,12 +16,12 @@ const slugify = (name) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace
 
 async function uniqueSlug(base) {
   let slug = slugify(base);
-  let [rows] = await db.query(`SELECT slug FROM Tenant WHERE slug = ?`, [slug]);
+  let [rows] = await db.query(`SELECT slug FROM tenant WHERE slug = ?`, [slug]);
   let exists = rows.length > 0;
   let i = 1;
   while (exists) {
     slug = `${slugify(base)}-${i++}`;
-    [rows] = await db.query(`SELECT slug FROM Tenant WHERE slug = ?`, [slug]);
+    [rows] = await db.query(`SELECT slug FROM tenant WHERE slug = ?`, [slug]);
     exists = rows.length > 0;
   }
   return slug;
@@ -35,7 +35,7 @@ const issueTokens = async (user, userAgent = 'Unknown', ipAddress = 'Unknown') =
   const refreshToken = jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' });
 
   await db.query(
-    `INSERT INTO Session (id, userId, token, userAgent, ipAddress, isActive, createdAt, lastActive) VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())`,
+    `INSERT INTO session (id, userId, token, userAgent, ipAddress, isActive, createdAt, lastActive) VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())`,
     [sessionId, user.id, refreshToken, userAgent, ipAddress]
   );
 
@@ -57,9 +57,9 @@ export const googleAuth = async (req, res) => {
     const [userRows] = await db.query(`
       SELECT u.*, t.isActive as tenantIsActive, t.slug as tenantSlug, t.businessName, 
              s.planName, s.status, s.trialEndDate, s.endDate
-      FROM User u
-      JOIN Tenant t ON u.tenantId = t.id
-      LEFT JOIN Subscription s ON s.tenantId = t.id
+      FROM user u
+      JOIN tenant t ON u.tenantId = t.id
+      LEFT JOIN subscription s ON s.tenantId = t.id
       WHERE u.email = ?
     `, [email]);
 
@@ -95,14 +95,14 @@ export const googleAuth = async (req, res) => {
       const connection = await db.getConnection();
       try {
         await connection.beginTransaction();
-        await connection.query(`INSERT INTO Tenant (id, slug, businessName, isActive, createdAt, updatedAt) VALUES (?, ?, ?, 1, NOW(), NOW())`, [tenantId, slug, registration.businessName]);
-        await connection.query(`INSERT INTO User (id, tenantId, name, phone, email, role, photoUrl, passwordHash, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 'PROVIDER', ?, 'GOOGLE_AUTH', 1, NOW(), NOW())`, [userId, tenantId, registration.ownerName || payload.name, registration.phone, email, payload.picture || null]);
-        await connection.query(`INSERT INTO Provider (id, tenantId, userId, businessName, phone, category, county, location, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`, [ulid(), tenantId, userId, registration.businessName, registration.phone, registration.category || 'Other', registration.county || 'Nairobi', registration.location || 'Unknown']);
-        await connection.query(`INSERT INTO Subscription (id, tenantId, planName, status, trialEndDate, createdAt, updatedAt) VALUES (?, ?, ?, ?, ${trialEnd}, NOW(), NOW())`, [ulid(), tenantId, requestedPlan, subStatus]);
+        await connection.query(`INSERT INTO tenant (id, slug, businessName, isActive, createdAt, updatedAt) VALUES (?, ?, ?, 1, NOW(), NOW())`, [tenantId, slug, registration.businessName]);
+        await connection.query(`INSERT INTO user (id, tenantId, name, phone, email, role, photoUrl, passwordHash, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 'PROVIDER', ?, 'GOOGLE_AUTH', 1, NOW(), NOW())`, [userId, tenantId, registration.ownerName || payload.name, registration.phone, email, payload.picture || null]);
+        await connection.query(`INSERT INTO provider (id, tenantId, userId, businessName, phone, category, county, location, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`, [ulid(), tenantId, userId, registration.businessName, registration.phone, registration.category || 'Other', registration.county || 'Nairobi', registration.location || 'Unknown']);
+        await connection.query(`INSERT INTO subscription (id, tenantId, planName, status, trialEndDate, createdAt, updatedAt) VALUES (?, ?, ?, ?, ${trialEnd}, NOW(), NOW())`, [ulid(), tenantId, requestedPlan, subStatus]);
         
-        const [admins] = await connection.query(`SELECT id, tenantId FROM User WHERE role = 'SUPER_ADMIN'`);
+        const [admins] = await connection.query(`SELECT id, tenantId FROM user WHERE role = 'SUPER_ADMIN'`);
         for (const admin of admins) {
-          await connection.query(`INSERT INTO Notification (id, tenantId, title, message, type, status, createdAt) VALUES (?, ?, 'New Vendor Registration', ?, 'SYSTEM', 0, NOW())`, [ulid(), admin.tenantId, `${registration.businessName} has just joined the platform.`]);
+          await connection.query(`INSERT INTO notification (id, tenantId, title, message, type, status, createdAt) VALUES (?, ?, 'New Vendor Registration', ?, 'SYSTEM', 0, NOW())`, [ulid(), admin.tenantId, `${registration.businessName} has just joined the platform.`]);
         }
         
         await connection.commit();
@@ -159,9 +159,9 @@ export const me = async (req, res) => {
         u.id, u.name, u.phone, u.email, u.role, u.photoUrl, u.permissions,
         t.id as tenantId, t.slug as tenantSlug, t.businessName,
         s.planName, s.status, s.trialEndDate, s.endDate
-      FROM User u
-      JOIN Tenant t ON u.tenantId = t.id
-      LEFT JOIN Subscription s ON s.tenantId = t.id
+      FROM user u
+      JOIN tenant t ON u.tenantId = t.id
+      LEFT JOIN subscription s ON s.tenantId = t.id
       WHERE u.id = ?
     `, [userId]);
 
@@ -199,7 +199,7 @@ export const refresh = async (req, res) => {
   const { refreshToken } = req.body;
   try {
     const decoded = jwt.verify(refreshToken, JWT_SECRET);
-    const [sessions] = await db.query(`SELECT * FROM Session WHERE id = ? AND isActive = 1 AND token = ?`, [decoded.sessionId, refreshToken]);
+    const [sessions] = await db.query(`SELECT * FROM session WHERE id = ? AND isActive = 1 AND token = ?`, [decoded.sessionId, refreshToken]);
     if (sessions.length === 0) throw new Error('Invalid session');
 
     const accessToken = jwt.sign({ userId: decoded.userId, tenantId: decoded.tenantId, role: decoded.role, sessionId: decoded.sessionId }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
