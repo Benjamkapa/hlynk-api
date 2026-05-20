@@ -8,8 +8,8 @@ export const getStaff = async (req, res) => {
     const [staff] = await db.query(`
       SELECT u.id, u.name, u.email, u.phone, u.role, u.permissions, u.commissionType, u.commissionRate, u.baseSalary, u.isActive, u.createdAt, u.photoUrl,
       SUM(s.totalAmount) as totalSales, COUNT(s.id) as salesCount
-      FROM User u
-      LEFT JOIN Sale s ON u.id = s.userId
+      FROM user u
+      LEFT JOIN sale s ON u.id = s.userId
       WHERE u.tenantId = ? AND u.role = 'STAFF'
       GROUP BY u.id
     `, [tenantId]);
@@ -30,13 +30,13 @@ export const createStaff = async (req, res) => {
   const { name, phone, email, password, permissions, commissionType, commissionRate, baseSalary } = req.body;
 
   try {
-    const [existing] = await db.query(`SELECT id FROM User WHERE phone = ? OR (email IS NOT NULL AND email = ?) LIMIT 1`, [phone, email || '']);
+    const [existing] = await db.query(`SELECT id FROM user WHERE phone = ? OR (email IS NOT NULL AND email = ?) LIMIT 1`, [phone, email || '']);
     if (existing.length > 0) return res.status(409).json({ success: false, message: 'Phone or email already registered' });
 
-    const [subs] = await db.query(`SELECT planName FROM Subscription WHERE tenantId = ? LIMIT 1`, [tenantId]);
+    const [subs] = await db.query(`SELECT planName FROM subscription WHERE tenantId = ? LIMIT 1`, [tenantId]);
     const plan = subs[0]?.planName || 'LITE';
     
-    const [staffCountRes] = await db.query(`SELECT COUNT(*) as total FROM User WHERE tenantId = ? AND role = 'STAFF'`, [tenantId]);
+    const [staffCountRes] = await db.query(`SELECT COUNT(*) as total FROM user WHERE tenantId = ? AND role = 'STAFF'`, [tenantId]);
     const currentCount = Number(staffCountRes[0]?.total || 0);
 
     const limits = { 'LITE': 0, 'PLUS': 1, 'MAX': 999999 };
@@ -50,7 +50,7 @@ export const createStaff = async (req, res) => {
     const id = ulid();
 
     await db.query(`
-      INSERT INTO User (id, tenantId, name, phone, email, passwordHash, role, permissions, commissionType, commissionRate, baseSalary, phoneVerified, isActive, createdAt, updatedAt)
+      INSERT INTO user (id, tenantId, name, phone, email, passwordHash, role, permissions, commissionType, commissionRate, baseSalary, phoneVerified, isActive, createdAt, updatedAt)
       VALUES (?, ?, ?, ?, ?, ?, 'STAFF', ?, ?, ?, ?, 1, 1, NOW(), NOW())
     `, [id, tenantId, name, phone, email || null, passwordHash, JSON.stringify(permissions || []), commissionType || 'NONE', parseFloat(commissionRate) || 0, parseFloat(baseSalary) || 0]);
 
@@ -66,7 +66,7 @@ export const updateStaff = async (req, res) => {
   const data = req.body;
 
   try {
-    let updateQuery = 'UPDATE User SET updatedAt = NOW()';
+    let updateQuery = 'UPDATE user SET updatedAt = NOW()';
     const updateParams = [];
 
     if (data.name !== undefined) { updateQuery += ', name = ?'; updateParams.push(data.name); }
@@ -89,7 +89,7 @@ export const deleteStaff = async (req, res) => {
   const { tenantId } = req.user;
   const { staffId } = req.params;
   try {
-    await db.query(`DELETE FROM User WHERE id = ? AND tenantId = ?`, [staffId, tenantId]);
+    await db.query(`DELETE FROM user WHERE id = ? AND tenantId = ?`, [staffId, tenantId]);
     return res.json({ success: true, data: { message: 'Staff deleted' } });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Delete failed' });

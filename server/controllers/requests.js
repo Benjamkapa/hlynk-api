@@ -17,14 +17,14 @@ export const getProviderRequests = async (req, res) => {
 
     const [requests] = await db.query(`
       SELECT r.*, s.name as serviceName, s.price as servicePrice
-      FROM Request r
-      LEFT JOIN Service s ON r.serviceId = s.id
+      FROM request r
+      LEFT JOIN service s ON r.serviceId = s.id
       ${whereQuery}
       ORDER BY r.createdAt DESC
       LIMIT ? OFFSET ?
     `, [...queryParams, Number(limit), offset]);
 
-    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM Request r ${whereQuery}`, queryParams);
+    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM request r ${whereQuery}`, queryParams);
     const total = Number(countRes[0].total);
 
     return res.json({ success: true, requests, total, page: Number(page), limit: Number(limit) });
@@ -40,7 +40,7 @@ export const createRequest = async (req, res) => {
 
   try {
     await db.query(`
-      INSERT INTO Request (id, tenantId, customerId, providerId, serviceId, customerName, customerPhone, message, status, createdAt, updatedAt)
+      INSERT INTO request (id, tenantId, customerId, providerId, serviceId, customerName, customerPhone, message, status, createdAt, updatedAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', NOW(), NOW())
     `, [id, tenantId, userId, providerId, serviceId || null, customerName, customerPhone, message || null]);
     
@@ -56,7 +56,7 @@ export const updateRequestStatus = async (req, res) => {
   const { status } = req.body;
 
   try {
-    await db.query(`UPDATE Request SET status = ?, updatedAt = NOW() WHERE id = ? AND tenantId = ?`, [status, id, tenantId]);
+    await db.query(`UPDATE request SET status = ?, updatedAt = NOW() WHERE id = ? AND tenantId = ?`, [status, id, tenantId]);
     return res.json({ success: true, data: { id, status } });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Status update failed' });
