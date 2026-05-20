@@ -74,9 +74,11 @@ export const createCustomer = async (req, res) => {
   const { name, phone, email } = req.body;
 
   try {
-    const [existing] = await db.query(`SELECT * FROM user WHERE phone = ? AND role = 'CUSTOMER'`, [phone]);
+    // 1. Check globally if this phone number exists
+    const [existing] = await db.query(`SELECT id FROM user WHERE phone = ? LIMIT 1`, [phone]);
     
     if (existing.length > 0) {
+      // If they exist anywhere, just return their existing ID to avoid duplicate error
       return res.json({ success: true, data: { customerId: existing[0].id } });
     }
 
