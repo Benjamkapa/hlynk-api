@@ -24,23 +24,23 @@ export const listExpenses = async (req, res) => {
 
     const [expenses] = await db.query(`
       SELECT e.*, u.name as recordedBy 
-      FROM Expense e
-      LEFT JOIN User u ON e.userId = u.id
+      FROM expense e
+      LEFT JOIN user u ON e.userId = u.id
       ${whereQuery} 
       ORDER BY e.${sortBy} ${sortOrder} 
       LIMIT ? OFFSET ?
     `, [...queryParams, Number(limit), offset]);
 
-    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM Expense e ${whereQuery}`, queryParams);
+    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM expense e ${whereQuery}`, queryParams);
     const total = Number(countRes[0].total);
     const pages = Math.ceil(total / Number(limit));
 
-    const [totalAgg] = await db.query(`SELECT SUM(e.amount) as total FROM Expense e ${whereQuery}`, queryParams);
+    const [totalAgg] = await db.query(`SELECT SUM(e.amount) as total FROM expense e ${whereQuery}`, queryParams);
     
     // Get highest category
     const [categoryAgg] = await db.query(`
       SELECT e.category, SUM(e.amount) as total 
-      FROM Expense e
+      FROM expense e
       ${whereQuery} 
       GROUP BY e.category 
       ORDER BY total DESC 
@@ -52,7 +52,7 @@ export const listExpenses = async (req, res) => {
     // Calculate burn rate (avg daily spend this month)
     const [burnAgg] = await db.query(`
       SELECT SUM(e.amount) as total 
-      FROM Expense e
+      FROM expense e
       ${whereQuery} 
       AND e.date >= DATE_FORMAT(NOW() ,'%Y-%m-01')
     `, queryParams);
@@ -85,7 +85,7 @@ export const createExpense = async (req, res) => {
 
   try {
     await db.query(
-      `INSERT INTO Expense (id, tenantId, userId, category, description, amount, date, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+      `INSERT INTO expense (id, tenantId, userId, category, description, amount, date, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
       [id, tenantId, userId, data.category, data.description, data.amount, data.date ? new Date(data.date) : new Date()]
     );
     return res.json({ success: true, data: { expenseId: id } });
@@ -98,7 +98,7 @@ export const deleteExpense = async (req, res) => {
   const { tenantId, userId, role } = req.user;
   const { id } = req.params;
   try {
-    let query = 'DELETE FROM Expense WHERE id = ? AND tenantId = ?';
+    let query = 'DELETE FROM expense WHERE id = ? AND tenantId = ?';
     const params = [id, tenantId];
 
     if (role === 'STAFF') {
@@ -123,7 +123,7 @@ export const getExpenseById = async (req, res) => {
   const { id } = req.params;
 
   try {
-    let query = 'SELECT e.*, u.name as recordedBy FROM Expense e LEFT JOIN User u ON e.userId = u.id WHERE e.id = ? AND e.tenantId = ?';
+    let query = 'SELECT e.*, u.name as recordedBy FROM expense e LEFT JOIN user u ON e.userId = u.id WHERE e.id = ? AND e.tenantId = ?';
     const params = [id, tenantId];
 
     if (role === 'STAFF') {

@@ -11,10 +11,10 @@ export const listCustomers = async (req, res) => {
     const queryParams = [tenantId];
     
     if (req.user.role === 'STAFF') {
-      whereClause += ` AND EXISTS (SELECT 1 FROM Sale s WHERE s.customerId = u.id AND s.userId = ? AND s.tenantId = ?)`;
+      whereClause += ` AND EXISTS (SELECT 1 FROM sale s WHERE s.customerId = u.id AND s.userId = ? AND s.tenantId = ?)`;
       queryParams.push(req.user.userId, tenantId);
     } else {
-      whereClause += ` AND (u.tenantId = ? OR EXISTS (SELECT 1 FROM Sale s WHERE s.customerId = u.id AND s.tenantId = ?))`;
+      whereClause += ` AND (u.tenantId = ? OR EXISTS (SELECT 1 FROM sale s WHERE s.customerId = u.id AND s.tenantId = ?))`;
       queryParams.push(tenantId, tenantId);
     }
 
@@ -27,22 +27,22 @@ export const listCustomers = async (req, res) => {
 
     const [users] = await db.query(`
       SELECT u.*, 
-        (SELECT SUM(totalAmount) FROM Sale s WHERE s.customerId = u.id AND s.tenantId = ?) as totalSpend,
-        (SELECT MAX(createdAt) FROM Sale s WHERE s.customerId = u.id AND s.tenantId = ?) as lastVisit
-      FROM User u
+        (SELECT SUM(totalAmount) FROM sale s WHERE s.customerId = u.id AND s.tenantId = ?) as totalSpend,
+        (SELECT MAX(createdAt) FROM sale s WHERE s.customerId = u.id AND s.tenantId = ?) as lastVisit
+      FROM user u
       ${whereClause}
       ORDER BY u.${sortBy} ${sortOrder}
       LIMIT ? OFFSET ?
     `, [tenantId, tenantId, ...queryParams, Number(limit), offset]);
 
-    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM User u ${whereClause}`, queryParams);
+    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM user u ${whereClause}`, queryParams);
     const total = Number(countRes[0].total);
 
-    const [activeRes] = await db.query(`SELECT COUNT(DISTINCT customerId) as activeToday FROM Sale WHERE tenantId = ? AND DATE(createdAt) = CURDATE() AND customerId IS NOT NULL`, [tenantId]);
+    const [activeRes] = await db.query(`SELECT COUNT(DISTINCT customerId) as activeToday FROM sale WHERE tenantId = ? AND DATE(createdAt) = CURDATE() AND customerId IS NOT NULL`, [tenantId]);
     
     const [topSpenderRes] = await db.query(`
       SELECT customerName as name, SUM(totalAmount) as total 
-      FROM Sale 
+      FROM sale 
       WHERE tenantId = ? AND customerName IS NOT NULL
       GROUP BY customerName 
       ORDER BY total DESC 
@@ -74,7 +74,7 @@ export const createCustomer = async (req, res) => {
   const { name, phone, email } = req.body;
 
   try {
-    const [existing] = await db.query(`SELECT * FROM User WHERE phone = ? AND role = 'CUSTOMER'`, [phone]);
+    const [existing] = await db.query(`SELECT * FROM user WHERE phone = ? AND role = 'CUSTOMER'`, [phone]);
     
     if (existing.length > 0) {
       return res.json({ success: true, data: { customerId: existing[0].id } });
@@ -82,7 +82,7 @@ export const createCustomer = async (req, res) => {
 
     const id = ulid();
     await db.query(
-      `INSERT INTO User (id, tenantId, name, phone, email, role, passwordHash, phoneVerified, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 'CUSTOMER', '', 0, 1, NOW(), NOW())`,
+      `INSERT INTO user (id, tenantId, name, phone, email, role, passwordHash, phoneVerified, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 'CUSTOMER', '', 0, 1, NOW(), NOW())`,
       [id, tenantId, name, phone, email || null]
     );
     return res.json({ success: true, data: { customerId: id } });
