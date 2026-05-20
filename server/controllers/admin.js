@@ -12,19 +12,19 @@ const JWT_SECRET = params.jwt_secret || 'default_secret';
 const JWT_EXPIRES_IN = params.expires_in || '360m';
 export const getSystemStats = async (req, res) => {
   try {
-    const [providersCount] = await db.query(`SELECT COUNT(*) as total FROM Tenant`);
-    const [payingProviders] = await db.query(`SELECT COUNT(*) as total FROM Subscription WHERE status = 0`);
-    const [totalRevenue] = await db.query(`SELECT SUM(amount) as total FROM Payment WHERE status = 0`);
+    const [providersCount] = await db.query(`SELECT COUNT(*) as total FROM tenant`);
+    const [payingProviders] = await db.query(`SELECT COUNT(*) as total FROM subscription WHERE status = 0`);
+    const [totalRevenue] = await db.query(`SELECT SUM(amount) as total FROM payment WHERE status = 0`);
     
     // Add global platform volume
-    const [platformVolume] = await db.query(`SELECT SUM(totalAmount) as total FROM Sale WHERE status = 0`);
-    const [mpesaCollections] = await db.query(`SELECT SUM(totalAmount) as total FROM Sale WHERE paymentMethod = 'MPESA' AND status = 0`);
+    const [platformVolume] = await db.query(`SELECT SUM(totalAmount) as total FROM sale WHERE status = 0`);
+    const [mpesaCollections] = await db.query(`SELECT SUM(totalAmount) as total FROM sale WHERE paymentMethod = 'MPESA' AND status = 0`);
     
     // New exact data fetches for Financials Page
-    const [ytdVolumeRes] = await db.query(`SELECT SUM(totalAmount) as total FROM Sale WHERE status = 0 AND YEAR(createdAt) = YEAR(NOW())`);
-    const [pendingPayouts] = await db.query(`SELECT SUM(amount) as total FROM Payment WHERE status = 2`);
-    const [newProvidersToday] = await db.query(`SELECT COUNT(*) as total FROM Tenant WHERE DATE(createdAt) = CURDATE()`);
-    const [expiringSoonRes] = await db.query(`SELECT COUNT(*) as total FROM Subscription WHERE status = 0 AND endDate BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 7 DAY)`);
+    const [ytdVolumeRes] = await db.query(`SELECT SUM(totalAmount) as total FROM sale WHERE status = 0 AND YEAR(createdAt) = YEAR(NOW())`);
+    const [pendingPayouts] = await db.query(`SELECT SUM(amount) as total FROM payment WHERE status = 2`);
+    const [newProvidersToday] = await db.query(`SELECT COUNT(*) as total FROM tenant WHERE DATE(createdAt) = CURDATE()`);
+    const [expiringSoonRes] = await db.query(`SELECT COUNT(*) as total FROM subscription WHERE status = 0 AND endDate BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 7 DAY)`);
     
     // Trends: fallback to a default zero array if no data
     const timeframe = req.query.timeframe || 'HOURLY';
@@ -32,14 +32,14 @@ export const getSystemStats = async (req, res) => {
     if (timeframe === 'HOURLY') {
       trendsQuery = `
         SELECT DATE_FORMAT(createdAt, '%H:00') as name, SUM(amount) as value 
-        FROM Payment 
+        FROM payment 
         WHERE status = 0 AND createdAt >= NOW() - INTERVAL 24 HOUR
         GROUP BY name ORDER BY name ASC
       `;
     } else {
       trendsQuery = `
         SELECT DATE_FORMAT(createdAt, '%b %d') as name, SUM(amount) as value 
-        FROM Payment 
+        FROM payment 
         WHERE status = 0 AND createdAt >= NOW() - INTERVAL 30 DAY
         GROUP BY name ORDER BY MIN(createdAt) ASC
       `;
@@ -197,7 +197,7 @@ export const getSystemHealth = async (req, res) => {
     // let's query the ActivityLog to get actual system usage load over the last 12 hours
     const [loadHistory] = await db.query(`
       SELECT DATE_FORMAT(createdAt, '%H:00') as time, COUNT(*) as api_calls
-      FROM ActivityLog
+      FROM activitylog
       WHERE createdAt >= NOW() - INTERVAL 12 HOUR
       GROUP BY HOUR(createdAt)
       ORDER BY createdAt ASC
@@ -266,9 +266,9 @@ export const getSubscriptions = async (req, res) => {
           ANY_VALUE(t.slug) as slug, 
           ANY_VALUE(u.email) as email, 
           ANY_VALUE(u.phone) as phone 
-        FROM Subscription s
-        JOIN Tenant t ON s.tenantId = t.id
-        LEFT JOIN User u ON u.tenantId = t.id AND u.role = 'PROVIDER'
+        FROM subscription s
+        JOIN tenant t ON s.tenantId = t.id
+        LEFT JOIN user u ON u.tenantId = t.id AND u.role = 'PROVIDER'
         WHERE 1=1
       `;
 
@@ -315,8 +315,8 @@ export const getSubscriptions = async (req, res) => {
 
     let countQuery = `
       SELECT COUNT(DISTINCT s.id) as total 
-      FROM Subscription s
-      JOIN Tenant t ON s.tenantId = t.id
+      FROM subscription s
+      JOIN tenant t ON s.tenantId = t.id
       WHERE 1=1
     `;
     const countParams = [];
@@ -347,13 +347,13 @@ export const impersonateUser = async (req, res) => {
   const adminId = req.user.userId;
 
   try {
-    const [users] = await db.query(`SELECT * FROM User WHERE id = ? LIMIT 1`, [id]);
+    const [users] = await db.query(`SELECT * FROM user WHERE id = ? LIMIT 1`, [id]);
     if (users.length === 0) return res.status(404).json({ success: false, message: 'User not found' });
     const targetUser = users[0];
 
     // Log the impersonation event for security
     await db.query(`
-      INSERT INTO ActivityLog (id, tenantId, action, logName, details, createdAt) 
+      INSERT INTO activitylog (id, tenantId, action, logName, details, createdAt) 
       VALUES (?, ?, ?, 'Security', ?, NOW())
     `, [ulid(), targetUser.tenantId, 'Impersonation Access', `Super Admin (${adminId}) accessed account as ${targetUser.email}`]);
 
@@ -364,7 +364,7 @@ export const impersonateUser = async (req, res) => {
     const refreshToken = jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' });
 
     await db.query(
-      `INSERT INTO Session (id, userId, token, userAgent, ipAddress, isActive, createdAt, lastActive) VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())`,
+      `INSERT INTO session (id, userId, token, userAgent, ipAddress, isActive, createdAt, lastActive) VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())`,
       [sessionId, targetUser.id, refreshToken, req.get('user-agent') || 'Admin Impersonation', req.ip || '0.0.0.0']
     );
 
@@ -393,7 +393,7 @@ export const getUsers = async (req, res) => {
   const offset = (Number(page) - 1) * Number(limit);
 
   try {
-    let query = `SELECT id, name, email, phone, role, photoUrl FROM User WHERE 1=1`;
+    let query = `SELECT id, name, email, phone, role, photoUrl FROM user WHERE 1=1`;
     const queryParams = [];
 
     if (search) {
@@ -411,7 +411,7 @@ export const getUsers = async (req, res) => {
 
     const [items] = await db.query(query, queryParams);
 
-    let countQuery = `SELECT COUNT(*) as total FROM User WHERE 1=1`;
+    let countQuery = `SELECT COUNT(*) as total FROM user WHERE 1=1`;
     const countParams = [];
     if (search) { countQuery += ` AND (name LIKE ? OR email LIKE ? OR phone LIKE ?)`; countParams.push(`%${search}%`, `%${search}%`, `%${search}%`); }
     if (role) { countQuery += ` AND role = ?`; countParams.push(role); }
@@ -433,11 +433,11 @@ export const getUsers = async (req, res) => {
 
 export const deleteUser = async (req, res) => {
   try {
-    const [u] = await db.query(`SELECT role FROM User WHERE id = ?`, [req.params.id]);
+    const [u] = await db.query(`SELECT role FROM user WHERE id = ?`, [req.params.id]);
     if (u.length > 0 && u[0].role === 'SUPER_ADMIN') {
       return res.status(403).json({ success: false, message: 'Cannot delete Super Admin' });
     }
-    await db.query(`DELETE FROM User WHERE id = ?`, [req.params.id]);
+    await db.query(`DELETE FROM user WHERE id = ?`, [req.params.id]);
     return res.json({ success: true, message: 'User deleted' });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to delete user' });
@@ -491,7 +491,7 @@ export const getSessions = async (req, res) => {
 
 export const terminateSession = async (req, res) => {
   try {
-    await db.query(`UPDATE Session SET isActive = 0 WHERE id = ?`, [req.params.id]);
+    await db.query(`UPDATE session SET isActive = 0 WHERE id = ?`, [req.params.id]);
     return res.json({ success: true, message: 'Session terminated' });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to terminate session' });
@@ -500,12 +500,12 @@ export const terminateSession = async (req, res) => {
 
 export const getUserActivity = async (req, res) => {
   try {
-    const [user] = await db.query(`SELECT email FROM User WHERE id = ?`, [req.params.id]);
+    const [user] = await db.query(`SELECT email FROM user WHERE id = ?`, [req.params.id]);
     let logs = [];
     if (user.length > 0) {
       [logs] = await db.query(`
         SELECT id, action, details, createdAt 
-        FROM ActivityLog 
+        FROM activitylog 
         WHERE details LIKE ? OR logName LIKE ?
         ORDER BY createdAt DESC LIMIT 50
       `, [`%${user[0].email}%`, `%${user[0].email}%`]);
@@ -521,21 +521,21 @@ export const upgradePlan = async (req, res) => {
   const { planName } = req.body;
 
   try {
-    const [sub] = await db.query(`SELECT * FROM Subscription WHERE tenantId = ? LIMIT 1`, [id]);
+    const [sub] = await db.query(`SELECT * FROM subscription WHERE tenantId = ? LIMIT 1`, [id]);
     if (sub.length === 0) {
       return res.status(404).json({ success: false, message: 'Subscription not found for this tenant' });
     }
 
     // Force switch to active status with new plan
     await db.query(`
-      UPDATE Subscription 
+      UPDATE subscription 
       SET planName = ?, status = 0, updatedAt = NOW()
       WHERE tenantId = ?
     `, [planName, id]);
 
     // Also notify the tenant
     await db.query(`
-      INSERT INTO Notification (id, tenantId, title, message, type, status, createdAt) 
+      INSERT INTO notification (id, tenantId, title, message, type, status, createdAt) 
       VALUES (?, ?, ?, ?, 'SYSTEM', 0, NOW())
     `, [
       ulid(), 
@@ -553,8 +553,8 @@ export const upgradePlan = async (req, res) => {
 
 export const suspendTenant = async (req, res) => {
   try {
-    await db.query(`UPDATE Tenant SET isActive = 0 WHERE id = ?`, [req.params.id]);
-    await db.query(`UPDATE User SET isActive = 0 WHERE tenantId = ?`, [req.params.id]);
+    await db.query(`UPDATE tenant SET isActive = 0 WHERE id = ?`, [req.params.id]);
+    await db.query(`UPDATE user SET isActive = 0 WHERE tenantId = ?`, [req.params.id]);
     return res.json({ success: true, message: 'Tenant suspended' });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to suspend tenant' });
@@ -563,8 +563,8 @@ export const suspendTenant = async (req, res) => {
 
 export const activateTenant = async (req, res) => {
   try {
-    await db.query(`UPDATE Tenant SET isActive = 1 WHERE id = ?`, [req.params.id]);
-    await db.query(`UPDATE User SET isActive = 1 WHERE tenantId = ?`, [req.params.id]);
+    await db.query(`UPDATE tenant SET isActive = 1 WHERE id = ?`, [req.params.id]);
+    await db.query(`UPDATE user SET isActive = 1 WHERE tenantId = ?`, [req.params.id]);
     return res.json({ success: true, message: 'Tenant activated' });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to activate tenant' });
@@ -573,7 +573,7 @@ export const activateTenant = async (req, res) => {
 
 export const deleteTenant = async (req, res) => {
   try {
-    await db.query(`DELETE FROM Tenant WHERE id = ?`, [req.params.id]);
+    await db.query(`DELETE FROM tenant WHERE id = ?`, [req.params.id]);
     return res.json({ success: true, message: 'Tenant deleted' });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to delete tenant' });
@@ -683,7 +683,7 @@ export const resolveAllTickets = async (req, res) => {
 
 export const getSettings = async (req, res) => {
   try {
-    const [settings] = await db.query(`SELECT * FROM Setting`);
+    const [settings] = await db.query(`SELECT * FROM systemsetting`);
     return res.json({ success: true, data: settings });
   } catch (err) {
     const defaultSettings = [
@@ -744,7 +744,7 @@ export const updateSettings = async (req, res) => {
 
     // Auto-create table if missing
     await db.query(`
-      CREATE TABLE IF NOT EXISTS SystemSettings (
+      CREATE TABLE IF NOT EXISTS systemsettings (
         id INT AUTO_INCREMENT PRIMARY KEY,
         maintenanceMode TINYINT(1) DEFAULT 0,
         allowNewProviders TINYINT(1) DEFAULT 1,
@@ -754,11 +754,11 @@ export const updateSettings = async (req, res) => {
       )
     `);
 
-    const [existing] = await db.query(`SELECT id FROM SystemSettings LIMIT 1`);
+    const [existing] = await db.query(`SELECT id FROM systemsettings LIMIT 1`);
     if (existing.length > 0) {
-      await db.query(`UPDATE SystemSettings SET ? WHERE id = ?`, [sanitized, existing[0].id]);
+      await db.query(`UPDATE systemsettings SET ? WHERE id = ?`, [sanitized, existing[0].id]);
     } else {
-      await db.query(`INSERT INTO SystemSettings SET ?`, [sanitized]);
+      await db.query(`INSERT INTO systemsettings SET ?`, [sanitized]);
     }
     
     return res.json({ success: true, message: 'Settings updated successfully' });
@@ -777,7 +777,7 @@ export const getSchedules = async (req, res) => {
 export const runReportQuery = async (req, res) => {
   const { table, columns } = req.body;
   try {
-    const allowedTables = ['User', 'Tenant', 'Sale', 'Subscription', 'Payment', 'ActivityLog', 'Notification', 'Customer', 'Product', 'Staff'];
+    const allowedTables = ['user', 'tenant', 'sale', 'subscription', 'payment', 'activitylog', 'notification', 'customer', 'product'];
     if (!allowedTables.includes(table)) return res.status(400).json({ success: false, message: 'Invalid table' });
     
     const validColumns = columns.filter(c => /^[a-zA-Z0-9_]+$/.test(c));
@@ -817,18 +817,18 @@ export const getGlobalTransactions = async (req, res) => {
 
     const [transactions] = await db.query(`
       SELECT p.*, t.businessName, t.slug,
-             (SELECT resultCode FROM MpesaLog WHERE checkoutRequestId = p.mpesaRequestId AND type = 1 LIMIT 1) as mpesaResultCode,
-             (SELECT phone FROM MpesaLog WHERE checkoutRequestId = p.mpesaRequestId LIMIT 1) as phone
-      FROM Payment p
-      LEFT JOIN Tenant t ON p.tenantId = t.id
+             (SELECT resultCode FROM mpesalog WHERE checkoutRequestId = p.mpesaRequestId AND type = 1 LIMIT 1) as mpesaResultCode,
+             (SELECT phone FROM mpesalog WHERE checkoutRequestId = p.mpesaRequestId LIMIT 1) as phone
+      FROM payment p
+      LEFT JOIN tenant t ON p.tenantId = t.id
       ${whereQuery}
       ORDER BY p.createdAt DESC
       LIMIT ? OFFSET ?
     `, [...params, Number(limit), offset]);
 
     const [countRes] = await db.query(`
-      SELECT COUNT(*) as total FROM Payment p 
-      LEFT JOIN Tenant t ON p.tenantId = t.id 
+      SELECT COUNT(*) as total FROM payment p 
+      LEFT JOIN tenant t ON p.tenantId = t.id 
       ${whereQuery}
     `, params);
 
@@ -857,8 +857,8 @@ export const getTransactionDetails = async (req, res) => {
   try {
     const [payments] = await db.query(`
       SELECT p.*, t.businessName as tenantName, t.slug as tenantSlug
-      FROM Payment p
-      LEFT JOIN Tenant t ON p.tenantId = t.id
+      FROM payment p
+      LEFT JOIN tenant t ON p.tenantId = t.id
       WHERE p.id = ?
     `, [id]);
 
@@ -869,7 +869,7 @@ export const getTransactionDetails = async (req, res) => {
     // Fetch related Mpesa logs if it's an MPESA transaction
     if (payment.mpesaRequestId) {
       const [logs] = await db.query(`
-        SELECT * FROM MpesaLog 
+        SELECT * FROM mpesalog 
         WHERE checkoutRequestId = ? 
         ORDER BY createdAt ASC
       `, [payment.mpesaRequestId]);
@@ -878,10 +878,10 @@ export const getTransactionDetails = async (req, res) => {
 
     // Fetch related context (Sale or Subscription)
     if (payment.transactionType === 'SALE') {
-      const [sales] = await db.query(`SELECT * FROM Sale WHERE id = ?`, [payment.reference]);
+      const [sales] = await db.query(`SELECT * FROM sale WHERE id = ?`, [payment.reference]);
       if (sales.length > 0) payment.context = { type: 'SALE', data: sales[0] };
     } else if (payment.transactionType === 'SUBSCRIPTION') {
-      const [subs] = await db.query(`SELECT * FROM Subscription WHERE id = ?`, [payment.reference]);
+      const [subs] = await db.query(`SELECT * FROM subscription WHERE id = ?`, [payment.reference]);
       if (subs.length > 0) payment.context = { type: 'SUBSCRIPTION', data: subs[0] };
     }
 
@@ -895,7 +895,7 @@ export const listPlatformReviews = async (req, res) => {
   const { page = 1, limit = 10, status } = req.query;
   const offset = (Number(page) - 1) * Number(limit);
   try {
-    let q = `SELECT * FROM PlatformReview WHERE 1=1`;
+    let q = `SELECT * FROM platformreview WHERE 1=1`;
     const params = [];
     if (status !== undefined && status !== '') {
       q += ` AND status = ?`;
@@ -905,7 +905,7 @@ export const listPlatformReviews = async (req, res) => {
     params.push(Number(limit), offset);
 
     const [reviews] = await db.query(q, params);
-    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM PlatformReview`);
+    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM platformreview WHERE 1=1 ${status !== undefined && status !== '' ? 'AND status = ?' : ''}`, status !== undefined && status !== '' ? [Number(status)] : []);
     
     return res.json({
       success: true,
@@ -925,7 +925,7 @@ export const updatePlatformReviewStatus = async (req, res) => {
   const { id } = req.params;
   const { status } = req.body; // 1 = Approved, 2 = Rejected
   try {
-    await db.query(`UPDATE PlatformReview SET status = ? WHERE id = ?`, [status, id]);
+    await db.query(`UPDATE platformreview SET status = ? WHERE id = ?`, [status, id]);
     return res.json({ success: true, message: `Review ${status === 1 ? 'approved' : 'rejected'} successfully` });
   } catch (err) {
     console.error('❌ UPDATE_REVIEW_ERROR:', err);
@@ -939,12 +939,12 @@ const slugify = (name) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace
 
 async function uniqueSlug(base) {
   let slug = slugify(base);
-  let [rows] = await db.query(`SELECT slug FROM Tenant WHERE slug = ?`, [slug]);
+  let [rows] = await db.query(`SELECT slug FROM tenant WHERE slug = ?`, [slug]);
   let exists = rows.length > 0;
   let i = 1;
   while (exists) {
     slug = `${slugify(base)}-${i++}`;
-    [rows] = await db.query(`SELECT slug FROM Tenant WHERE slug = ?`, [slug]);
+    [rows] = await db.query(`SELECT slug FROM tenant WHERE slug = ?`, [slug]);
     exists = rows.length > 0;
   }
   return slug;

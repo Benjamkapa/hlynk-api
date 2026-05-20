@@ -67,7 +67,7 @@ export const googleAuth = async (req, res) => {
 
     // SYNC PHOTO: Always update the photo from Google if it exists
     if (user && payload.picture && user.photoUrl !== payload.picture) {
-      await db.query(`UPDATE User SET photoUrl = ?, updatedAt = NOW() WHERE id = ?`, [payload.picture, user.id]);
+      await db.query(`UPDATE user SET photoUrl = ?, updatedAt = NOW() WHERE id = ?`, [payload.picture, user.id]);
       user.photoUrl = payload.picture;
     }
 
@@ -144,7 +144,7 @@ export const googleAuth = async (req, res) => {
 export const logout = async (req, res) => {
   const { sessionId } = req.user;
   try {
-    await db.query(`UPDATE Session SET isActive = 0 WHERE id = ?`, [sessionId]);
+    await db.query(`UPDATE session SET isActive = 0 WHERE id = ?`, [sessionId]);
     return res.json({ success: true, data: { message: 'Logged out' } });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Logout failed' });
@@ -173,7 +173,7 @@ export const me = async (req, res) => {
 
     // SYNC PHOTO IF MISSING: If the DB has no photo but we can get it from Google, sync it
     if (!user.photoUrl && req.user?.picture) {
-       await db.query(`UPDATE User SET photoUrl = ?, updatedAt = NOW() WHERE id = ?`, [req.user.picture, userId]);
+       await db.query(`UPDATE user SET photoUrl = ?, updatedAt = NOW() WHERE id = ?`, [req.user.picture, userId]);
        user.photoUrl = req.user.picture;
     }
 

@@ -140,9 +140,9 @@ export const createSale = async (req, res) => {
         [ulid(), saleId, item.productId || null, item.name, item.quantity, item.price]
       );
 
-      // Update inventory
+      // Update inventory (Physical Goods only)
       if (item.productId) {
-        await connection.query(`UPDATE product SET stockLevel = stockLevel - ? WHERE id = ? AND tenantId = ?`, [item.quantity, item.productId, tenantId]);
+        await connection.query(`UPDATE product SET stockLevel = stockLevel - ? WHERE id = ? AND tenantId = ? AND type != 'SERVICE'`, [item.quantity, item.productId, tenantId]);
       }
     }
 
