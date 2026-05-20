@@ -3,8 +3,8 @@ import { initiateStkPush, queryStkPush } from '../utils/mpesa.js';
 import { ulid } from 'ulid';
 
 export const PLAN_PRICES = {
-  LITE: 2999 , // Starter
-  PLUS: 6999, // Growth
+  LITE: 4450, // Starter
+  PLUS: 9450, // Growth
   MAX: 16999, // Business Pro
 };
 
