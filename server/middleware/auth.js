@@ -25,9 +25,9 @@ export const authenticate = async (req, res, next) => {
     // Verify session and fetch LATEST user data (role/permissions)
     const [userRows] = await db.query(`
       SELECT s.id as sessionId, s.isActive, u.role, u.permissions, u.name as userName, t.businessName as tenantName 
-      FROM Session s
-      JOIN User u ON s.userId = u.id
-      LEFT JOIN Tenant t ON u.tenantId = t.id
+      FROM session s
+      JOIN user u ON s.userId = u.id
+      LEFT JOIN tenant t ON u.tenantId = t.id
       WHERE s.id = ? LIMIT 1
     `, [decoded.sessionId]);
     
@@ -45,7 +45,8 @@ export const authenticate = async (req, res, next) => {
     };
 
     // Update last active (background)
-    db.query(`UPDATE Session SET lastActive = NOW() WHERE id = ?`, [sessionUser.sessionId]).catch(() => {});
+    db.query(`UPDATE session SET lastActive = NOW() WHERE id = ?`, [sessionUser.sessionId]).catch(() => {});
+
 
     next();
   } catch (err) {
