@@ -115,16 +115,28 @@ export const createSale = async (req, res) => {
 
     // Auto-create or resolve customer if phone is provided but no customerId
     if (!customerId && customerPhone) {
-      const [existing] = await connection.query(`SELECT id, name FROM user WHERE phone = ? AND role = 'CUSTOMER' AND tenantId = ?`, [customerPhone, tenantId]);
+      // 1. Check if this customer already exists for THIS tenant
+      const [existing] = await connection.query(`SELECT id, name FROM user WHERE phone = ? AND tenantId = ? LIMIT 1`, [customerPhone, tenantId]);
+      
       if (existing.length > 0) {
         customerId = existing[0].id;
         if (!customerName) customerName = existing[0].name;
       } else {
-        customerId = ulid();
-        await connection.query(
-          `INSERT INTO user (id, tenantId, name, phone, role, passwordHash, phoneVerified, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, 'CUSTOMER', '', 0, 1, NOW(), NOW())`,
-          [customerId, tenantId, customerName || 'Walk-in Customer', customerPhone]
-        );
+        // 2. Check if the user exists GLOBALLY (in another tenant or as a different role)
+        const [globalExisting] = await connection.query(`SELECT id, name FROM user WHERE phone = ? LIMIT 1`, [customerPhone]);
+        
+        if (globalExisting.length > 0) {
+          // Found them globally - reuse their ID to avoid duplicate entry error
+          customerId = globalExisting[0].id;
+          if (!customerName) customerName = globalExisting[0].name;
+        } else {
+          // 3. Truly new user - Create them
+          customerId = ulid();
+          await connection.query(
+            `INSERT INTO user (id, tenantId, name, phone, role, passwordHash, phoneVerified, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, 'CUSTOMER', '', 0, 1, NOW(), NOW())`,
+            [customerId, tenantId, customerName || 'Walk-in Customer', customerPhone]
+          );
+        }
       }
     }
 
