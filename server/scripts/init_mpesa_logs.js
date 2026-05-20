@@ -3,10 +3,10 @@ import { db } from '../dbms/mysql.js';
 async function updateMpesaLogTable() {
   try {
     // Drop the old table if it exists to ensure new schema
-    await db.query(`DROP TABLE IF EXISTS MpesaLog`);
+    await db.query(`DROP TABLE IF EXISTS mpesalog`);
 
     await db.query(`
-      CREATE TABLE MpesaLog (
+      CREATE TABLE mpesalog (
         id VARCHAR(36) PRIMARY KEY,
         merchantRequestId VARCHAR(100),
         checkoutRequestId VARCHAR(100),
@@ -27,7 +27,7 @@ async function updateMpesaLogTable() {
         INDEX idx_created (createdAt)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
-    console.log('✅ MpesaLog table (optimized) created.');
+    console.log('✅ mpesalog table (optimized) created.');
     process.exit(0);
   } catch (err) {
     console.error('❌ Error updating MpesaLog table:', err);

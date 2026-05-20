@@ -20,8 +20,8 @@ async function setSubscription() {
     // Find tenant
     const [tenants] = await db.query(`
       SELECT t.id, t.businessName, t.slug, u.email 
-      FROM Tenant t 
-      JOIN User u ON u.tenantId = t.id 
+      FROM tenant t 
+      JOIN user u ON u.tenantId = t.id 
       WHERE u.email = ? OR t.slug = ?
     `, [identifier, identifier]);
 
@@ -37,11 +37,11 @@ async function setSubscription() {
     trialEndDate.setDate(trialEndDate.getDate() + parseInt(daysLeft));
 
     // Update subscription
-    const [subRows] = await db.query(`SELECT id FROM Subscription WHERE tenantId = ?`, [tenant.id]);
+    const [subRows] = await db.query(`SELECT id FROM subscription WHERE tenantId = ?`, [tenant.id]);
     
     if (subRows.length > 0) {
       await db.query(`
-        UPDATE Subscription 
+        UPDATE subscription 
         SET planName = ?, status = ?, trialEndDate = ?, updatedAt = NOW() 
         WHERE tenantId = ?
       `, [planName.toUpperCase(), status.toUpperCase(), trialEndDate, tenant.id]);
@@ -49,7 +49,7 @@ async function setSubscription() {
     } else {
       const id = 'sub_' + Math.random().toString(36).substr(2, 9);
       await db.query(`
-        INSERT INTO Subscription (id, tenantId, planName, status, trialEndDate, createdAt, updatedAt)
+        INSERT INTO subscription (id, tenantId, planName, status, trialEndDate, createdAt, updatedAt)
         VALUES (?, ?, ?, ?, ?, NOW(), NOW())
       `, [id, tenant.id, planName.toUpperCase(), status.toUpperCase(), trialEndDate]);
       console.log(`✅ New Subscription created: ${planName.toUpperCase()} (${status.toUpperCase()})`);

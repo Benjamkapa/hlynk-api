@@ -7,49 +7,49 @@ async function migrateStatuses() {
 
     console.log('Migrating statuses to integers...');
 
-    // 1. Update Payment Table
-    console.log('Updating Payment table...');
-    await connection.query(`ALTER TABLE Payment MODIFY COLUMN status VARCHAR(20)`); // Ensure it can hold the temp string if needed, though we are going to TINYINT
+    // 1. Update payment Table
+    console.log('Updating payment table...');
+    await connection.query(`ALTER TABLE payment MODIFY COLUMN status VARCHAR(20)`); // Ensure it can hold the temp string if needed, though we are going to TINYINT
     
     // Create a temporary column to store the integer status
-    await connection.query(`ALTER TABLE Payment ADD COLUMN status_int TINYINT DEFAULT 2`);
+    await connection.query(`ALTER TABLE payment ADD COLUMN status_int TINYINT DEFAULT 2`);
     
-    await connection.query(`UPDATE Payment SET status_int = 0 WHERE status IN ('PAID', 'SUCCESS', 'COMPLETED')`);
-    await connection.query(`UPDATE Payment SET status_int = 1 WHERE status IN ('FAILED', 'ERROR')`);
-    await connection.query(`UPDATE Payment SET status_int = 2 WHERE status IN ('PENDING')`);
-    await connection.query(`UPDATE Payment SET status_int = 3 WHERE status IN ('CANCELLED')`);
+    await connection.query(`UPDATE payment SET status_int = 0 WHERE status IN ('PAID', 'SUCCESS', 'COMPLETED')`);
+    await connection.query(`UPDATE payment SET status_int = 1 WHERE status IN ('FAILED', 'ERROR')`);
+    await connection.query(`UPDATE payment SET status_int = 2 WHERE status IN ('PENDING')`);
+    await connection.query(`UPDATE payment SET status_int = 3 WHERE status IN ('CANCELLED')`);
     
-    await connection.query(`ALTER TABLE Payment DROP COLUMN status`);
-    await connection.query(`ALTER TABLE Payment CHANGE COLUMN status_int status TINYINT DEFAULT 2`);
-    await connection.query(`CREATE INDEX idx_payment_status ON Payment(status)`);
-    await connection.query(`CREATE INDEX idx_payment_ref ON Payment(reference)`);
+    await connection.query(`ALTER TABLE payment DROP COLUMN status`);
+    await connection.query(`ALTER TABLE payment CHANGE COLUMN status_int status TINYINT DEFAULT 2`);
+    await connection.query(`CREATE INDEX idx_payment_status ON payment(status)`);
+    await connection.query(`CREATE INDEX idx_payment_ref ON payment(reference)`);
 
-    // 2. Update Sale Table
-    console.log('Updating Sale table...');
-    await connection.query(`ALTER TABLE Sale ADD COLUMN status_int TINYINT DEFAULT 2`);
+    // 2. Update sale Table
+    console.log('Updating sale table...');
+    await connection.query(`ALTER TABLE sale ADD COLUMN status_int TINYINT DEFAULT 2`);
     
-    await connection.query(`UPDATE Sale SET status_int = 0 WHERE status IN ('COMPLETED', 'SUCCESS', 'PAID')`);
-    await connection.query(`UPDATE Sale SET status_int = 1 WHERE status IN ('FAILED', 'ERROR')`);
-    await connection.query(`UPDATE Sale SET status_int = 2 WHERE status IN ('PENDING')`);
-    await connection.query(`UPDATE Sale SET status_int = 3 WHERE status IN ('CANCELLED')`);
+    await connection.query(`UPDATE sale SET status_int = 0 WHERE status IN ('COMPLETED', 'SUCCESS', 'PAID')`);
+    await connection.query(`UPDATE sale SET status_int = 1 WHERE status IN ('FAILED', 'ERROR')`);
+    await connection.query(`UPDATE sale SET status_int = 2 WHERE status IN ('PENDING')`);
+    await connection.query(`UPDATE sale SET status_int = 3 WHERE status IN ('CANCELLED')`);
     
-    await connection.query(`ALTER TABLE Sale DROP COLUMN status`);
-    await connection.query(`ALTER TABLE Sale CHANGE COLUMN status_int status TINYINT DEFAULT 2`);
-    await connection.query(`CREATE INDEX idx_sale_status ON Sale(status)`);
-    await connection.query(`CREATE INDEX idx_sale_tenant ON Sale(tenantId)`);
+    await connection.query(`ALTER TABLE sale DROP COLUMN status`);
+    await connection.query(`ALTER TABLE sale CHANGE COLUMN status_int status TINYINT DEFAULT 2`);
+    await connection.query(`CREATE INDEX idx_sale_status ON sale(status)`);
+    await connection.query(`CREATE INDEX idx_sale_tenant ON sale(tenantId)`);
 
-    // 3. Update Subscription Table
-    console.log('Updating Subscription table...');
-    await connection.query(`ALTER TABLE Subscription ADD COLUMN status_int TINYINT DEFAULT 0`);
+    // 3. Update subscription Table
+    console.log('Updating subscription table...');
+    await connection.query(`ALTER TABLE subscription ADD COLUMN status_int TINYINT DEFAULT 0`);
     
-    await connection.query(`UPDATE Subscription SET status_int = 0 WHERE status IN ('ACTIVE')`);
-    await connection.query(`UPDATE Subscription SET status_int = 1 WHERE status IN ('EXPIRED', 'INACTIVE')`);
-    await connection.query(`UPDATE Subscription SET status_int = 2 WHERE status IN ('PENDING', 'TRIAL')`);
+    await connection.query(`UPDATE subscription SET status_int = 0 WHERE status IN ('ACTIVE')`);
+    await connection.query(`UPDATE subscription SET status_int = 1 WHERE status IN ('EXPIRED', 'INACTIVE')`);
+    await connection.query(`UPDATE subscription SET status_int = 2 WHERE status IN ('PENDING', 'TRIAL')`);
     
-    await connection.query(`ALTER TABLE Subscription DROP COLUMN status`);
-    await connection.query(`ALTER TABLE Subscription CHANGE COLUMN status_int status TINYINT DEFAULT 0`);
-    await connection.query(`CREATE INDEX idx_sub_status ON Subscription(status)`);
-    await connection.query(`CREATE INDEX idx_sub_tenant ON Subscription(tenantId)`);
+    await connection.query(`ALTER TABLE subscription DROP COLUMN status`);
+    await connection.query(`ALTER TABLE subscription CHANGE COLUMN status_int status TINYINT DEFAULT 0`);
+    await connection.query(`CREATE INDEX idx_sub_status ON subscription(status)`);
+    await connection.query(`CREATE INDEX idx_sub_tenant ON subscription(tenantId)`);
 
     await connection.commit();
     console.log('✅ Status migration and optimization completed.');
