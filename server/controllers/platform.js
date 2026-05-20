@@ -3,9 +3,10 @@ import { db } from '../dbms/mysql.js';
 export const getPublicStats = async (req, res) => {
   try {
     const [[tenantRes], [reviewRes]] = await Promise.all([
-      db.query(`SELECT COUNT(*) as total FROM Tenant`),
-      db.query(`SELECT COUNT(*) as total, AVG(rating) as avgRating FROM PlatformReview`)
+      db.query(`SELECT COUNT(*) as total FROM tenant`),
+      db.query(`SELECT COUNT(*) as total, AVG(rating) as avgRating FROM platformreview`)
     ]);
+
     
     return res.json({
       success: true,
