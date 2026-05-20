@@ -16,7 +16,7 @@ router.post('/mpesa/stk-push', authenticate, async (req, res) => {
   const { tenantId, name } = req.user;
 
   try {
-    const [tenants] = await db.query(`SELECT businessName FROM Tenant WHERE id = ?`, [tenantId]);
+    const [tenants] = await db.query(`SELECT businessName FROM tenant WHERE id = ?`, [tenantId]);
     const tenantName = tenants[0]?.businessName || 'Tenant';
 
     const result = await initiateStkPush(
@@ -51,7 +51,7 @@ router.get('/mpesa/logs', authenticate, async (req, res) => {
 
     // Staff/Providers only see logs for their tenant
     if (role !== 'SUPER_ADMIN') {
-      whereQuery = 'WHERE tenantName = (SELECT businessName FROM Tenant WHERE id = ?)';
+      whereQuery = 'WHERE tenantName = (SELECT businessName FROM tenant WHERE id = ?)';
       queryParams.push(tenantId);
     }
 
@@ -72,14 +72,14 @@ router.get('/mpesa/logs', authenticate, async (req, res) => {
         l1.resultDesc,
         l1.rawPayload,
         l1.createdAt,
-        (SELECT COUNT(*) FROM MpesaLog l2 WHERE l2.checkoutRequestId = l1.checkoutRequestId AND l2.type = 1) > 0 as isComplete
-      FROM MpesaLog l1
+        (SELECT COUNT(*) FROM mpesalog l2 WHERE l2.checkoutRequestId = l1.checkoutRequestId AND l2.type = 1) > 0 as isComplete
+      FROM mpesalog l1
       ${whereQuery}
       ORDER BY l1.createdAt ${order} 
       LIMIT ? OFFSET ?
     `, [...queryParams, Number(limit), offset]);
 
-    const [countRes] = await db.query(`SELECT COUNT(DISTINCT checkoutRequestId) as total FROM MpesaLog ${whereQuery}`, queryParams);
+    const [countRes] = await db.query(`SELECT COUNT(DISTINCT checkoutRequestId) as total FROM mpesalog ${whereQuery}`, queryParams);
     const total = Number(countRes[0].total);
 
     return res.json({
@@ -142,13 +142,13 @@ router.post('/mpesa/callback', express.json(), async (req, res) => {
     
     // Attempt to retrieve metadata from initiation log
     const [rows] = await db.query(
-      `SELECT customerName, initiatorName, tenantName, tenantId FROM MpesaLog WHERE checkoutRequestId = ? AND type = 0 LIMIT 1`,
+      `SELECT customerName, initiatorName, tenantName, tenantId FROM mpesalog WHERE checkoutRequestId = ? AND type = 0 LIMIT 1`,
       [CheckoutRequestID]
     );
     initLog = rows[0];
 
     await db.query(`
-      INSERT INTO MpesaLog (id, merchantRequestId, checkoutRequestId, customerName, initiatorName, tenantName, tenantId, type, status, resultCode, resultDesc, rawPayload)
+      INSERT INTO mpesalog (id, merchantRequestId, checkoutRequestId, customerName, initiatorName, tenantName, tenantId, type, status, resultCode, resultDesc, rawPayload)
       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
     `, [
       ulid(),
@@ -181,7 +181,7 @@ router.post('/mpesa/callback', express.json(), async (req, res) => {
 
   try {
     // SEARCH IN MASTER PAYMENT TABLE
-    const [payments] = await db.query(`SELECT * FROM Payment WHERE mpesaRequestId = ? LIMIT 1`, [CheckoutRequestID]);
+    const [payments] = await db.query(`SELECT * FROM payment WHERE mpesaRequestId = ? LIMIT 1`, [CheckoutRequestID]);
 
     if (payments.length > 0) {
       const payment = payments[0];
@@ -189,7 +189,7 @@ router.post('/mpesa/callback', express.json(), async (req, res) => {
 
       // 1. UPDATE MASTER PAYMENT RECORD WITH EVERY DETAIL
       await db.query(`
-        UPDATE Payment 
+        UPDATE payment 
         SET status = ?, mpesaReceipt = ?, message = ?, rawResponse = ?, updatedAt = NOW() 
         WHERE id = ?
       `, [status, success ? mpesaReceipt : null, ResultDesc, JSON.stringify(req.body), payment.id]);
@@ -200,10 +200,10 @@ router.post('/mpesa/callback', express.json(), async (req, res) => {
       } 
       else if (payment.transactionType === 'SALE') {
         // Update the related Sale record if it exists
-        const [sales] = await db.query(`SELECT id FROM Sale WHERE mpesaRequestId = ? OR id = ? LIMIT 1`, [CheckoutRequestID, payment.reference]);
+        const [sales] = await db.query(`SELECT id FROM sale WHERE mpesaRequestId = ? OR id = ? LIMIT 1`, [CheckoutRequestID, payment.reference]);
         if (sales.length > 0) {
           const saleId = sales[0].id;
-          await db.query(`UPDATE Sale SET status = ?, mpesaReceipt = ?, updatedAt = NOW() WHERE id = ?`, 
+          await db.query(`UPDATE sale SET status = ?, mpesaReceipt = ?, updatedAt = NOW() WHERE id = ?`, 
             [status, success ? mpesaReceipt : null, saleId]);
           
           console.log(`[SALE-SYNC] Updated Sale ${saleId} to Status ${status} (Success: ${success})`);
@@ -211,10 +211,10 @@ router.post('/mpesa/callback', express.json(), async (req, res) => {
           // RESTORE STOCK IF FAILED OR CANCELLED
           if (!success) {
             try {
-              const [items] = await db.query(`SELECT productId, quantity FROM SaleItem WHERE saleId = ?`, [saleId]);
+              const [items] = await db.query(`SELECT productId, quantity FROM saleitem WHERE saleId = ?`, [saleId]);
               for (const item of items) {
                 if (item.productId) {
-                  await db.query(`UPDATE Product SET stockLevel = stockLevel + ? WHERE id = ?`, [item.quantity, item.productId]);
+                  await db.query(`UPDATE product SET stockLevel = stockLevel + ? WHERE id = ?`, [item.quantity, item.productId]);
                 }
               }
               console.log(`[SALE RESTORE] Restored stock for cancelled/failed sale ${saleId}`);
