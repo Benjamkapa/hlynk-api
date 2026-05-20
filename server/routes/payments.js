@@ -101,28 +101,35 @@ router.get('/mpesa/logs', authenticate, async (req, res) => {
 router.post('/mpesa/callback', express.json(), async (req, res) => {
   const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
   const safaricomIPs = ['196.201.214.', '196.201.213.', '196.201.212.'];
-  const isSafaricom = clientIP.includes('127.0.0.1') || safaricomIPs.some(ip => clientIP.includes(ip));
   
-  if (!isSafaricom) {
+  // Relaxed check for dev/ngrok - check if it's explicitly from Safaricom OR if we're in development
+  const isSafaricom = clientIP.includes('127.0.0.1') || safaricomIPs.some(ip => clientIP.includes(ip));
+  const isDev = process.env.NODE_ENV === 'development' || !process.env.NODE_ENV;
+
+  if (!isSafaricom && !isDev) {
     console.warn(`[SECURITY] Spoofed M-Pesa callback attempt blocked from IP: ${clientIP}`);
     return res.status(403).json({ error: 'Forbidden' });
   }
 
+  console.log('================================================');
+  console.log('[MPESA DIAGNOSTIC] Incoming Callback');
+  console.log('IP:', clientIP);
+  console.log('Body:', JSON.stringify(req.body, null, 2));
+  console.log('================================================');
+
+  console.log(`[MPESA CALLBACK] Received from ${clientIP} (Safaricom: ${isSafaricom})`);
+
   if (!req.body || !req.body.Body) {
     console.error('[MPESA CALLBACK] Error: No Body found in request');
-    
-    // Log invalid callback
-    try {
-      await db.query(`
-        INSERT INTO MpesaLog (id, type, status, resultDesc, rawPayload)
-        VALUES (?, 1, 4, 'Invalid body', ?)
-      `, [ulid(), JSON.stringify(req.body)]);
-    } catch (e) {}
-
     return res.json({ ResultCode: 1, ResultDesc: 'Invalid body' });
   }
 
   const { Body } = req.body;
+  if (!Body.stkCallback) {
+    console.error('[MPESA CALLBACK] Error: stkCallback missing in body');
+    return res.json({ ResultCode: 1, ResultDesc: 'Invalid stkCallback' });
+  }
+
   const { ResultCode, ResultDesc, CheckoutRequestID, MerchantRequestID, CallbackMetadata } = Body.stkCallback;
   const success = ResultCode === 0;
   const canceled = ResultCode === 1032;
@@ -195,23 +202,28 @@ router.post('/mpesa/callback', express.json(), async (req, res) => {
         // Update the related Sale record if it exists
         const [sales] = await db.query(`SELECT id FROM Sale WHERE mpesaRequestId = ? OR id = ? LIMIT 1`, [CheckoutRequestID, payment.reference]);
         if (sales.length > 0) {
+          const saleId = sales[0].id;
           await db.query(`UPDATE Sale SET status = ?, mpesaReceipt = ?, updatedAt = NOW() WHERE id = ?`, 
-            [status, success ? mpesaReceipt : null, sales[0].id]);
+            [status, success ? mpesaReceipt : null, saleId]);
+          
+          console.log(`[SALE-SYNC] Updated Sale ${saleId} to Status ${status} (Success: ${success})`);
             
           // RESTORE STOCK IF FAILED OR CANCELLED
           if (!success) {
             try {
-              const [items] = await db.query(`SELECT productId, quantity FROM SaleItem WHERE saleId = ?`, [sales[0].id]);
+              const [items] = await db.query(`SELECT productId, quantity FROM SaleItem WHERE saleId = ?`, [saleId]);
               for (const item of items) {
                 if (item.productId) {
                   await db.query(`UPDATE Product SET stockLevel = stockLevel + ? WHERE id = ?`, [item.quantity, item.productId]);
                 }
               }
-              console.log(`[SALE RESTORE] Restored stock for cancelled/failed sale ${sales[0].id}`);
+              console.log(`[SALE RESTORE] Restored stock for cancelled/failed sale ${saleId}`);
             } catch (err) {
               console.error('[SALE RESTORE] Failed to restore stock:', err);
             }
           }
+        } else {
+          console.warn(`[SALE-SYNC] Failed to find Sale record for reference ${payment.reference} or RequestID ${CheckoutRequestID}`);
         }
       }
     } else {

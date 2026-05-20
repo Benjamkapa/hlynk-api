@@ -243,6 +243,18 @@ export const vendorMpesaPush = async (req, res) => {
         tenantId: tenantId
       }
     );
+
+    // CRITICAL: Link the request ID to the Sale immediately if saleId provided
+    if (req.body.saleId && result.CheckoutRequestID) {
+      try {
+        await db.query(`UPDATE Sale SET mpesaRequestId = ? WHERE id = ? AND tenantId = ?`, [result.CheckoutRequestID, req.body.saleId, tenantId]);
+        await db.query(`UPDATE Payment SET mpesaRequestId = ? WHERE reference = ? AND tenantId = ?`, [result.CheckoutRequestID, req.body.saleId, tenantId]);
+        console.log(`[SALES-LINK] Linked CheckoutRequestID ${result.CheckoutRequestID} to Sale ${req.body.saleId}`);
+      } catch (linkErr) {
+        console.error('[SALES-LINK] Failed to link CheckoutRequestID:', linkErr.message);
+      }
+    }
+
     return res.json({ success: true, data: result });
   } catch (err) {
     console.error('[SALES] M-Pesa Push Error:', err);
