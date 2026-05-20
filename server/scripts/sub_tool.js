@@ -1,7 +1,7 @@
 import { db } from '../dbms/mysql.js';
 
 const args = process.argv.slice(2);
-const command = args[0]; // 'check' or 'gift'
+const command = args[0]; // 'check', 'gift', or 'expire'
 const slug = args[1];
 const value = args[2] ? parseInt(args[2]) : 0;
 
@@ -24,12 +24,12 @@ async function run() {
     const businessName = tenants[0].businessName;
 
     if (command === 'check') {
-      const [subs] = await db.query('SELECT * FROM Subscription WHERE tenantId = ?', [tenantId]);
+      const [subs] = await db.query('SELECT * FROM subscription WHERE tenantId = ?', [tenantId]);
       if (subs.length === 0) {
         console.log(`ℹ️  ${businessName} has no subscription record.`);
       } else {
         const sub = subs[0];
-        console.log(`\n📊 SUBSCRIPTION STATUS: ${businessName}`);
+        console.log(`\n📊 subscription STATUS: ${businessName}`);
         console.log('-------------------------------------------');
         console.log(`Plan:    ${sub.planName}`);
         console.log(`Status:  ${sub.status === 0 ? 'ACTIVE (0)' : sub.status === 2 ? 'TRIAL (2)' : 'EXPIRED (1)'}`);
@@ -40,7 +40,7 @@ async function run() {
         const expiry = new Date(sub.endDate);
         const diffDays = Math.ceil((expiry - now) / (1000 * 60 * 60 * 24));
         
-        if (diffDays < 0) {
+        if (diffDays <= 0) {
           console.log(`⌛ Expired ${Math.abs(diffDays)} days ago.`);
         } else {
           console.log(`⏳ Time Remaining: ${diffDays} days.`);
@@ -52,17 +52,17 @@ async function run() {
         process.exit(1);
       }
 
-      const [subs] = await db.query('SELECT endDate FROM Subscription WHERE tenantId = ?', [tenantId]);
+      const [subs] = await db.query('SELECT endDate FROM subscription WHERE tenantId = ?', [tenantId]);
       if (subs.length === 0) {
         console.log(`❌ Error: ${businessName} has no active subscription to extend.`);
         process.exit(1);
       }
 
-      const currentEnd = new Date(subs[0].endDate);
+      const currentEnd = new Date(subs[0].endDate > new Date() ? subs[0].endDate : new Date());
       const newEnd = new Date(currentEnd);
       newEnd.setDate(newEnd.getDate() + value);
 
-      await db.query('UPDATE Subscription SET endDate = ?, status = 0, updatedAt = NOW() WHERE tenantId = ?', [newEnd, tenantId]);
+      await db.query('UPDATE subscription SET endDate = ?, status = 0, updatedAt = NOW() WHERE tenantId = ?', [newEnd, tenantId]);
       
       console.log(`\n🎁 SUCCESS: Gifting ${value} days to ${businessName}`);
       console.log(`Old Expiry: ${currentEnd.toLocaleString()}`);
@@ -71,9 +71,9 @@ async function run() {
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
 
-      await db.query('UPDATE Subscription SET endDate = ?, status = 1, updatedAt = NOW() WHERE tenantId = ?', [yesterday, tenantId]);
+      await db.query('UPDATE subscription SET endDate = ?, status = 1, updatedAt = NOW() WHERE tenantId = ?', [yesterday, tenantId]);
       
-      console.log(`\n🥀 SUCCESS: Subscription for ${businessName} has been EXPIRED.`);
+      console.log(`\n🥀 SUCCESS: subscription for ${businessName} has been EXPIRED.`);
       console.log(`New Expiry (Simulated): ${yesterday.toLocaleString()}`);
       console.log(`Status set to: 1 (EXPIRED)`);
     }
