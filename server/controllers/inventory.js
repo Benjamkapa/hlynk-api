@@ -87,6 +87,23 @@ export const createProduct = async (req, res) => {
   const sku = data.sku || `HLI-${ulid().slice(-6).toUpperCase()}`;
 
   try {
+    // 1. Check Plan Limits
+    const [subs] = await db.query(`SELECT planName FROM subscription WHERE tenantId = ? LIMIT 1`, [tenantId]);
+    const plan = subs[0]?.planName || 'LITE';
+
+    const [productCountRes] = await db.query(`SELECT COUNT(*) as total FROM product WHERE tenantId = ?`, [tenantId]);
+    const currentCount = Number(productCountRes[0]?.total || 0);
+
+    const limits = { 'LITE': 15, 'PLUS': 100, 'MAX': 9999999 };
+    const limit = limits[plan] || 15;
+
+    if (currentCount >= limit) {
+      return res.status(403).json({ 
+        success: false, 
+        message: `Your ${plan} plan is limited to ${limit} items. Please upgrade to manage more product records.` 
+      });
+    }
+
     await db.query(
       `INSERT INTO product (id, tenantId, name, category, price, buyingPrice, stockLevel, sku, imageUrl, description, minLevel, isPerishable, type, expiryDate, isActive, createdAt, updatedAt)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`,

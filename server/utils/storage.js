@@ -41,8 +41,8 @@ export const uploadFile = async (file, folder = 'general') => {
         await file.mv(filePath);
         
         // Construct the public URL
-        // In local dev, we serve from /uploads
-        const publicUrl = `http://localhost:3000/uploads/${folder}/${fileName}`;
+        const baseUrl = (process.env.BACKEND_URL || 'http://localhost:3000').replace(/\/$/, '');
+        const publicUrl = `${baseUrl}/uploads/${folder}/${fileName}`;
         return publicUrl;
     } catch (err) {
         console.error("🔴 Storage: Upload failed!", err.message);
