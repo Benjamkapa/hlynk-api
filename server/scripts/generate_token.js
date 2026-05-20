@@ -12,7 +12,7 @@ if (!email) {
 
 async function generate() {
   try {
-    const [users] = await db.query('SELECT id, tenantId, role, name FROM User WHERE email = ?', [email]);
+    const [users] = await db.query('SELECT id, tenantId, role, name FROM user WHERE email = ?', [email]);
     if (users.length === 0) {
       console.error(`❌ User with email "${email}" not found.`);
       process.exit(1);

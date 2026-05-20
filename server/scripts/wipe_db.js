@@ -9,9 +9,9 @@ async function wipe() {
     await connection.query('SET FOREIGN_KEY_CHECKS = 0');
     
     const tables = [
-      'ActivityLog', 'MpesaLog', 'Notification', 'Payment', 'SaleItem', 'Sale', 
-      'Product', 'Subscription', 'Provider', 'Session', 'Customer', 'User', 'Tenant',
-      'PlatformReview', 'Expense', 'Staff', 'Service', 'Request'
+      'activitylog', 'mpesalog', 'notification', 'payment', 'saleitem', 'sale', 
+      'product', 'subscription', 'provider', 'session', 'customer', 'user', 'tenant',
+      'platformreview', 'expense', 'staff', 'service', 'request'
     ];
 
     for (const table of tables) {

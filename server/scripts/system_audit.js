@@ -8,7 +8,7 @@ async function audit() {
     // 1. Low Stock Check
     const [lowStock] = await db.query(`
       SELECT p.name, p.stockLevel, t.businessName 
-      FROM Product p 
+      FROM product p 
       JOIN tenant t ON p.tenantId = t.id 
       WHERE p.stockLevel <= 2 LIMIT 10
     `);
@@ -21,7 +21,7 @@ async function audit() {
     // 2. Recent M-Pesa Failures (Last 24h)
     const [failedMpesa] = await db.query(`
       SELECT phone, amount, businessName, createdAt as time, resultDesc
-      FROM MpesaLog m
+      FROM mpesalog m
       JOIN tenant t ON m.tenantId = t.id
       WHERE m.status = 4 AND m.createdAt >= NOW() - INTERVAL 24 HOUR
       LIMIT 10
@@ -35,7 +35,7 @@ async function audit() {
     // 3. Expiry Watchlist (Next 7 Days)
     const [expiring] = await db.query(`
       SELECT t.businessName, s.endDate 
-      FROM Subscription s 
+      FROM subscription s 
       JOIN tenant t ON s.tenantId = t.id 
       WHERE s.status = 0 AND s.endDate BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 7 DAY)
     `);
