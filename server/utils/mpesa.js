@@ -27,13 +27,27 @@ if (!BACKEND_URL || BACKEND_URL.includes('localhost')) {
   console.warn('[MPESA] WARNING: BACKEND_URL is set to localhost or empty. Safaricom callbacks will fail.');
 }
 
+// In-memory cache for fallback when redis is a mock or fails
+const tokenCache = new Map();
+
 async function getAccessToken(customCredentials = null) {
   const cacheKey = customCredentials 
     ? `${redisKeys.mpesaToken}:${customCredentials.consumerKey}`
     : redisKeys.mpesaToken;
     
-  const cached = await redis.get(cacheKey);
-  if (cached) return cached;
+  // 1. Try in-memory fallback FIRST (Super Fast)
+  const memoryCached = tokenCache.get(cacheKey);
+  if (memoryCached && memoryCached.expiry > Date.now()) {
+    return memoryCached.token;
+  }
+
+  // 2. Try Redis (Network call / Potential Delay)
+  try {
+    const cached = await redis.get(cacheKey);
+    if (cached) return cached;
+  } catch (redisErr) {
+    console.warn('[MPESA] Redis Token Check Failed:', redisErr.message);
+  }
 
   const key = customCredentials?.consumerKey || CONSUMER_KEY;
   const secret = customCredentials?.consumerSecret || CONSUMER_SECRET;
@@ -44,10 +58,23 @@ async function getAccessToken(customCredentials = null) {
   try {
     console.log(`[MPESA] Auth Attempt | Env: ${env} | Key Prefix: ${key.substring(0, 4)}...`);
     const res = await axios.get(`${url}/oauth/v1/generate?grant_type=client_credentials`, {
-      headers: { Authorization: `Basic ${auth}` }
+      headers: { 
+        Authorization: `Basic ${auth}`,
+        'User-Agent': 'hlynk-api/1.0.0'
+      },
+      timeout: 15000 // 15 seconds timeout (reduced from 25)
     });
     const token = res.data.access_token;
+    
+    // Save to Redis
     await redis.setEx(cacheKey, 3300, token);
+    
+    // Save to in-memory fallback (valid for 50 minutes)
+    tokenCache.set(cacheKey, {
+      token,
+      expiry: Date.now() + 50 * 60 * 1000
+    });
+
     return token;
   } catch (error) {
     const errorMsg = error.response?.data?.errorMessage || error.response?.data?.message || error.message;
@@ -55,6 +82,7 @@ async function getAccessToken(customCredentials = null) {
     
     // Clear cache on auth failure so next attempt tries fresh
     await redis.del(cacheKey);
+    tokenCache.delete(cacheKey);
     
     throw new Error(`M-Pesa Auth: ${errorMsg}`);
   }
@@ -102,7 +130,11 @@ export async function initiateStkPush(pushParams, customCredentials = null, meta
 
   try {
     const res = await axios.post(`${url}/mpesa/stkpush/v1/processrequest`, body, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { 
+        Authorization: `Bearer ${token}`,
+        'User-Agent': 'hlynk-api/1.0.0'
+      },
+      timeout: 15000 // 15 seconds timeout (reduced from 30)
     });
 
     // Log the initiation
@@ -166,7 +198,11 @@ export async function queryStkPush(checkoutRequestId) {
 
   try {
     const res = await axios.post(`${BASE_URL}/mpesa/stkpushquery/v1/query`, body, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { 
+        Authorization: `Bearer ${token}`,
+        'User-Agent': 'hlynk-api/1.0.0'
+      },
+      timeout: 20000 // 20 seconds timeout
     });
     return res.data;
   } catch (error) {

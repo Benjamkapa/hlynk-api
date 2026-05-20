@@ -30,6 +30,7 @@ export const getPlatformReviews = async (req, res) => {
         pr.createdAt, u.photoUrl
       FROM PlatformReview pr
       LEFT JOIN User u ON pr.userId = u.id
+      WHERE pr.status = 1
       ORDER BY pr.createdAt DESC
       LIMIT ?
     `, [Number(limit)]);
@@ -68,5 +69,38 @@ export const markNotificationRead = async (req, res) => {
     return res.json({ success: true, data: { message: 'Notification marked as read' } });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to mark notification as read' });
+  }
+};
+export const clearNotifications = async (req, res) => {
+  const { tenantId } = req.user;
+  try {
+    // Hard delete to "clear space" as requested
+    await db.query(`DELETE FROM Notification WHERE tenantId = ?`, [tenantId]);
+    return res.json({ success: true, message: 'All notifications permanently deleted' });
+  } catch (err) {
+    console.error('clearNotifications Error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to clear notifications' });
+  }
+};
+export const submitPlatformReview = async (req, res) => {
+  const { tenantId, userId } = req.user;
+  const { rating, reviewText } = req.body;
+
+  try {
+    // 1. Get business and user names for the review record
+    const [[tenant]] = await db.query('SELECT businessName FROM Tenant WHERE id = ?', [tenantId]);
+    const [[user]] = await db.query('SELECT name FROM User WHERE id = ?', [userId]);
+
+    const reviewId = 'PR' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).substring(2, 5).toUpperCase();
+
+    await db.query(`
+      INSERT INTO PlatformReview (id, tenantId, userId, rating, reviewText, businessName, ownerName, status, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, NOW())
+    `, [reviewId, tenantId, userId, rating, reviewText, tenant?.businessName || 'Business', user?.name || 'Owner']);
+
+    return res.json({ success: true, message: 'Review submitted successfully' });
+  } catch (err) {
+    console.error('submitPlatformReview Error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to submit review' });
   }
 };

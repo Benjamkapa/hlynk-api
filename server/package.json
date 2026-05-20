@@ -4,7 +4,11 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "db:wipe": "node scripts/wipe_db.js",
+    "system:audit": "node scripts/system_audit.js",
+    "sub:tool": "node scripts/sub_tool.js",
+    "user:token": "node scripts/generate_token.js"
   },
   "author": "",
   "license": "ISC",

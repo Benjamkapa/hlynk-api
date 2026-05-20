@@ -107,10 +107,20 @@ const startServer = async () => {
     await db.query("SELECT 1");
     console.log("✅ Database: Connected Successfully");
 
-    // 2. Initialize MinIO Storage
+    // 2. Run Critical Migrations (Nuclear Option)
+    try {
+      const [cols] = await db.query('DESCRIBE PlatformReview');
+      if (!cols.some(c => c.Field === 'status')) {
+        await db.query('ALTER TABLE PlatformReview ADD COLUMN status INT DEFAULT 0 AFTER ownerName');
+      }
+    } catch (e) {
+      console.warn("⚠️ Migration Warning:", e.message);
+    }
+
+    // 3. Initialize MinIO Storage
     await initStorage();
 
-    // 3. Start Listener
+    // 4. Start Listener
     app.listen(PORT, () => {
       console.log(`🚀 hlynk Server running on http://localhost:${PORT}`);
     });

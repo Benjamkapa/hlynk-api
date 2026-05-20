@@ -3,9 +3,9 @@ import { initiateStkPush, queryStkPush } from '../utils/mpesa.js';
 import { ulid } from 'ulid';
 
 export const PLAN_PRICES = {
-  LITE: 2999 , // Starter
-  PLUS: 6999, // Growth
-  MAX: 16999, // Business Pro
+  LITE: 1 , // Starter
+  PLUS: 1, // Growth
+  MAX: 1, // Business Pro
 };
 
 export const getMySubscription = async (req, res) => {
@@ -111,7 +111,7 @@ export const initiateRenewal = async (req, res) => {
       await db.query(`UPDATE Payment SET mpesaRequestId = ? WHERE id = ?`, [result.CheckoutRequestID, paymentId]);
     }
 
-    return res.json({ success: true, data: { paymentId, message: 'STK Push sent to your phone' } });
+    return res.json({ success: true, data: { paymentId, message: 'STK Push sent to your phone, Enter your pin to complete the transaction' } });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }
@@ -123,7 +123,7 @@ export const changePlan = async (req, res) => {
 
   try {
     const [recentPayments] = await db.query(`SELECT COUNT(*) as cnt FROM Payment WHERE tenantId = ? AND createdAt > DATE_SUB(NOW(), INTERVAL 1 HOUR)`, [tenantId]);
-    if (recentPayments[0].cnt >= 5) {
+    if (recentPayments[0].cnt >= 65) {
       return res.status(429).json({ success: false, message: 'Too many payment attempts. Please wait before trying again.' });
     }
 
@@ -241,12 +241,14 @@ export const verifyPayment = async (req, res) => {
 
     const result = await queryStkPush(checkoutRequestId);
     const message = result.ResultDesc || (result.ResultCode == '0' ? 'Success' : 'Failed');
+    const code = String(result.ResultCode);
     
-    if (result.ResultCode == '0') {
+    if (code === '0') {
       await handlePaymentCallback(payment.reference, checkoutRequestId, true, message);
       return res.json({ success: true, data: { status: 0, message, result } });
-    } else if (['1032', '1'].includes(String(result.ResultCode))) {
-      const status = result.ResultCode == '1032' ? 3 : 1;
+    } else if (['1032', '1', '2001', '1037', '1019'].includes(code)) {
+      // 1032: Canceled, 1: Insufficient Balance, 2001: Wrong PIN, 1037: Timeout, 1019: Expired
+      const status = code === '1032' ? 3 : 1;
       await db.query(`UPDATE Payment SET status = ?, message = ? WHERE id = ?`, [status, message, payment.id]);
       return res.json({ success: true, data: { status, message, result } });
     }
