@@ -64,7 +64,7 @@ export const getSystemStats = async (req, res) => {
       SELECT 
         CONCAT('W', WEEK(createdAt)) as name, 
         COUNT(*) as value 
-      FROM Tenant 
+      FROM tenant 
       WHERE createdAt >= NOW() - INTERVAL 8 WEEK
       GROUP BY name 
       ORDER BY MIN(createdAt) ASC
@@ -81,13 +81,13 @@ export const getSystemStats = async (req, res) => {
     // Recent Transactions (Global Ledger)
     const [recentTransactions] = await db.query(`
       SELECT 'Payment' as type, id, amount, status, createdAt as time, tenantId
-      FROM Payment 
+      FROM payment 
       ORDER BY createdAt DESC LIMIT 50
     `);
 
     // Populate with dummy entity names since we didn't join
     const enrichedTx = await Promise.all(recentTransactions.map(async (tx) => {
-      const [t] = await db.query(`SELECT businessName, slug FROM Tenant WHERE id = ? LIMIT 1`, [tx.tenantId]);
+      const [t] = await db.query(`SELECT businessName, slug FROM tenant WHERE id = ? LIMIT 1`, [tx.tenantId]);
       return {
         id: tx.id.substring(0,8).toUpperCase(),
         entity: t.length > 0 ? t[0].businessName : 'Unknown',
@@ -102,14 +102,14 @@ export const getSystemStats = async (req, res) => {
     // Recent Activity (Live Intelligence)
     const [recentActivity] = await db.query(`
       SELECT id, action as event, logName as entity, details as user, createdAt as time 
-      FROM ActivityLog 
+      FROM activitylog 
       ORDER BY createdAt DESC LIMIT 5
     `);
 
     // Fetch recent users for the "Cloud Active" avatars
     const [recentUsers] = await db.query(`
       SELECT name, photoUrl 
-      FROM User 
+      FROM user 
       WHERE photoUrl IS NOT NULL 
         AND photoUrl != '' 
         AND photoUrl NOT LIKE '%ui-avatars%'
@@ -160,14 +160,14 @@ export const listTenants = async (req, res) => {
 
   try {
     const [tenants] = await db.query(`
-      SELECT t.*, s.planName, s.status as subscriptionStatus, (SELECT id FROM User WHERE tenantId = t.id AND role = 'PROVIDER' LIMIT 1) as primaryUserId
-      FROM Tenant t
-      LEFT JOIN Subscription s ON t.id = s.tenantId
+      SELECT t.*, s.planName, s.status as subscriptionStatus, (SELECT id FROM user WHERE tenantId = t.id AND role = 'PROVIDER' LIMIT 1) as primaryUserId
+      FROM tenant t
+      LEFT JOIN subscription s ON t.id = s.tenantId
       ORDER BY t.createdAt DESC
       LIMIT ? OFFSET ?
     `, [Number(limit), offset]);
 
-    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM Tenant`);
+    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM tenant`);
     const total = Number(countRes[0].total);
 
     return res.json({ 
@@ -451,8 +451,8 @@ export const getSessions = async (req, res) => {
         s.id, s.ipAddress, s.userAgent, s.isActive, 
         u.id as userId, u.name, u.email, u.role, u.photoUrl,
         s.lastActive
-      FROM Session s
-      JOIN User u ON s.userId = u.id
+      FROM session s
+      JOIN user u ON s.userId = u.id
       WHERE s.isActive = 1 AND s.lastActive >= NOW() - INTERVAL 30 MINUTE
       ORDER BY s.lastActive DESC
       LIMIT 100
@@ -583,8 +583,8 @@ export const deleteTenant = async (req, res) => {
 export const updateTenant = async (req, res) => {
   const { businessName, slug } = req.body;
   try {
-    await db.query(`UPDATE Tenant SET businessName = ?, slug = ?, updatedAt = NOW() WHERE id = ?`, [businessName, slug, req.params.id]);
-    await db.query(`UPDATE Provider SET businessName = ?, updatedAt = NOW() WHERE tenantId = ?`, [businessName, req.params.id]);
+    await db.query(`UPDATE tenant SET businessName = ?, slug = ?, updatedAt = NOW() WHERE id = ?`, [businessName, slug, req.params.id]);
+    await db.query(`UPDATE provider SET businessName = ?, updatedAt = NOW() WHERE tenantId = ?`, [businessName, req.params.id]);
     return res.json({ success: true, message: 'Tenant updated' });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to update tenant' });
@@ -603,9 +603,9 @@ export const getActivityLogs = async (req, res) => {
         ANY_VALUE(u.email) as userEmail, 
         ANY_VALUE(u.photoUrl) as photoUrl, 
         ANY_VALUE(t.businessName) as businessName 
-      FROM ActivityLog a
-      LEFT JOIN User u ON u.id = a.userId OR a.details LIKE CONCAT('%', u.email, '%')
-      LEFT JOIN Tenant t ON t.id = a.tenantId
+      FROM activitylog a
+      LEFT JOIN user u ON u.id = a.userId OR a.details LIKE CONCAT('%', u.email, '%')
+      LEFT JOIN tenant t ON t.id = a.tenantId
       WHERE 1=1
     `;
     const params = [];
@@ -629,9 +629,9 @@ export const getActivityLogs = async (req, res) => {
     // Count
     let cQ = `
       SELECT COUNT(DISTINCT a.id) as total 
-      FROM ActivityLog a
-      LEFT JOIN User u ON u.id = a.userId OR a.details LIKE CONCAT('%', u.email, '%')
-      LEFT JOIN Tenant t ON t.id = a.tenantId
+      FROM activitylog a
+      LEFT JOIN user u ON u.id = a.userId OR a.details LIKE CONCAT('%', u.email, '%')
+      LEFT JOIN tenant t ON t.id = a.tenantId
       WHERE 1=1
     `;
     const cParams = [];
@@ -962,33 +962,33 @@ export const registerTenant = async (req, res) => {
     const slug = await uniqueSlug(businessName);
     const subId = ulid();
 
-    // 1. Create Tenant
+    // 1. Create tenant
     await connection.query(
-      `INSERT INTO Tenant (id, slug, businessName, isActive, createdAt, updatedAt) VALUES (?, ?, ?, 1, NOW(), NOW())`,
+      `INSERT INTO tenant (id, slug, businessName, isActive, createdAt, updatedAt) VALUES (?, ?, ?, 1, NOW(), NOW())`,
       [tenantId, slug, businessName]
     );
 
-    // 2. Create User (Owner)
+    // 2. Create user (Owner)
     await connection.query(
-      `INSERT INTO User (id, tenantId, name, phone, email, role, passwordHash, isActive, createdAt, updatedAt) 
+      `INSERT INTO user (id, tenantId, name, phone, email, role, passwordHash, isActive, createdAt, updatedAt) 
        VALUES (?, ?, ?, ?, ?, 'PROVIDER', 'ADMIN_CREATED', 1, NOW(), NOW())`,
       [userId, tenantId, ownerName, phone, email]
     );
 
-    // 3. Create Provider record
+    // 3. Create provider record
     await connection.query(
-      `INSERT INTO Provider (id, tenantId, userId, businessName, phone, category, isActive, createdAt, updatedAt) 
+      `INSERT INTO provider (id, tenantId, userId, businessName, phone, category, isActive, createdAt, updatedAt) 
        VALUES (?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`,
       [ulid(), tenantId, userId, businessName, phone, category || 'Other']
     );
 
-    // 4. Initialize Subscription
+    // 4. Initialize subscription
     const isLite = planName === 'LITE';
-    const subStatus = isLite ? 2 : 1; // 2 = TRIAL, 1 = PENDING/EXPIRED
+    const subStatus = isLite ? 2 : 1; 
     const trialEndQuery = isLite ? 'DATE_ADD(NOW(), INTERVAL 7 DAY)' : 'NULL';
     
     await connection.query(
-      `INSERT INTO Subscription (id, tenantId, planName, status, trialEndDate, createdAt, updatedAt) 
+      `INSERT INTO subscription (id, tenantId, planName, status, trialEndDate, createdAt, updatedAt) 
        VALUES (?, ?, ?, ?, ${trialEndQuery}, NOW(), NOW())`,
       [subId, tenantId, planName, subStatus]
     );

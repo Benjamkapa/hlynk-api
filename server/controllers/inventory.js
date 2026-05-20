@@ -35,13 +35,13 @@ export const listProducts = async (req, res) => {
 
   try {
     const [products] = await db.query(`
-      SELECT * FROM Product 
+      SELECT * FROM product 
       ${whereQuery}
       ORDER BY ${sortBy} ${sortOrder}
       LIMIT ? OFFSET ?
     `, [...queryParams, Number(limit), offset]);
 
-    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM Product ${whereQuery}`, queryParams);
+    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM product ${whereQuery}`, queryParams);
     const total = Number(countRes[0].total);
 
     const response = {
@@ -55,13 +55,13 @@ export const listProducts = async (req, res) => {
 
     // Only calculate expensive stats if specifically requested (e.g. for dashboard/management, not for POS search)
     if (req.query.includeStats === 'true') {
-      const [totalItemsRes] = await db.query(`SELECT COUNT(*) as total FROM Product WHERE tenantId = ?`, [tenantId]);
-      const [lowStockRes] = await db.query(`SELECT COUNT(*) as total FROM Product WHERE tenantId = ? AND type != 'SERVICE' AND stockLevel <= minLevel`, [tenantId]);
-      const [totalValueRes] = await db.query(`SELECT SUM(price * stockLevel) as total FROM Product WHERE tenantId = ?`, [tenantId]);
+      const [totalItemsRes] = await db.query(`SELECT COUNT(*) as total FROM product WHERE tenantId = ?`, [tenantId]);
+      const [lowStockRes] = await db.query(`SELECT COUNT(*) as total FROM product WHERE tenantId = ? AND type != 'SERVICE' AND stockLevel <= minLevel`, [tenantId]);
+      const [totalValueRes] = await db.query(`SELECT SUM(price * stockLevel) as total FROM product WHERE tenantId = ?`, [tenantId]);
       
       const today = getStartOfDay(new Date());
       const [expiringSoonRes] = await db.query(`
-        SELECT COUNT(*) as total FROM Product 
+        SELECT COUNT(*) as total FROM product 
         WHERE tenantId = ? AND isPerishable = 1 AND expiryDate >= ? AND expiryDate <= DATE_ADD(?, INTERVAL 30 DAY)
       `, [tenantId, today, today]);
 
@@ -88,7 +88,7 @@ export const createProduct = async (req, res) => {
 
   try {
     await db.query(
-      `INSERT INTO Product (id, tenantId, name, category, price, buyingPrice, stockLevel, sku, imageUrl, description, minLevel, isPerishable, type, expiryDate, isActive, createdAt, updatedAt)
+      `INSERT INTO product (id, tenantId, name, category, price, buyingPrice, stockLevel, sku, imageUrl, description, minLevel, isPerishable, type, expiryDate, isActive, createdAt, updatedAt)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`,
       [
         id, tenantId, data.name, data.category || 'General', data.price, data.buyingPrice || 0, 
@@ -110,7 +110,7 @@ export const updateProduct = async (req, res) => {
   const data = req.body;
 
   try {
-    let updateQuery = 'UPDATE Product SET updatedAt = NOW()';
+    let updateQuery = 'UPDATE product SET updatedAt = NOW()';
     const updateParams = [];
 
     if (data.name) { updateQuery += ', name = ?'; updateParams.push(data.name); }
@@ -131,7 +131,7 @@ export const deleteProduct = async (req, res) => {
   const { tenantId } = req.user;
   const { id } = req.params;
   try {
-    await db.query(`DELETE FROM Product WHERE id = ? AND tenantId = ?`, [id, tenantId]);
+    await db.query(`DELETE FROM product WHERE id = ? AND tenantId = ?`, [id, tenantId]);
     return res.json({ success: true, data: { message: 'Product deleted' } });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Delete failed' });
@@ -151,7 +151,7 @@ export const uploadProductImage = async (req, res) => {
     const imageUrl = await uploadFile(file, 'products');
 
     // Update database
-    await db.query(`UPDATE Product SET imageUrl = ? WHERE id = ? AND tenantId = ?`, [imageUrl, id, tenantId]);
+    await db.query(`UPDATE product SET imageUrl = ? WHERE id = ? AND tenantId = ?`, [imageUrl, id, tenantId]);
 
     return res.json({ success: true, data: { imageUrl } });
   } catch (err) {

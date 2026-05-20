@@ -40,9 +40,9 @@ export const listSales = async (req, res) => {
 
     const [sales] = await db.query(`
       SELECT s.*, u.name as userName,
-             (SELECT rawPayload FROM MpesaLog l WHERE l.checkoutRequestId = s.mpesaRequestId ORDER BY type DESC, createdAt DESC LIMIT 1) as rawPayload
-      FROM Sale s
-      LEFT JOIN User u ON s.userId = u.id
+             (SELECT rawPayload FROM mpesalog l WHERE l.checkoutRequestId = s.mpesaRequestId ORDER BY type DESC, createdAt DESC LIMIT 1) as rawPayload
+      FROM sale s
+      LEFT JOIN user u ON s.userId = u.id
       ${whereQuery}
       ORDER BY s.${sortBy} ${sortOrder}
       LIMIT ? OFFSET ?
@@ -50,7 +50,7 @@ export const listSales = async (req, res) => {
 
     if (sales.length > 0) {
       const saleIds = sales.map((s) => s.id);
-      const [items] = await db.query(`SELECT * FROM SaleItem WHERE saleId IN (?)`, [saleIds]);
+      const [items] = await db.query(`SELECT * FROM saleitem WHERE saleId IN (?)`, [saleIds]);
       
       const itemsBySale = items.reduce((acc, item) => {
         if (!acc[item.saleId]) acc[item.saleId] = [];
@@ -64,7 +64,7 @@ export const listSales = async (req, res) => {
       }
     }
 
-    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM Sale s ${whereQuery}`, queryParams);
+    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM sale s ${whereQuery}`, queryParams);
     const total = Number(countRes[0].total);
     const pages = Math.ceil(total / Number(limit));
 
@@ -83,7 +83,7 @@ export const listSales = async (req, res) => {
         SELECT 
           SUM(totalAmount) as totalAmount,
           COUNT(*) as transactions
-        FROM Sale s
+        FROM sale s
         ${whereQuery}
       `, queryParams);
 
@@ -115,14 +115,14 @@ export const createSale = async (req, res) => {
 
     // Auto-create or resolve customer if phone is provided but no customerId
     if (!customerId && customerPhone) {
-      const [existing] = await connection.query(`SELECT id, name FROM User WHERE phone = ? AND role = 'CUSTOMER' AND tenantId = ?`, [customerPhone, tenantId]);
+      const [existing] = await connection.query(`SELECT id, name FROM user WHERE phone = ? AND role = 'CUSTOMER' AND tenantId = ?`, [customerPhone, tenantId]);
       if (existing.length > 0) {
         customerId = existing[0].id;
         if (!customerName) customerName = existing[0].name;
       } else {
         customerId = ulid();
         await connection.query(
-          `INSERT INTO User (id, tenantId, name, phone, role, passwordHash, phoneVerified, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, 'CUSTOMER', '', 0, 1, NOW(), NOW())`,
+          `INSERT INTO user (id, tenantId, name, phone, role, passwordHash, phoneVerified, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, 'CUSTOMER', '', 0, 1, NOW(), NOW())`,
           [customerId, tenantId, customerName || 'Walk-in Customer', customerPhone]
         );
       }
@@ -130,19 +130,19 @@ export const createSale = async (req, res) => {
 
     const saleId = ulid();
     await connection.query(
-      `INSERT INTO Sale (id, tenantId, userId, customerId, customerName, totalAmount, paymentMethod, status, mpesaRequestId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      `INSERT INTO sale (id, tenantId, userId, customerId, customerName, totalAmount, paymentMethod, status, mpesaRequestId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
       [saleId, tenantId, userId || null, customerId || null, customerName || null, totalAmount, paymentMethod || 'CASH', status !== undefined ? status : 0, mpesaRequestId || null]
     );
 
     for (const item of items) {
       await connection.query(
-        `INSERT INTO SaleItem (id, saleId, productId, name, quantity, price) VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO saleitem (id, saleId, productId, name, quantity, price) VALUES (?, ?, ?, ?, ?, ?)`,
         [ulid(), saleId, item.productId || null, item.name, item.quantity, item.price]
       );
 
       // Update inventory
       if (item.productId) {
-        await connection.query(`UPDATE Product SET stockLevel = stockLevel - ? WHERE id = ? AND tenantId = ?`, [item.quantity, item.productId, tenantId]);
+        await connection.query(`UPDATE product SET stockLevel = stockLevel - ? WHERE id = ? AND tenantId = ?`, [item.quantity, item.productId, tenantId]);
       }
     }
 
@@ -150,7 +150,7 @@ export const createSale = async (req, res) => {
     if (paymentMethod === 'MPESA' || mpesaRequestId) {
       try {
         await connection.query(`
-          INSERT INTO Payment (id, tenantId, amount, status, reference, mpesaRequestId, transactionType, createdAt)
+          INSERT INTO payment (id, tenantId, amount, status, reference, mpesaRequestId, transactionType, createdAt)
           VALUES (?, ?, ?, ?, ?, ?, 'SALE', NOW())
         `, [ulid(), tenantId, totalAmount, status || 2, saleId, mpesaRequestId || null]);
       } catch (payErr) {
@@ -162,7 +162,7 @@ export const createSale = async (req, res) => {
     // Activity Log
     try {
       await connection.query(`
-        INSERT INTO ActivityLog (id, tenantId, userId, action, logName, details, ipAddress, actionId, createdAt) 
+        INSERT INTO activitylog (id, tenantId, userId, action, logName, details, ipAddress, actionId, createdAt) 
         VALUES (?, ?, ?, 'Sale recorded', 'Sale recorded', ?, ?, ?, NOW())
       `, [ulid(), tenantId, userId || null, `Sale of ${items.length} items for ${totalAmount}`, clientIp, `#sale-${saleId.slice(-6).toUpperCase()}`]);
     } catch (logErr) {
@@ -183,11 +183,11 @@ export const getSaleDetails = async (req, res) => {
   const { tenantId } = req.user;
   const { id } = req.params;
   try {
-    const [sales] = await db.query(`SELECT s.*, u.name as userName FROM Sale s LEFT JOIN User u ON s.userId = u.id WHERE s.id = ? AND s.tenantId = ?`, [id, tenantId]);
+    const [sales] = await db.query(`SELECT s.*, u.name as userName FROM sale s LEFT JOIN user u ON s.userId = u.id WHERE s.id = ? AND s.tenantId = ?`, [id, tenantId]);
     if (sales.length === 0) return res.status(404).json({ success: false, message: 'Sale not found' });
     
     const sale = sales[0];
-    const [items] = await db.query(`SELECT * FROM SaleItem WHERE saleId = ?`, [id]);
+    const [items] = await db.query(`SELECT * FROM saleitem WHERE saleId = ?`, [id]);
     sale.items = items;
     
     return res.json({ success: true, data: sale });
@@ -201,7 +201,7 @@ export const vendorMpesaPush = async (req, res) => {
   const { phone, amount, reference } = req.body;
 
   try {
-    const [[provider]] = await db.query(`SELECT operationalSettings FROM Provider WHERE tenantId = ?`, [tenantId]);
+    const [[provider]] = await db.query(`SELECT operationalSettings FROM provider WHERE tenantId = ?`, [tenantId]);
     
     let customCredentials = null;
     if (provider?.operationalSettings) {
@@ -247,8 +247,8 @@ export const vendorMpesaPush = async (req, res) => {
     // CRITICAL: Link the request ID to the Sale immediately if saleId provided
     if (req.body.saleId && result.CheckoutRequestID) {
       try {
-        await db.query(`UPDATE Sale SET mpesaRequestId = ? WHERE id = ? AND tenantId = ?`, [result.CheckoutRequestID, req.body.saleId, tenantId]);
-        await db.query(`UPDATE Payment SET mpesaRequestId = ? WHERE reference = ? AND tenantId = ?`, [result.CheckoutRequestID, req.body.saleId, tenantId]);
+        await db.query(`UPDATE sale SET mpesaRequestId = ? WHERE id = ? AND tenantId = ?`, [result.CheckoutRequestID, req.body.saleId, tenantId]);
+        await db.query(`UPDATE payment SET mpesaRequestId = ? WHERE reference = ? AND tenantId = ?`, [result.CheckoutRequestID, req.body.saleId, tenantId]);
         console.log(`[SALES-LINK] Linked CheckoutRequestID ${result.CheckoutRequestID} to Sale ${req.body.saleId}`);
       } catch (linkErr) {
         console.error('[SALES-LINK] Failed to link CheckoutRequestID:', linkErr.message);

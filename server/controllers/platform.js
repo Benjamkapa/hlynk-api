@@ -28,8 +28,8 @@ export const getPlatformReviews = async (req, res) => {
         pr.id, pr.userId, pr.tenantId, pr.rating, 
         pr.reviewText as comment, pr.businessName, pr.ownerName as name, 
         pr.createdAt, u.photoUrl
-      FROM PlatformReview pr
-      LEFT JOIN User u ON pr.userId = u.id
+      FROM platformreview pr
+      LEFT JOIN user u ON pr.userId = u.id
       WHERE pr.status = 1
       ORDER BY pr.createdAt DESC
       LIMIT ?
@@ -45,7 +45,7 @@ export const getNotifications = async (req, res) => {
   const { tenantId } = req.user;
   try {
     const [notifications] = await db.query(`
-      SELECT *, (status = 1) as isRead FROM Notification 
+      SELECT *, (status = 1) as isRead FROM notification 
       WHERE (tenantId = ? OR tenantId IS NULL) 
       ORDER BY createdAt DESC 
       LIMIT 50
@@ -62,9 +62,9 @@ export const markNotificationRead = async (req, res) => {
   const { tenantId } = req.user;
   try {
     if (id === 'all') {
-      await db.query(`UPDATE Notification SET status = 1 WHERE tenantId = ? OR tenantId IS NULL`, [tenantId]);
+      await db.query(`UPDATE notification SET status = 1 WHERE tenantId = ? OR tenantId IS NULL`, [tenantId]);
     } else {
-      await db.query(`UPDATE Notification SET status = 1 WHERE id = ? AND (tenantId = ? OR tenantId IS NULL)`, [id, tenantId]);
+      await db.query(`UPDATE notification SET status = 1 WHERE id = ? AND (tenantId = ? OR tenantId IS NULL)`, [id, tenantId]);
     }
     return res.json({ success: true, data: { message: 'Notification marked as read' } });
   } catch (err) {
@@ -75,7 +75,7 @@ export const clearNotifications = async (req, res) => {
   const { tenantId } = req.user;
   try {
     // Hard delete to "clear space" as requested
-    await db.query(`DELETE FROM Notification WHERE tenantId = ?`, [tenantId]);
+    await db.query(`DELETE FROM notification WHERE tenantId = ?`, [tenantId]);
     return res.json({ success: true, message: 'All notifications permanently deleted' });
   } catch (err) {
     console.error('clearNotifications Error:', err);
@@ -88,13 +88,13 @@ export const submitPlatformReview = async (req, res) => {
 
   try {
     // 1. Get business and user names for the review record
-    const [[tenant]] = await db.query('SELECT businessName FROM Tenant WHERE id = ?', [tenantId]);
-    const [[user]] = await db.query('SELECT name FROM User WHERE id = ?', [userId]);
+    const [[tenant]] = await db.query('SELECT businessName FROM tenant WHERE id = ?', [tenantId]);
+    const [[user]] = await db.query('SELECT name FROM user WHERE id = ?', [userId]);
 
     const reviewId = 'PR' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).substring(2, 5).toUpperCase();
 
     await db.query(`
-      INSERT INTO PlatformReview (id, tenantId, userId, rating, reviewText, businessName, ownerName, status, createdAt)
+      INSERT INTO platformreview (id, tenantId, userId, rating, reviewText, businessName, ownerName, status, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, 0, NOW())
     `, [reviewId, tenantId, userId, rating, reviewText, tenant?.businessName || 'Business', user?.name || 'Owner']);
 

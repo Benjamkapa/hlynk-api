@@ -109,9 +109,9 @@ const startServer = async () => {
 
     // 2. Run Critical Migrations (Nuclear Option)
     try {
-      const [cols] = await db.query('DESCRIBE PlatformReview');
+      const [cols] = await db.query('DESCRIBE platformreview');
       if (!cols.some(c => c.Field === 'status')) {
-        await db.query('ALTER TABLE PlatformReview ADD COLUMN status INT DEFAULT 0 AFTER ownerName');
+        await db.query('ALTER TABLE platformreview ADD COLUMN status INT DEFAULT 0 AFTER ownerName');
       }
     } catch (e) {
       console.warn("⚠️ Migration Warning:", e.message);
