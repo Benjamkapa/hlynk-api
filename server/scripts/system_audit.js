@@ -9,7 +9,7 @@ async function audit() {
     const [lowStock] = await db.query(`
       SELECT p.name, p.stockLevel, t.businessName 
       FROM Product p 
-      JOIN Tenant t ON p.tenantId = t.id 
+      JOIN tenant t ON p.tenantId = t.id 
       WHERE p.stockLevel <= 2 LIMIT 10
     `);
     console.log('📦 LOW STOCK ALERTS (Critical <= 2):');
@@ -22,7 +22,7 @@ async function audit() {
     const [failedMpesa] = await db.query(`
       SELECT phone, amount, businessName, createdAt as time, resultDesc
       FROM MpesaLog m
-      JOIN Tenant t ON m.tenantId = t.id
+      JOIN tenant t ON m.tenantId = t.id
       WHERE m.status = 4 AND m.createdAt >= NOW() - INTERVAL 24 HOUR
       LIMIT 10
     `);
@@ -36,7 +36,7 @@ async function audit() {
     const [expiring] = await db.query(`
       SELECT t.businessName, s.endDate 
       FROM Subscription s 
-      JOIN Tenant t ON s.tenantId = t.id 
+      JOIN tenant t ON s.tenantId = t.id 
       WHERE s.status = 0 AND s.endDate BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 7 DAY)
     `);
     console.log('\n⏳ EXPIRY WATCHLIST (Next 7 Days):');

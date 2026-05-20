@@ -15,9 +15,9 @@ if (!command || !slug) {
 
 async function run() {
   try {
-    const [tenants] = await db.query('SELECT id, businessName FROM Tenant WHERE slug = ?', [slug]);
+    const [tenants] = await db.query('SELECT id, businessName FROM tenant WHERE slug = ?', [slug]);
     if (tenants.length === 0) {
-      console.error(`❌ Error: Tenant with slug "${slug}" not found.`);
+      console.error(`❌ Error: tenant with slug "${slug}" not found.`);
       process.exit(1);
     }
     const tenantId = tenants[0].id;
