@@ -8,6 +8,7 @@ on:
 
 jobs:
   build:
+
     runs-on: self-hosted
 
     strategy:
@@ -28,21 +29,21 @@ jobs:
       working-directory: server
       run: npm install
 
-    - name: Remove .env file if it exists
+    - name: Remove pushed .env file
       working-directory: server
       run: rm -f .env
 
     - name: Stop existing PM2 process if it exists
-      run: pm2 delete hlynk-server || true   # soft delete, not kill
+      run: pm2 delete hlynk-server || true
 
-    - name: Start PM2 process via ecosystem file
+    - name: Start PM2 process
       working-directory: server
-      # run: pm2 start ecosystem.config.cjs --env production
-      run: pm2 start index.js --name hlynk-server --interpreter node --update-env
+      run: |
+        source /etc/environment
+        pm2 start index.js --name hlynk-server --interpreter node --update-env
 
     - name: Save PM2 process list
       run: pm2 save
-
 
 
 
