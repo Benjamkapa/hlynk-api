@@ -118,6 +118,7 @@ export const deleteExpense = async (req, res) => {
   }
 };
 
+// Only PROVIDER/OWNER can access full details of an expense, STAFF can only access their own expenses in list view, not details
 export const getExpenseById = async (req, res) => {
   const { tenantId, userId, role } = req.user;
   const { id } = req.params;
