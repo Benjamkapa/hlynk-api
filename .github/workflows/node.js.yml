@@ -32,6 +32,11 @@ jobs:
       working-directory: server
       run: npm install
 
+      # remove .env file if it exists to prevent accidental overwriting of production environment variables
+    - name: Remove .env file if it exists
+      working-directory: server
+      run: rm -f .env
+
     - name: Start or Restart app with PM2
       working-directory: server
       run: pm2 delete hlynk-server || true && pm2 start index.js --name hlynk-server --interpreter node --update-env

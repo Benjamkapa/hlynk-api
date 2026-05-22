@@ -73,7 +73,7 @@ export const requireOwner = (req, res, next) => {
 
 export const requireAdmin = (req, res, next) => {
   if (req.user?.role !== 'SUPER_ADMIN') {
-    return res.status(403).json({ success: false, message: 'Forbidden: Admin access is required' });
+    return res.status(403).json({ success: false, message: 'Forbidden: Admin access required' });
   }
   next();
 };
