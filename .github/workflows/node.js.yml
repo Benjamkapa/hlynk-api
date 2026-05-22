@@ -39,7 +39,7 @@ jobs:
     - name: Start PM2 process
       working-directory: server
       run: |
-        source /etc/environment
+        source /etc/profile
         pm2 start index.js --name hlynk-server --interpreter node --update-env
 
     - name: Save PM2 process list
