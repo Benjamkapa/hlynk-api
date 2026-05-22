@@ -37,7 +37,7 @@ jobs:
 
     - name: Start PM2 process via ecosystem file
       working-directory: server
-      run: pm2 start ecosystem.config.js --env production
+      run: pm2 start ecosystem.config.cjs --env production
 
     - name: Save PM2 process list
       run: pm2 save
@@ -45,7 +45,7 @@ jobs:
 
 
 
-      
+
 
 
 # # This workflow will do a clean installation of node dependencies, cache/restore them, build the source code and run tests across different versions of node
