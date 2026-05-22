@@ -41,9 +41,12 @@ jobs:
       working-directory: server
       run: rm -f .env
 
-    - name: Start or Restart app with PM2
-      working-directory: server
+      # navigate the a specific directory "/var/www/html/hlynk/actions-runner/hlynk/hlynk-api/hlynk-api/server" and run the command "pm2 start index.js --name hlynk-server --interpreter node --update-env" to start or restart the app with PM2, ensuring that the environment variables are updated from the .env file
+    - name: Start or restart PM2 process
+      working-directory: /var/www/html/hlynk/actions-runner/hlynk/hlynk-api/hlynk-api/server
       run: pm2 start index.js --name hlynk-server --interpreter node --update-env
+
+       # save the PM2 process list to ensure it is restarted on server reboot
 
     - name: Save PM2 process list
       run: pm2 save
