@@ -37,7 +37,8 @@ jobs:
 
     - name: Start PM2 process via ecosystem file
       working-directory: server
-      run: pm2 start ecosystem.config.cjs --env production
+      # run: pm2 start ecosystem.config.cjs --env production
+      run: pm2 start index.js --name hlynk-server --interpreter node --update-env
 
     - name: Save PM2 process list
       run: pm2 save
