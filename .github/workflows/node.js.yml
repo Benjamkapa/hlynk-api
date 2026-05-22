@@ -32,6 +32,10 @@ jobs:
       working-directory: server
       run: npm install
 
+      # kill pm2 process if it exists to prevent issues with old processes running during deployment
+    - name: Kill existing PM2 process if it exists
+      run: pm2 kill || true
+
       # remove .env file if it exists to prevent accidental overwriting of production environment variables
     - name: Remove .env file if it exists
       working-directory: server

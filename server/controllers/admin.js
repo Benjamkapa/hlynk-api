@@ -188,7 +188,7 @@ export const getSystemHealth = async (req, res) => {
     await db.query(`SELECT 1`);
     const dbLatencyMs = Date.now() - start;
 
-    // Get actual system stats
+    // Get actual system statistics for a more accurate health report
     const cpus = os.cpus();
     const cpuLoad = Math.round((os.loadavg()[0] / cpus.length) * 100);
     const memoryUsage = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
