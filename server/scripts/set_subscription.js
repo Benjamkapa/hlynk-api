@@ -8,30 +8,29 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 async function setSubscription() {
   const args = process.argv.slice(2);
   if (args.length < 2) {
-    console.log('Usage: node scripts/set_subscription.js <email_or_slug> <plan_name> [status] [days_left]');
+    console.log('Usage: node scripts/set_subscription.js <user_email> <plan_name> [status] [days_left]');
     console.log('Example: node scripts/set_subscription.js test@example.com MAX ACTIVE');
-    console.log('Example: node scripts/set_subscription.js my-store LITE TRIAL 3');
     process.exit(1);
   }
 
-  const [identifier, planName, status = 'ACTIVE', daysLeft = 30] = args;
+  const [email, planName, status = 'ACTIVE', daysLeft = 30] = args;
 
   try {
     // Find tenant
     const [tenants] = await db.query(`
-      SELECT t.id, t.businessName, t.slug, u.email 
+      SELECT t.id, t.businessName, u.email 
       FROM tenant t 
       JOIN user u ON u.tenantId = t.id 
-      WHERE u.email = ? OR t.slug = ?
-    `, [identifier, identifier]);
+      WHERE u.email = ?
+    `, [email]);
 
     if (tenants.length === 0) {
-      console.error(`❌ No tenant found for identifier: ${identifier}`);
+      console.error(`❌ No tenant found for email: ${email}`);
       process.exit(1);
     }
 
     const tenant = tenants[0];
-    console.log(`🔍 Found Tenant: ${tenant.businessName} (${tenant.slug})`);
+    console.log(`🔍 Found Tenant: ${tenant.businessName}`);
 
     const trialEndDate = new Date();
     trialEndDate.setDate(trialEndDate.getDate() + parseInt(daysLeft));

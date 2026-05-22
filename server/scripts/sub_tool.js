@@ -2,22 +2,28 @@ import { db } from '../dbms/mysql.js';
 
 const args = process.argv.slice(2);
 const command = args[0]; // 'check', 'gift', or 'expire'
-const slug = args[1];
+const email = args[1];
 const value = args[2] ? parseInt(args[2]) : 0;
 
-if (!command || !slug) {
+if (!command || !email) {
   console.log('Usage:');
-  console.log('  node scripts/sub_tool.js check [slug]');
-  console.log('  node scripts/sub_tool.js gift [slug] [days]');
-  console.log('  node scripts/sub_tool.js expire [slug]');
+  console.log('  node scripts/sub_tool.js check [email]');
+  console.log('  node scripts/sub_tool.js gift [email] [days]');
+  console.log('  node scripts/sub_tool.js expire [email]');
   process.exit(1);
 }
 
 async function run() {
   try {
-    const [tenants] = await db.query('SELECT id, businessName FROM tenant WHERE slug = ?', [slug]);
+    const [tenants] = await db.query(`
+      SELECT t.id, t.businessName 
+      FROM tenant t 
+      JOIN user u ON u.tenantId = t.id 
+      WHERE u.email = ?
+    `, [email]);
+
     if (tenants.length === 0) {
-      console.error(`❌ Error: tenant with slug "${slug}" not found.`);
+      console.error(`❌ Error: User with email "${email}" not found.`);
       process.exit(1);
     }
     const tenantId = tenants[0].id;
@@ -52,21 +58,36 @@ async function run() {
         process.exit(1);
       }
 
-      const [subs] = await db.query('SELECT endDate FROM subscription WHERE tenantId = ?', [tenantId]);
+      const [subs] = await db.query('SELECT endDate, trialEndDate, status FROM subscription WHERE tenantId = ?', [tenantId]);
       if (subs.length === 0) {
-        console.log(`❌ Error: ${businessName} has no active subscription to extend.`);
+        console.log(`❌ Error: ${businessName} has no subscription record.`);
         process.exit(1);
       }
 
-      const currentEnd = new Date(subs[0].endDate > new Date() ? subs[0].endDate : new Date());
-      const newEnd = new Date(currentEnd);
+      const sub = subs[0];
+      // Use endDate if it exists and is in the future, otherwise use trialEndDate, otherwise use NOW
+      let baseDate = new Date();
+      if (sub.endDate && new Date(sub.endDate) > baseDate) {
+        baseDate = new Date(sub.endDate);
+      } else if (sub.trialEndDate && new Date(sub.trialEndDate) > baseDate) {
+        baseDate = new Date(sub.trialEndDate);
+      }
+
+      const newEnd = new Date(baseDate);
       newEnd.setDate(newEnd.getDate() + value);
 
-      await db.query('UPDATE subscription SET endDate = ?, status = 0, updatedAt = NOW() WHERE tenantId = ?', [newEnd, tenantId]);
+      // If they were expired (1), we reactivate them (0 or 2 depending on if it was a trial)
+      // For simplicity, we'll set them to ACTIVE (0) if we are gifting days via endDate
+      await db.query(`
+        UPDATE subscription 
+        SET endDate = ?, status = 0, updatedAt = NOW() 
+        WHERE tenantId = ?
+      `, [newEnd, tenantId]);
       
       console.log(`\n🎁 SUCCESS: Gifting ${value} days to ${businessName}`);
-      console.log(`Old Expiry: ${currentEnd.toLocaleString()}`);
-      console.log(`New Expiry: ${newEnd.toLocaleString()}`);
+      console.log(`Reference Date: ${baseDate.toLocaleString()}`);
+      console.log(`New Expiry:     ${newEnd.toLocaleString()}`);
+      console.log(`Status:         ACTIVE (0)`);
     } else if (command === 'expire') {
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);

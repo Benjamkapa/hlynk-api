@@ -258,3 +258,53 @@ export const verifyPayment = async (req, res) => {
     return res.status(500).json({ success: false, message: err.message });
   }
 };
+
+export const submitManualPayment = async (req, res) => {
+  const { tenantId } = req.user;
+  const { planName, mpesaCode, amount, phone } = req.body;
+
+  if (!mpesaCode || !planName) {
+    return res.status(400).json({ success: false, message: 'M-Pesa Transaction Code and Plan are required' });
+  }
+
+  try {
+    const [existing] = await db.query(`SELECT id FROM payment WHERE mpesaReceipt = ? LIMIT 1`, [mpesaCode.toUpperCase()]);
+    if (existing.length > 0) {
+      return res.status(409).json({ success: false, message: 'This transaction code has already been submitted' });
+    }
+
+    const reference = `SUB-MAN-${tenantId.slice(-6).toUpperCase()}-${Date.now().toString().slice(-4)}`;
+    const paymentId = ulid();
+
+    // 1. Record the manual payment as PENDING (status 2 or a new status for manual verification)
+    // Actually, for hlynk, we might want instant activation if it's a known valid code, 
+    // but usually, manual payments need admin approval. 
+    // For now, let's record it as status 2 (Awaiting Verification)
+    await db.query(`
+      INSERT INTO payment (id, tenantId, amount, phone, plan, status, reference, transactionType, mpesaReceipt, message, createdAt) 
+      VALUES (?, ?, ?, ?, ?, 2, ?, 'SUBSCRIPTION', ?, 'Manual submission awaiting verification', NOW())
+    `, [paymentId, tenantId, amount || PLAN_PRICES[planName], phone || 'MANUAL', planName, reference, mpesaCode.toUpperCase()]);
+
+    // Notify Admins
+    const [tenants] = await db.query(`SELECT businessName FROM tenant WHERE id = ?`, [tenantId]);
+    const tenantName = tenants[0]?.businessName || 'Tenant';
+    
+    const [admins] = await db.query(`SELECT tenantId FROM user WHERE role = 'SUPER_ADMIN'`);
+    for (const admin of admins) {
+      await db.query(`
+        INSERT INTO notification (id, tenantId, title, message, type, status, createdAt) 
+        VALUES (?, ?, 'Manual Payment Submitted', ?, 'SYSTEM', 0, NOW())
+      `, [ulid(), admin.tenantId, `${tenantName} submitted manual code ${mpesaCode} for ${planName} plan.`]);
+    }
+
+    return res.json({ 
+      success: true, 
+      data: { 
+        paymentId, 
+        message: 'Transaction code submitted! Our team will verify and activate your plan shortly.' 
+      } 
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to submit manual payment' });
+  }
+};

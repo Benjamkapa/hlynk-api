@@ -2,12 +2,12 @@ import { db } from '../dbms/mysql.js';
 import { ulid } from 'ulid';
 
 const args = process.argv.slice(2);
-const identifier = args[0]; // slug or email
+const email = args[0];
 const planName = (args[1] || 'PLUS').toUpperCase(); // Default to PLUS (Growth)
 const days = parseInt(args[2] || '30');
 
-if (!identifier) {
-  console.log('Usage: node scripts/allow_preferred_plan.js <email_or_slug> [PLAN_NAME] [days]');
+if (!email) {
+  console.log('Usage: node scripts/allow_preferred_plan.js <user_email> [PLAN_NAME] [days]');
   console.log('Plans: LITE, PLUS, MAX');
   process.exit(1);
 }
@@ -16,15 +16,15 @@ async function grantAccess() {
   try {
     // 1. Find the tenant and user
     const [tenants] = await db.query(`
-      SELECT t.id, t.businessName, t.slug, u.id as userId, u.name 
+      SELECT t.id, t.businessName, u.id as userId, u.name 
       FROM tenant t 
       JOIN user u ON u.tenantId = t.id 
-      WHERE u.email = ? OR t.slug = ?
+      WHERE u.email = ?
       LIMIT 1
-    `, [identifier, identifier]);
+    `, [email]);
 
     if (tenants.length === 0) {
-      console.error(`❌ Error: Tenant/User "${identifier}" not found.`);
+      console.error(`❌ Error: User with email "${email}" not found.`);
       process.exit(1);
     }
 
