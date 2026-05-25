@@ -17,5 +17,11 @@
   "algorithm": "HS256",
   "expires_in": "370m",
   "backend_url": "https://276e-102-0-8-34.ngrok-free.app",
-  "mpesa_whitelist_ips": []
+  "mpesa_whitelist_ips": [
+    "196.201.214.",
+    "196.201.213.",
+    "196.201.212.",
+    "127.0.0.1",
+    "::1"
+  ]
 }
