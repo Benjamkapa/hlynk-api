@@ -41,6 +41,8 @@ export const authenticate = async (req, res, next) => {
     req.user = {
       ...decoded,
       role: sessionUser.role,
+      name: sessionUser.userName,
+      businessName: sessionUser.tenantName,
       permissions: typeof sessionUser.permissions === 'string' ? JSON.parse(sessionUser.permissions) : sessionUser.permissions || []
     };
 

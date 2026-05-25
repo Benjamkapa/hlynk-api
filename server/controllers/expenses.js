@@ -7,7 +7,7 @@ export const listExpenses = async (req, res) => {
   try {
     const isStaff = req.user.role === 'STAFF';
     const { userId } = req.user;
-    console.log(`[DEBUG] listExpenses: user=${userId}, role=${req.user.role}, isStaff=${isStaff}`);
+    console.log(`[DEBUG] listExpenses: business=${req.user.businessName}, user=${req.user.name}, role=${req.user.role}`);
 
     let whereQuery = 'WHERE e.tenantId = ?';
     const queryParams = [tenantId];
