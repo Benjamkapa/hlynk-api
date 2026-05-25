@@ -18,7 +18,11 @@ const originalError = console.error;
 console.log = (msg, ...args) => originalLog(...formatLog(msg, ...args));
 console.error = (msg, ...args) => originalError(...formatLog(msg, ...args));
 
+// Suppress redundant env injection logs during init
+const tempLog = console.log;
+console.log = () => {};
 dotenv.config();
+console.log = tempLog;
 
 // Route imports
 import authRoutes from "./routes/auth.js";
