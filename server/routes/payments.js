@@ -3,6 +3,7 @@ import { db } from '../dbms/mysql.js';
 import { handlePaymentCallback } from '../controllers/subscriptions.js';
 import { initiateStkPush } from '../utils/mpesa.js';
 import { authenticate } from '../middleware/auth.js';
+import { validateMpesaIP } from '../middleware/ipWhitelist.js';
 import { ulid } from 'ulid';
 
 const router = express.Router();
@@ -98,26 +99,16 @@ router.get('/mpesa/logs', authenticate, async (req, res) => {
  * @route POST /api/payments/mpesa/callback
  * @desc M-Pesa Daraja STK Push Callback
  */
-router.post('/mpesa/callback', express.json(), async (req, res) => {
-  const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
-  const safaricomIPs = ['196.201.214.', '196.201.213.', '196.201.212.'];
+router.post('/mpesa/callback', express.json(), validateMpesaIP, async (req, res) => {
+  const clientIP = req.clientIP;
   
-  // Relaxed check for dev/ngrok - check if it's explicitly from Safaricom OR if we're in development
-  const isSafaricom = clientIP.includes('127.0.0.1') || safaricomIPs.some(ip => clientIP.includes(ip));
-  const isDev = process.env.NODE_ENV === 'development' || !process.env.NODE_ENV;
-
-  if (!isSafaricom && !isDev) {
-    console.warn(`[SECURITY] Spoofed M-Pesa callback attempt blocked from IP: ${clientIP}`);
-    return res.status(403).json({ error: 'Forbidden' });
-  }
-
   console.log('================================================');
   console.log('[MPESA DIAGNOSTIC] Incoming Callback');
   console.log('IP:', clientIP);
   console.log('Body:', JSON.stringify(req.body, null, 2));
   console.log('================================================');
 
-  console.log(`[MPESA CALLBACK] Received from ${clientIP} (Safaricom: ${isSafaricom})`);
+  console.log(`[MPESA CALLBACK] Received from ${clientIP}`);
 
   if (!req.body || !req.body.Body) {
     console.error('[MPESA CALLBACK] Error: No Body found in request');
