@@ -353,9 +353,9 @@ export const impersonateUser = async (req, res) => {
 
     // Log the impersonation event for security
     await db.query(`
-      INSERT INTO activitylog (id, tenantId, action, logName, details, createdAt) 
-      VALUES (?, ?, ?, 'Security', ?, NOW())
-    `, [ulid(), targetUser.tenantId, 'Impersonation Access', `Super Admin (${adminId}) accessed account as ${targetUser.email}`]);
+      INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
+      VALUES (?, ?, ?, ?, 'Security', ?, NOW())
+    `, [ulid(), targetUser.tenantId, adminId, 'Impersonation Access', `Super Admin accessed account as ${targetUser.email}`]);
 
     const sessionId = ulid();
     const payload = { userId: targetUser.id, tenantId: targetUser.tenantId, role: targetUser.role, sessionId };
@@ -438,6 +438,12 @@ export const deleteUser = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Cannot delete Super Admin' });
     }
     await db.query(`DELETE FROM user WHERE id = ?`, [req.params.id]);
+    // Log Action
+    await db.query(`
+      INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
+      VALUES (?, NULL, ?, 'User Deleted', 'Danger', ?, NOW())
+    `, [ulid(), req.user.userId, `Deleted user ID: ${req.params.id}`]);
+
     return res.json({ success: true, message: 'User deleted' });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to delete user' });
@@ -544,6 +550,12 @@ export const upgradePlan = async (req, res) => {
       `Your subscription has been manually upgraded to ${planName} by the Super Admin.`
     ]);
 
+    // 3. Log Action
+    await db.query(`
+      INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
+      VALUES (?, ?, ?, 'Plan Upgrade', 'Billing', ?, NOW())
+    `, [ulid(), id, req.user.userId, `Upgraded to ${planName}`]);
+
     return res.json({ success: true, message: 'Subscription upgraded' });
   } catch (err) {
     console.error('Upgrade Plan Error:', err);
@@ -555,6 +567,12 @@ export const suspendTenant = async (req, res) => {
   try {
     await db.query(`UPDATE tenant SET isActive = 0 WHERE id = ?`, [req.params.id]);
     await db.query(`UPDATE user SET isActive = 0 WHERE tenantId = ?`, [req.params.id]);
+    // Log Action
+    await db.query(`
+      INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
+      VALUES (?, ?, ?, 'Tenant Suspended', 'Security', ?, NOW())
+    `, [ulid(), req.params.id, req.user.userId, 'Tenant and all associated users suspended by Admin']);
+
     return res.json({ success: true, message: 'Tenant suspended' });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to suspend tenant' });
@@ -565,6 +583,12 @@ export const activateTenant = async (req, res) => {
   try {
     await db.query(`UPDATE tenant SET isActive = 1 WHERE id = ?`, [req.params.id]);
     await db.query(`UPDATE user SET isActive = 1 WHERE tenantId = ?`, [req.params.id]);
+    // Log Action
+    await db.query(`
+      INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
+      VALUES (?, ?, ?, 'Tenant Activated', 'Security', ?, NOW())
+    `, [ulid(), req.params.id, req.user.userId, 'Tenant and all associated users activated by Admin']);
+
     return res.json({ success: true, message: 'Tenant activated' });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to activate tenant' });
@@ -574,6 +598,12 @@ export const activateTenant = async (req, res) => {
 export const deleteTenant = async (req, res) => {
   try {
     await db.query(`DELETE FROM tenant WHERE id = ?`, [req.params.id]);
+    // Log Action
+    await db.query(`
+      INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
+      VALUES (?, ?, ?, 'Tenant Deleted', 'Danger', ?, NOW())
+    `, [ulid(), req.params.id, req.user.userId, 'Tenant deleted permanently by Admin']);
+
     return res.json({ success: true, message: 'Tenant deleted' });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to delete tenant' });
@@ -585,6 +615,12 @@ export const updateTenant = async (req, res) => {
   try {
     await db.query(`UPDATE tenant SET businessName = ?, slug = ?, updatedAt = NOW() WHERE id = ?`, [businessName, slug, req.params.id]);
     await db.query(`UPDATE provider SET businessName = ?, updatedAt = NOW() WHERE tenantId = ?`, [businessName, req.params.id]);
+    // Log Action
+    await db.query(`
+      INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
+      VALUES (?, ?, ?, 'Tenant Updated', 'Management', ?, NOW())
+    `, [ulid(), req.params.id, req.user.userId, `Updated tenant: ${businessName} (${slug})`]);
+
     return res.json({ success: true, message: 'Tenant updated' });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to update tenant' });

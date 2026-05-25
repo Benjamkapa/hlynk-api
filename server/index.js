@@ -6,11 +6,19 @@ import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 
-// Suppress redundant env injection logs
+// Enhanced Logger with Timestamps
+const formatLog = (msg, ...args) => {
+  const timestamp = new Date().toLocaleString('en-GB', { hour12: false });
+  return [`[${timestamp}] ${msg}`, ...args];
+};
+
 const originalLog = console.log;
-console.log = () => {};
+const originalError = console.error;
+
+console.log = (msg, ...args) => originalLog(...formatLog(msg, ...args));
+console.error = (msg, ...args) => originalError(...formatLog(msg, ...args));
+
 dotenv.config();
-console.log = originalLog;
 
 // Route imports
 import authRoutes from "./routes/auth.js";
@@ -35,6 +43,9 @@ const params = JSON.parse(fs.readFileSync(path.join(__dirname, "configs/params.j
 
 const app = express();
 const PORT = params.port || 3000;
+
+// Trust reverse proxy (Nginx, Load Balancers, etc) to capture real client IP
+app.set('trust proxy', true);
 
 // Start background tasks
 startSubscriptionDaemon();
