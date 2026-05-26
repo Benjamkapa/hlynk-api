@@ -90,6 +90,21 @@ app.use("/api/v1/services", serviceRoutes);
 app.use("/api/v1/requests", requestRoutes);
 app.use("/api/v1/platform", platformRoutes);
 
+// Secure Storage Proxy (Fixes Mixed Content errors)
+app.get("/api/v1/storage/:bucket/:folder/:file", async (req, res) => {
+  try {
+    const { bucket, folder, file } = req.params;
+    const objectName = `${folder}/${file}`;
+    const stream = await minioClient.getObject(bucket, objectName);
+    
+    // Set basic headers
+    res.setHeader('Cache-Control', 'public, max-age=31536000');
+    stream.pipe(res);
+  } catch (err) {
+    res.status(404).json({ success: false, message: "Image not found" });
+  }
+});
+
 // Home route
 app.get("/", (req, res) => {
   res.status(200).json({
