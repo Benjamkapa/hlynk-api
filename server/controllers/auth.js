@@ -82,7 +82,7 @@ export const googleAuth = async (req, res) => {
         });
       }
 
-      // Registration logic
+      // Registration logic here
       const tenantId = ulid();
       const userId = ulid();
       const slug = await uniqueSlug(registration.businessName);
