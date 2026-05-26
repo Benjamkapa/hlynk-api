@@ -105,7 +105,7 @@ app.get("/api/v1/storage/:bucket/:folder/:file", async (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=31536000');
     stream.pipe(res);
   } catch (err) {
-    // Return a 404 WITHOUT a body to avoid ORB errors in the browser console
+    console.error(`❌ Storage Proxy Error [${req.params.folder}/${req.params.file}]:`, err.message);
     res.status(404).end();
   }
 });
