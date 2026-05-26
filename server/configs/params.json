@@ -18,11 +18,11 @@
   "expires_in": "370m",
   "minio_endpoint": "167.86.73.103",
   "minio_port": 9000,
-  "minio_use_ssl": true,
+  "minio_use_ssl": false,
   "minio_access_key": "benjamkapa",
   "minio_secret_key": "fortjesus@G2026!",
   "minio_bucket_name": "hlynk-uploads",
-  "backend_url": "http://localhost:3000",
+  "backend_url": "https://api.hlynk.co.ke",
   "mpesa_whitelist_ips": [
     "196.201.214.",
     "196.201.213.",

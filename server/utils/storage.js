@@ -64,11 +64,11 @@ export const uploadFile = async (file, folder = 'general') => {
         'Content-Type': file.mimetype
     });
 
-    const endpoint = params.minio_endpoint || '127.0.0.1';
-    const port = params.minio_port || 9000;
-    const protocol = params.minio_use_ssl ? 'https' : 'http';
-    
-    return `${protocol}://${endpoint}:${port}/${bucketName}/${fileName}`;
+    // Construct secure public URL via our backend proxy
+    const baseUrl = (params.backend_url || 'https://api.hlynk.co.ke').replace(/\/$/, '');
+    // URL format: https://api.hlynk.co.ke/api/v1/storage/hlynk-uploads/products/123.jpg
+    const finalFileName = fileName.split('/').pop();
+    return `${baseUrl}/api/v1/storage/${bucketName}/${folder}/${finalFileName}`;
 };
 
 /**
