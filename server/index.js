@@ -40,7 +40,7 @@ import requestRoutes from "./routes/requests.js";
 import platformRoutes from "./routes/platform.js";
 import { startSubscriptionDaemon } from "./daemon/subscriptions.js";
 import { db } from "./dbms/mysql.js";
-import { initStorage } from "./utils/storage.js";
+import { initStorage, minioClient } from "./utils/storage.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const params = JSON.parse(fs.readFileSync(path.join(__dirname, "configs/params.json"), "utf8"));
