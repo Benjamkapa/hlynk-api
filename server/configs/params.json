@@ -16,7 +16,7 @@
   "jwt_secret": "MDIzIDE2OjUwOjQ1IEdNVCswMzAwIChFYXN0IEFmcmljYSBUaW1lKSIsInVzZXJJZCI6MTIsImlhdCI6MTY6Nz",
   "algorithm": "HS256",
   "expires_in": "370m",
-  "minio_endpoint": "127.0.0.1",
+  "minio_endpoint": "167.86.73.103",
   "minio_port": 9000,
   "minio_use_ssl": false,
   "minio_access_key": "benjamkapa",
