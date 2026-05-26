@@ -95,13 +95,18 @@ app.get("/api/v1/storage/:bucket/:folder/:file", async (req, res) => {
   try {
     const { bucket, folder, file } = req.params;
     const objectName = `${folder}/${file}`;
-    const stream = await minioClient.getObject(bucket, objectName);
     
-    // Set basic headers
+    // Set Content-Type based on extension
+    const ext = file.split('.').pop().toLowerCase();
+    const mimeTypes = { 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png', 'gif': 'image/gif', 'webp': 'image/webp' };
+    if (mimeTypes[ext]) res.setHeader('Content-Type', mimeTypes[ext]);
+    
+    const stream = await minioClient.getObject(bucket, objectName);
     res.setHeader('Cache-Control', 'public, max-age=31536000');
     stream.pipe(res);
   } catch (err) {
-    res.status(404).json({ success: false, message: "Image not found" });
+    // Return a 404 WITHOUT a body to avoid ORB errors in the browser console
+    res.status(404).end();
   }
 });
 
