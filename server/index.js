@@ -132,7 +132,7 @@ const startServer = async () => {
       console.warn("⚠️ Migration Warning:", e.message);
     }
 
-    // 3. Initialize MinIO Storage
+    // 3. Initialize Local Storage
     await initStorage();
 
     // 4. Start Listener

@@ -1,67 +1,86 @@
+import * as Minio from 'minio';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// The uploads folder will be in api/server/uploads
-const uploadDir = path.join(__dirname, '../uploads');
+const paramsPath = path.join(__dirname, '../configs/params.json');
+const params = JSON.parse(fs.readFileSync(paramsPath, 'utf8'));
 
-// Ensure base upload directory exists
+// -------------------------------------------------
+// MinIO client configuration
+// -------------------------------------------------
+export const minioClient = new Minio.Client({
+    endPoint: params.minio_endpoint || '127.0.0.1',
+    port: parseInt(params.minio_port) || 9000, // Standard API Port
+    useSSL: params.minio_use_ssl || false,
+    accessKey: params.minio_access_key || 'benjamkapa',
+    secretKey: params.minio_secret_key || 'fortjesus@G2026!'
+});
+
+export const bucketName = params.minio_bucket_name || 'hlynk-uploads';
+
+/**
+ * Initialize storage by ensuring bucket exists and is public
+ */
 export const initStorage = async () => {
     try {
-        if (!fs.existsSync(uploadDir)) {
-            fs.mkdirSync(uploadDir, { recursive: true });
-            console.log(`✅ Storage: Local 'uploads' directory created.`);
-        } else {
-            console.log(`💥 Storage: Local storage is ready.`);
+        const exists = await minioClient.bucketExists(bucketName);
+        if (!exists) {
+            await minioClient.makeBucket(bucketName, 'us-east-1');
+            console.log(`✅ Storage: MinIO bucket '${bucketName}' created.`);
         }
+
+        const policy = {
+            Version: "2012-10-17",
+            Statement: [
+                {
+                    Action: ["s3:GetObject"],
+                    Effect: "Allow",
+                    Principal: "*",
+                    Resource: [`arn:aws:s3:::${bucketName}/*`]
+                }
+            ]
+        };
+        await minioClient.setBucketPolicy(bucketName, JSON.stringify(policy));
+        console.log(`✅ Storage: MinIO bucket '${bucketName}' is ready (Public Read).`);
     } catch (err) {
-        console.error("🔴 Storage: Initialization failed!", err.message);
+        console.error("🔴 Storage: MinIO Initialization failed!", err.message);
     }
 };
 
 /**
- * Upload a file to Local Filesystem
+ * Upload a file to MinIO
  * @param {Object} file - The file object from express-fileupload
- * @param {String} folder - Subfolder in uploads (e.g., 'avatars', 'products')
+ * @param {String} folder - Subfolder (e.g., 'avatars', 'products')
  * @returns {String} - The public URL of the uploaded file
  */
 export const uploadFile = async (file, folder = 'general') => {
-    const subDir = path.join(uploadDir, folder);
+    const fileName = `${folder}/${Date.now()}-${file.name.replace(/\s+/g, '_')}`;
     
-    // Ensure subfolder exists
-    if (!fs.existsSync(subDir)) {
-        fs.mkdirSync(subDir, { recursive: true });
-    }
+    await minioClient.putObject(bucketName, fileName, file.data, file.size, {
+        'Content-Type': file.mimetype
+    });
 
-    const fileName = `${Date.now()}-${file.name.replace(/\s+/g, '_')}`;
-    const filePath = path.join(subDir, fileName);
+    // Construct public URL
+    const endpoint = params.minio_endpoint || '127.0.0.1';
+    const port = params.minio_port || 9000;
+    const protocol = params.minio_use_ssl ? 'https' : 'http';
     
-    try {
-        await file.mv(filePath);
-        
-        // Construct the public URL
-        const baseUrl = (process.env.BACKEND_URL || 'http://localhost:3000').replace(/\/$/, '');
-        const publicUrl = `${baseUrl}/uploads/${folder}/${fileName}`;
-        return publicUrl;
-    } catch (err) {
-        console.error("🔴 Storage: Upload failed!", err.message);
-        throw new Error("Failed to upload file to local storage.");
-    }
+    return `${protocol}://${endpoint}:${port}/${bucketName}/${fileName}`;
 };
 
 /**
- * Delete a file from Local Filesystem
+ * Delete a file from MinIO
  * @param {String} fileUrl - The full public URL of the file
  */
 export const deleteFile = async (fileUrl) => {
     try {
-        const urlPath = new URL(fileUrl).pathname; // e.g. /uploads/profiles/123.jpg
-        const relativePath = urlPath.replace('/uploads/', '');
-        const filePath = path.join(uploadDir, relativePath);
-        
-        if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
+        const urlObj = new URL(fileUrl);
+        const prefix = `/${bucketName}/`;
+        if (urlObj.pathname.startsWith(prefix)) {
+            const objectName = urlObj.pathname.slice(prefix.length);
+            await minioClient.removeObject(bucketName, objectName);
         }
     } catch (err) {
         console.warn("⚠️ Storage: Deletion failed or file not found.", err.message);
