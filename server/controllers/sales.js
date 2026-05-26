@@ -241,7 +241,7 @@ export const vendorMpesaPush = async (req, res) => {
     if (!customCredentials || !customCredentials.consumerKey) {
       return res.status(400).json({ 
         success: false, 
-        message: 'M-Pesa credentials not configured. Please visit the Developer Console to set up your Paybill/Till integration.' 
+        message: 'M-Pesa credentials not configured. Please visit the Mpesa Setup section to set up your Paybill/Till integration.' 
       });
     }
 
