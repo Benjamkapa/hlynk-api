@@ -12,7 +12,7 @@ const params = JSON.parse(fs.readFileSync(paramsPath, 'utf8'));
 // -------------------------------------------------
 export const minioClient = new Minio.Client({
     endPoint: params.minio_endpoint || '127.0.0.1',
-    port: parseInt(params.minio_port) || 9000, // Standard API Port
+    port: parseInt(params.minio_port) || 9000,
     useSSL: params.minio_use_ssl || false,
     accessKey: params.minio_access_key || 'benjamkapa',
     secretKey: params.minio_secret_key || 'fortjesus@G2026!'
@@ -29,6 +29,8 @@ export const initStorage = async () => {
         if (!exists) {
             await minioClient.makeBucket(bucketName, 'us-east-1');
             console.log(`✅ Storage: MinIO bucket '${bucketName}' created.`);
+        } else {
+            console.log(`✅ Storage: MinIO connection verified (using bucket '${bucketName}').`);
         }
 
         const policy = {
@@ -43,7 +45,7 @@ export const initStorage = async () => {
             ]
         };
         await minioClient.setBucketPolicy(bucketName, JSON.stringify(policy));
-        console.log(`✅ Storage: MinIO bucket '${bucketName}' is ready (Public Read).`);
+        console.log(`✅ Storage: MinIO permissions strictly set to Public Read.`);
     } catch (err) {
         console.error("🔴 Storage: MinIO Initialization failed!", err.message);
     }
@@ -62,7 +64,6 @@ export const uploadFile = async (file, folder = 'general') => {
         'Content-Type': file.mimetype
     });
 
-    // Construct public URL
     const endpoint = params.minio_endpoint || '127.0.0.1';
     const port = params.minio_port || 9000;
     const protocol = params.minio_use_ssl ? 'https' : 'http';
@@ -83,7 +84,7 @@ export const deleteFile = async (fileUrl) => {
             await minioClient.removeObject(bucketName, objectName);
         }
     } catch (err) {
-        console.warn("⚠️ Storage: Deletion failed or file not found.", err.message);
+        console.warn("⚠️ Storage: MinIO Deletion failed or file not found.", err.message);
     }
 };
 
