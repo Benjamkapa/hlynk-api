@@ -20,7 +20,7 @@
   "minio_port": 9000,
   "minio_use_ssl": false,
   "minio_access_key": "benjamkapa",
-  "minio_secret_key": "fortjesus-G2",
+  "minio_secret_key": "fortjesus@G2026!",
   "minio_bucket_name": "hlynk-uploads",
   "backend_url": "http://localhost:3000",
   "mpesa_whitelist_ips": [
