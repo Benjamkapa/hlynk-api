@@ -140,7 +140,7 @@ const startServer = async () => {
   try {
     // 1. Check Database Connection
     await db.query("SELECT 1");
-    console.log("✅ Database: Connected Successfully");
+    console.log("📊 Database: Connected Successfully");
 
     // 2. Run Critical Migrations (Nuclear Option)
     try {

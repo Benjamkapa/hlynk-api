@@ -28,7 +28,7 @@ export const initStorage = async () => {
         const exists = await minioClient.bucketExists(bucketName);
         if (!exists) {
             await minioClient.makeBucket(bucketName, 'us-east-1');
-            console.log(`✅ Storage: MinIO bucket '${bucketName}' created.`);
+            console.log(`🪣 Storage: MinIO bucket '${bucketName}' created.`);
         } else {
             console.log(`✅ Storage: MinIO connection verified (using bucket '${bucketName}').`);
         }
@@ -45,7 +45,7 @@ export const initStorage = async () => {
             ]
         };
         await minioClient.setBucketPolicy(bucketName, JSON.stringify(policy));
-        console.log(`✅ Storage: MinIO permissions strictly set to Public Read.`);
+        console.log(`📢 Storage: MinIO permissions strictly set to Public Read.`);
     } catch (err) {
         console.error("🔴 Storage: MinIO Initialization failed!", err.message);
     }
