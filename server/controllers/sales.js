@@ -84,8 +84,9 @@ export const listSales = async (req, res) => {
           SUM(totalAmount) as totalAmount,
           COUNT(*) as transactions
         FROM sale s
-        ${whereQuery}
-      `, queryParams);
+        WHERE s.tenantId = ? AND s.status = 0
+        ${req.user.role === 'STAFF' ? 'AND s.userId = ?' : ''}
+      `, req.user.role === 'STAFF' ? [tenantId, req.user.userId] : [tenantId]);
 
       const totalAmount = Number(statsRes[0].totalAmount || 0);
       const transactions = Number(statsRes[0].transactions || 0);

@@ -142,24 +142,30 @@ export const getStats = async (req, res) => {
     const saleFilter = isStaff ? 'AND userId = ?' : '';
     const saleParams = isStaff ? [tenantId, userId] : [tenantId];
 
+    const [providerRes] = await db.query(`SELECT operationalSettings FROM provider WHERE tenantId = ?`, [tenantId]);
+    const ops = typeof providerRes[0]?.operationalSettings === 'string' 
+      ? JSON.parse(providerRes[0].operationalSettings) 
+      : providerRes[0]?.operationalSettings || {};
+    const threshold = ops.lowStockThreshold || 5;
+
     const [
       [salesToday],
       [totalCustomers],
       [lowStock]
     ] = await Promise.all([
-      db.query(`SELECT SUM(totalAmount) as total FROM sale WHERE tenantId = ? ${saleFilter} AND createdAt >= CURDATE()`, saleParams),
+      db.query(`SELECT SUM(totalAmount) as total FROM sale WHERE tenantId = ? ${saleFilter} AND status = 0 AND createdAt >= CURDATE()`, saleParams),
       db.query(`
         SELECT COUNT(DISTINCT u.id) as total 
         FROM user u 
         WHERE u.tenantId = ? AND u.role = 'CUSTOMER'
         ${isStaff ? 'AND EXISTS (SELECT 1 FROM sale s WHERE s.customerId = u.id AND s.userId = ?)' : ''}
       `, isStaff ? [tenantId, userId] : [tenantId]),
-      db.query(`SELECT COUNT(*) as total FROM product WHERE tenantId = ? AND stockLevel <= 5`, [tenantId])
+      db.query(`SELECT COUNT(*) as total FROM product WHERE tenantId = ? AND stockLevel <= ?`, [tenantId, threshold])
     ]);
 
     // Calculate Estimated Profit (Simplified for demonstration, normally would be revenue - COGS)
     // For staff, profit is also filtered by their sales
-    const [profitRes] = await db.query(`SELECT SUM(totalAmount) * 0.25 as profit FROM sale WHERE tenantId = ? ${saleFilter} AND MONTH(createdAt) = MONTH(CURRENT_DATE())`, saleParams);
+    const [profitRes] = await db.query(`SELECT SUM(totalAmount) * 0.25 as profit FROM sale WHERE tenantId = ? ${saleFilter} AND status = 0 AND MONTH(createdAt) = MONTH(CURRENT_DATE())`, saleParams);
 
     // REAL aggregation for chart data (Last 7 Days)
     const [chartRows] = await db.query(`
@@ -168,7 +174,7 @@ export const getStats = async (req, res) => {
         SUM(totalAmount) as sales,
         SUM(totalAmount) * 0.25 as profit
       FROM sale 
-      WHERE tenantId = ? ${saleFilter}
+      WHERE tenantId = ? ${saleFilter} AND status = 0
       AND createdAt >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
       GROUP BY DATE(createdAt), name
       ORDER BY DATE(createdAt) ASC
