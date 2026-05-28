@@ -83,6 +83,18 @@ export const googleAuth = async (req, res) => {
       }
 
       // Registration logic here
+      if (
+        !registration.businessName?.trim() || 
+        !registration.ownerName?.trim() || 
+        !registration.phone?.trim() || 
+        !email
+      ) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'All registration fields (Business Name, Owner Name, and Phone) are required.' 
+        });
+      }
+
       const tenantId = ulid();
       const userId = ulid();
       const slug = await uniqueSlug(registration.businessName);
@@ -95,9 +107,9 @@ export const googleAuth = async (req, res) => {
       const connection = await db.getConnection();
       try {
         await connection.beginTransaction();
-        await connection.query(`INSERT INTO tenant (id, slug, businessName, isActive, createdAt, updatedAt) VALUES (?, ?, ?, 1, NOW(), NOW())`, [tenantId, slug, registration.businessName]);
-        await connection.query(`INSERT INTO user (id, tenantId, name, phone, email, role, photoUrl, passwordHash, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 'PROVIDER', ?, 'GOOGLE_AUTH', 1, NOW(), NOW())`, [userId, tenantId, registration.ownerName || payload.name, registration.phone, email, payload.picture || null]);
-        await connection.query(`INSERT INTO provider (id, tenantId, userId, businessName, phone, category, county, location, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`, [ulid(), tenantId, userId, registration.businessName, registration.phone, registration.category || 'Other', registration.county || 'Nairobi', registration.location || 'Unknown']);
+        await connection.query(`INSERT INTO tenant (id, slug, businessName, isActive, createdAt, updatedAt) VALUES (?, ?, ?, 1, NOW(), NOW())`, [tenantId, slug, registration.businessName.trim()]);
+        await connection.query(`INSERT INTO user (id, tenantId, name, phone, email, role, photoUrl, passwordHash, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 'PROVIDER', ?, 'GOOGLE_AUTH', 1, NOW(), NOW())`, [userId, tenantId, registration.ownerName.trim() || payload.name, registration.phone.trim(), email, payload.picture || null]);
+        await connection.query(`INSERT INTO provider (id, tenantId, userId, businessName, phone, category, county, location, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`, [ulid(), tenantId, userId, registration.businessName.trim(), registration.phone.trim(), registration.category || 'Other', registration.county || 'Nairobi', registration.location || 'Unknown']);
         await connection.query(`INSERT INTO subscription (id, tenantId, planName, status, trialEndDate, createdAt, updatedAt) VALUES (?, ?, ?, ?, ${trialEnd}, NOW(), NOW())`, [ulid(), tenantId, requestedPlan, subStatus]);
         
         const [admins] = await connection.query(`SELECT id, tenantId FROM user WHERE role = 'SUPER_ADMIN'`);
