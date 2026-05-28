@@ -158,6 +158,9 @@ const startServer = async () => {
     // 4. Start Listener
     app.listen(PORT, () => {
       console.log(`🚀 hlynk Server running on http://localhost:${PORT}`);
+      if (process.send) {
+        process.send('ready');
+      }
     });
   } catch (err) {
     console.error("🔴 Database: Connection Failed!");
