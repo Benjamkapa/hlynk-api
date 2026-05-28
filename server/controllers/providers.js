@@ -102,7 +102,6 @@ export const updateProfile = async (req, res) => {
     let userUpdates = [];
     let userParams = [];
     if (data.name !== undefined) { userUpdates.push('name = ?'); userParams.push(data.name); }
-    if (data.email !== undefined) { userUpdates.push('email = ?'); userParams.push(data.email); }
     if (data.phone !== undefined) { userUpdates.push('phone = ?'); userParams.push(data.phone); }
     
     if (userUpdates.length > 0) {
@@ -208,14 +207,21 @@ export const getStats = async (req, res) => {
 };
 
 export const getActivityLogs = async (req, res) => {
-  const { tenantId } = req.user;
-  const { page = 1, limit = 10 } = req.query;
-  const offset = (Number(page) - 1) * Number(limit);
-
-  const isStaff = req.user.role === 'STAFF';
-  const { userId } = req.user;
+  const { tenantId, userId, role } = req.user;
 
   try {
+    // Feature gate: Activity logs only for MAX plan or SUPER_ADMINs
+    if (role !== 'SUPER_ADMIN') {
+      const [subs] = await db.query('SELECT planName FROM subscription WHERE tenantId = ? LIMIT 1', [tenantId]);
+      if (subs[0]?.planName !== 'MAX') {
+        return res.status(403).json({ success: false, message: 'Activity logs are only available on the MAX package.' });
+      }
+    }
+
+    const { page = 1, limit = 10 } = req.query;
+    const offset = (Number(page) - 1) * Number(limit);
+    const isStaff = role === 'STAFF';
+
     let whereQuery = 'WHERE l.tenantId = ?';
     const queryParams = [tenantId];
 

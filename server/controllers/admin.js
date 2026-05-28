@@ -355,7 +355,7 @@ export const impersonateUser = async (req, res) => {
     await db.query(`
       INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
       VALUES (?, ?, ?, ?, 'Security', ?, NOW())
-    `, [ulid(), targetUser.tenantId, adminId, 'Impersonation Access', `Super Admin accessed account as ${targetUser.email}`]);
+    `, [ulid(), targetUser.tenantId, adminId, 'Impersonation Access', `Super Admin access ${targetUser.email}`]);
 
     const sessionId = ulid();
     const payload = { userId: targetUser.id, tenantId: targetUser.tenantId, role: targetUser.role, sessionId };
