@@ -4,6 +4,8 @@ module.exports = {
     script: 'index.js',
     cwd: './',
     interpreter: 'node',
+    wait_ready: true,
+    listen_timeout: 10000,
     env: {
       NODE_ENV: 'production'
     }
