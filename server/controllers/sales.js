@@ -5,11 +5,16 @@ import { decrypt } from '../utils/encryption.js';
 
 export const listSales = async (req, res) => {
   const { tenantId } = req.user;
-  const { search, date, limit = 50, page = 1, sortBy = 'createdAt', sortOrder = 'desc', status } = req.query;
+  const { search, date, limit = 50, page = 1, sortBy = 'createdAt', sortOrder = 'desc', status, customerId } = req.query;
 
   try {
     let whereQuery = 'WHERE s.tenantId = ?';
     const queryParams = [tenantId];
+
+    if (customerId) {
+      whereQuery += ' AND s.customerId = ?';
+      queryParams.push(customerId);
+    }
 
     // STAFF RESTRICTION: Staff only see their own sales
     if (req.user.role === 'STAFF') {
