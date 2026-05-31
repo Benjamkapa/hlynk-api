@@ -165,7 +165,7 @@ export const createSale = async (req, res) => {
     }
 
     // IF MPESA, Record in Master Payment Table
-    if (paymentMethod === 'MPESA' || mpesaRequestId) {
+    if (paymentMethod && paymentMethod.startsWith('MPESA') || mpesaRequestId) {
       try {
         await connection.query(`
           INSERT INTO payment (id, tenantId, amount, status, reference, mpesaRequestId, transactionType, createdAt)

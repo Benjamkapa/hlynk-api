@@ -1,6 +1,7 @@
 import { db } from '../dbms/mysql.js';
 import { encrypt, decrypt } from '../utils/encryption.js';
 import { uploadFile } from '../utils/storage.js';
+import { ulid } from 'ulid';
 
 const decryptOperationalSettings = (operationalSettings) => {
   if (!operationalSettings) return operationalSettings;
@@ -275,3 +276,51 @@ export const uploadPhoto = async (req, res) => {
 };
 
 
+export const clearData = async (req, res) => {
+  const { tenantId, userId, role } = req.user;
+  
+  if (role !== 'PROVIDER' && role !== 'SUPER_ADMIN') {
+    return res.status(403).json({ success: false, message: 'Unauthorized: Only business owners can clear data.' });
+  }
+
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    // 1. Delete Sales & Items
+    await connection.query('DELETE FROM saleitem WHERE saleId IN (SELECT id FROM sale WHERE tenantId = ?)', [tenantId]);
+    await connection.query('DELETE FROM sale WHERE tenantId = ?', [tenantId]);
+
+    // 2. Delete Inventory & Products
+    await connection.query('DELETE FROM product WHERE tenantId = ?', [tenantId]);
+
+    // 3. Delete Services
+    await connection.query('DELETE FROM service WHERE tenantId = ?', [tenantId]);
+
+    // 4. Delete Expenses
+    await connection.query('DELETE FROM expense WHERE tenantId = ?', [tenantId]);
+
+    // 5. Delete Activity Logs (except for the clear action itself shortly)
+    await connection.query('DELETE FROM activitylog WHERE tenantId = ?', [tenantId]);
+
+    // 6. Delete Notifications
+    await connection.query('DELETE FROM notification WHERE tenantId = ?', [tenantId]);
+
+    // 7. Delete Customers (related to this tenant)
+    await connection.query("DELETE FROM user WHERE tenantId = ? AND role = 'CUSTOMER'", [tenantId]);
+
+    // Log the clear action
+    await connection.query(`
+      INSERT INTO activitylog (id, tenantId, userId, action, logName, details, ipAddress, createdAt)
+      VALUES (?, ?, ?, 'Workshop cleared', 'Workshop cleared', ?, ?, NOW())
+    `, [ulid(), tenantId, userId, 'The user reset their business data to zero.', req.ip || 'Unknown']);
+
+    await connection.commit();
+    return res.json({ success: true, message: 'All business data cleared successfully.' });
+  } catch (err) {
+    await connection.rollback();
+    return res.status(500).json({ success: false, message: err.message });
+  } finally {
+    connection.release();
+  }
+};
