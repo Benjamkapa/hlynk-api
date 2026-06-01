@@ -139,8 +139,8 @@ export async function initiateStkPush(pushParams, customCredentials = null, meta
 
     // Log the initiation
     await db.query(`
-      INSERT INTO mpesalog (id, merchantRequestId, checkoutRequestId, phone, amount, reference, customerName, initiatorName, tenantName, tenantId, type, status, rawPayload)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 2, ?)
+      INSERT INTO mpesalog (id, merchantRequestId, checkoutRequestId, phone, amount, reference, customerName, initiatorName, tenantName, tenantId, type, status, isRented, rawPayload)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 2, ?, ?)
     `, [
       ulid(), 
       res.data.MerchantRequestID, 
@@ -152,6 +152,7 @@ export async function initiateStkPush(pushParams, customCredentials = null, meta
       metadata.initiatorName || null,
       metadata.tenantName || null,
       metadata.tenantId || null,
+      metadata.isRented ? 1 : 0,
       JSON.stringify(res.data)
     ]);
 
@@ -162,8 +163,8 @@ export async function initiateStkPush(pushParams, customCredentials = null, meta
     
     // Log the failure
     await db.query(`
-      INSERT INTO mpesalog (id, phone, amount, reference, customerName, initiatorName, tenantName, tenantId, type, status, resultDesc)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 4, ?)
+      INSERT INTO mpesalog (id, phone, amount, reference, customerName, initiatorName, tenantName, tenantId, type, status, isRented, resultDesc)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 4, ?, ?)
     `, [
       ulid(), 
       pushParams.phone, 
@@ -173,6 +174,7 @@ export async function initiateStkPush(pushParams, customCredentials = null, meta
       metadata.initiatorName || null,
       metadata.tenantName || null,
       metadata.tenantId || null,
+      metadata.isRented ? 1 : 0,
       errorMsg
     ]);
 

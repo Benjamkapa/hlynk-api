@@ -308,3 +308,79 @@ export const submitManualPayment = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Failed to submit manual payment' });
   }
 };
+
+export const getMyPayouts = async (req, res) => {
+  const { tenantId } = req.user;
+  try {
+    const PLATFORM_SHARE_RATE = 0.10;
+
+    // 1. Get trial status
+    const [subRows] = await db.query(`SELECT trialEndDate, status FROM subscription WHERE tenantId = ? LIMIT 1`, [tenantId]);
+    const sub = subRows[0];
+    const trialEnd = sub?.trialEndDate ? new Date(sub.trialEndDate) : null;
+
+    // 2. Get all successful rented payments
+    const [payments] = await db.query(`
+      SELECT amount, createdAt, status, payoutStatus
+      FROM payment 
+      WHERE tenantId = ? AND isRented = 1 AND status = 0
+    `, [tenantId]);
+
+    let pendingGross = 0;
+    let settledGross = 0;
+    let pendingNet = 0;
+    let settledNet = 0;
+    let totalTransactions = payments.length;
+
+    const historyMap = {
+      0: { payoutStatus: 0, grossAmount: 0, netAmount: 0, txCount: 0, periodStart: null, periodEnd: null },
+      1: { payoutStatus: 1, grossAmount: 0, netAmount: 0, txCount: 0, periodStart: null, periodEnd: null }
+    };
+
+    for (const p of payments) {
+      const created = new Date(p.createdAt);
+      // If payment was made BEFORE or ON trial end date, rate is 0%. Otherwise 10%.
+      const isTrialMatch = trialEnd && created <= trialEnd;
+      const rate = isTrialMatch ? 0 : PLATFORM_SHARE_RATE;
+      const amount = Number(p.amount);
+      const net = amount * (1 - rate);
+
+      if (p.payoutStatus === 0) {
+        pendingGross += amount;
+        pendingNet += net;
+      } else {
+        settledGross += amount;
+        settledNet += net;
+      }
+
+      // Update history aggregation
+      const h = historyMap[p.payoutStatus];
+      h.grossAmount += amount;
+      h.netAmount += net;
+      h.txCount++;
+      if (!h.periodStart || created < new Date(h.periodStart)) h.periodStart = p.createdAt;
+      if (!h.periodEnd || created > new Date(h.periodEnd)) h.periodEnd = p.createdAt;
+    }
+
+    const history = Object.values(historyMap).filter(h => h.txCount > 0);
+
+    return res.json({
+      success: true,
+      data: {
+        summary: {
+          pendingGross,
+          pendingNet,
+          settledGross,
+          settledNet,
+          totalTransactions,
+          shareRate: PLATFORM_SHARE_RATE,
+          isTrialActive: trialEnd && new Date() <= trialEnd
+        },
+        history
+      }
+    });
+  } catch (err) {
+    console.error('[MY-PAYOUTS] Error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to fetch payout data' });
+  }
+};

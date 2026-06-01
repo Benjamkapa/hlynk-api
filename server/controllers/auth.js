@@ -99,10 +99,10 @@ export const googleAuth = async (req, res) => {
       const userId = ulid();
       const slug = await uniqueSlug(registration.businessName);
 
-      const requestedPlan = registration.planName || 'LITE';
-      const isLite = requestedPlan === 'LITE';
-      const subStatus = isLite ? 2 : 1; // 2 = TRIAL, 1 = PENDING/EXPIRED
-      const trialEnd = isLite ? `DATE_ADD(NOW(), INTERVAL 7 DAY)` : `NULL`;
+      const isTrialMode = registration.isTrial === true || registration.isTrial === 'true';
+      const requestedPlan = isTrialMode ? 'TRIAL' : (registration.planName || 'LITE');
+      const subStatus = (isTrialMode || requestedPlan === 'LITE') ? 2 : 1; 
+      const trialEnd = (isTrialMode || requestedPlan === 'LITE') ? `DATE_ADD(NOW(), INTERVAL 14 DAY)` : `NULL`;
 
       const connection = await db.getConnection();
       try {
@@ -170,7 +170,8 @@ export const me = async (req, res) => {
       SELECT 
         u.id, u.name, u.phone, u.email, u.role, u.photoUrl, u.permissions,
         t.id as tenantId, t.slug as tenantSlug, t.businessName,
-        s.planName, s.status, s.trialEndDate, s.endDate
+        s.planName, s.status, s.trialEndDate, s.endDate,
+        (SELECT COUNT(*) FROM payment WHERE tenantId = t.id AND isRented = 1 LIMIT 1) as isRented
       FROM user u
       JOIN tenant t ON u.tenantId = t.id
       LEFT JOIN subscription s ON s.tenantId = t.id
