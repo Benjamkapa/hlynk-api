@@ -1,5 +1,5 @@
 import express from 'express';
-import { getMySubscription, getBillingHistory, initiateRenewal, changePlan, verifyPayment, submitManualPayment } from '../controllers/subscriptions.js';
+import { getMySubscription, getBillingHistory, initiateRenewal, changePlan, verifyPayment, submitManualPayment, getMyPayouts } from '../controllers/subscriptions.js';
 import { authenticate } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -8,6 +8,7 @@ router.use(authenticate);
 
 router.get('/me', getMySubscription);
 router.get('/history', getBillingHistory);
+router.get('/payouts', getMyPayouts);
 router.post('/renew', initiateRenewal);
 router.post('/change-plan', changePlan);
 router.post('/manual', submitManualPayment);

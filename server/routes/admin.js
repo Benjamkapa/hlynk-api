@@ -25,7 +25,9 @@ import {
   getTransactionDetails,
   listPlatformReviews,
   updatePlatformReviewStatus,
-  registerTenant
+  registerTenant,
+  getPayouts,
+  markPayoutPaid
 } from '../controllers/admin.js';
 
 import { authenticate, requireAdmin } from '../middleware/auth.js';
@@ -56,6 +58,9 @@ router.get('/schedules', getSchedules);
 router.get('/reports/query', runReportQuery);
 router.get('/transactions', getGlobalTransactions);
 router.get('/transactions/:id', getTransactionDetails);
+
+router.get('/payouts', getPayouts);
+router.post('/payouts/:tenantId/mark-paid', markPayoutPaid);
 
 router.get('/users', getUsers);
 router.delete('/users/:id', deleteUser);

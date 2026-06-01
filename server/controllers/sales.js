@@ -167,13 +167,18 @@ export const createSale = async (req, res) => {
     // IF MPESA, Record in Master Payment Table
     if (paymentMethod && paymentMethod.startsWith('MPESA') || mpesaRequestId) {
       try {
+        let isRented = 0;
+        if (mpesaRequestId) {
+          const [log] = await connection.query(`SELECT isRented FROM mpesalog WHERE checkoutRequestId = ? LIMIT 1`, [mpesaRequestId]);
+          if (log.length > 0) isRented = log[0].isRented;
+        }
+
         await connection.query(`
-          INSERT INTO payment (id, tenantId, amount, status, reference, mpesaRequestId, transactionType, createdAt)
-          VALUES (?, ?, ?, ?, ?, ?, 'SALE', NOW())
-        `, [ulid(), tenantId, totalAmount, status || 2, saleId, mpesaRequestId || null]);
+          INSERT INTO payment (id, tenantId, amount, status, reference, mpesaRequestId, transactionType, isRented, createdAt)
+          VALUES (?, ?, ?, ?, ?, ?, 'SALE', ?, NOW())
+        `, [ulid(), tenantId, totalAmount, status || 2, saleId, mpesaRequestId || null, isRented]);
       } catch (payErr) {
         console.error('[SALE-PAYMENT-LINK] Warning: Failed to link payment record:', payErr.message);
-        // We don't throw here to avoid failing the whole sale if just the payment-log fails
       }
     }
 
@@ -244,21 +249,22 @@ export const vendorMpesaPush = async (req, res) => {
       }
     }
 
+    let isRented = false;
     if (!customCredentials || !customCredentials.consumerKey) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'M-Pesa credentials not configured. Please visit the Mpesa Setup section to set up your Paybill/Till integration.' 
-      });
+      // Allow renting system paybill
+      isRented = true;
+      console.log(`[SALES] Tenant ${tenantId} is renting system paybill.`);
     }
 
     const result = await initiateStkPush(
       { phone, amount, reference }, 
-      customCredentials,
+      isRented ? null : customCredentials,
       {
         customerName: req.body.customerName || 'Walk-in Customer',
         initiatorName: req.user.name || 'Staff',
         tenantName: provider.businessName || 'Business',
-        tenantId: tenantId
+        tenantId: tenantId,
+        isRented: isRented
       }
     );
 

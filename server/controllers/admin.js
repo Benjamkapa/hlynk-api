@@ -22,10 +22,34 @@ export const getSystemStats = async (req, res) => {
     
     // New exact data fetches for Financials Page
     const [ytdVolumeRes] = await db.query(`SELECT SUM(totalAmount) as total FROM sale WHERE status = 0 AND YEAR(createdAt) = YEAR(NOW())`);
-    const [pendingPayouts] = await db.query(`SELECT SUM(amount) as total FROM payment WHERE status = 2`);
+    
+    // NEW: Payouts for Rented Paybills (Status 0 = Success, payoutStatus 0 = Unpaid)
+    const [pendingPayouts] = await db.query(`SELECT SUM(amount) as total FROM payment WHERE isRented = 1 AND status = 0 AND payoutStatus = 0`);
+    
     const [newProvidersToday] = await db.query(`SELECT COUNT(*) as total FROM tenant WHERE DATE(createdAt) = CURDATE()`);
     const [expiringSoonRes] = await db.query(`SELECT COUNT(*) as total FROM subscription WHERE status = 0 AND endDate BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 7 DAY)`);
     
+    // Check if any payout is "old" (more than 7 days)
+    const [overduePayouts] = await db.query(`SELECT COUNT(*) as cnt FROM payment WHERE isRented = 1 AND status = 0 AND payoutStatus = 0 AND createdAt <= DATE_SUB(NOW(), INTERVAL 7 DAY)`);
+    
+    const activeAlerts = [];
+    if (Number(pendingPayouts[0].total || 0) > 1000) {
+      activeAlerts.push({
+        id: 'payout-pending',
+        type: 'FINANCIAL',
+        severity: 'URGENT',
+        message: `Total pending payouts for rented paybills stands at KES ${Number(pendingPayouts[0].total).toLocaleString()}.`
+      });
+    }
+    if (overduePayouts[0].cnt > 0) {
+      activeAlerts.push({
+        id: 'payout-overdue',
+        type: 'FINANCIAL',
+        severity: 'CRITICAL',
+        message: `${overduePayouts[0].cnt} transactions are overdue for payout (more than 7 days).`
+      });
+    }
+
     // Trends: fallback to a default zero array if no data
     const timeframe = req.query.timeframe || 'HOURLY';
     let trendsQuery = '';
@@ -80,7 +104,7 @@ export const getSystemStats = async (req, res) => {
 
     // Recent Transactions (Global Ledger)
     const [recentTransactions] = await db.query(`
-      SELECT 'Payment' as type, id, amount, status, createdAt as time, tenantId
+      SELECT transactionType as type, id, amount, status, createdAt as time, tenantId
       FROM payment 
       ORDER BY createdAt DESC LIMIT 50
     `);
@@ -89,13 +113,13 @@ export const getSystemStats = async (req, res) => {
     const enrichedTx = await Promise.all(recentTransactions.map(async (tx) => {
       const [t] = await db.query(`SELECT businessName, slug FROM tenant WHERE id = ? LIMIT 1`, [tx.tenantId]);
       return {
-        id: tx.id.substring(0,8).toUpperCase(),
-        entity: t.length > 0 ? t[0].businessName : 'Unknown',
+        id: tx.id,
+        businessName: t.length > 0 ? t[0].businessName : 'Unknown',
         user: t.length > 0 ? t[0].slug : 'system',
         type: tx.type,
         status: tx.status,
         amount: tx.amount,
-        time: tx.time
+        createdAt: tx.time
       };
     }));
 
@@ -133,7 +157,8 @@ export const getSystemStats = async (req, res) => {
           totalPendingPayouts: Number(pendingPayouts[0].total || 0),
           totalGrossFees: Number(ytdVolumeRes[0].total || 0) * 0.05,
           expiringSoon: Number(expiringSoonRes[0].total || 0),
-          activeAvatars
+          activeAvatars,
+          activeAlerts
         },
         revenue: {
           total: Number(totalRevenue[0].total || 0), // Platform Revenue
@@ -1025,9 +1050,9 @@ export const registerTenant = async (req, res) => {
     );
 
     // 4. Initialize subscription
-    const isLite = planName === 'LITE';
-    const subStatus = isLite ? 2 : 1; 
-    const trialEndQuery = isLite ? 'DATE_ADD(NOW(), INTERVAL 7 DAY)' : 'NULL';
+    const isTrial = planName === 'LITE' || planName === 'BUSINESS_PRO';
+    const subStatus = isTrial ? 2 : 1; 
+    const trialEndQuery = isTrial ? 'DATE_ADD(NOW(), INTERVAL 14 DAY)' : 'NULL';
     
     await connection.query(
       `INSERT INTO subscription (id, tenantId, planName, status, trialEndDate, createdAt, updatedAt) 
@@ -1045,3 +1070,111 @@ export const registerTenant = async (req, res) => {
     connection.release();
   }
 };
+
+export const getPayouts = async (req, res) => {
+  try {
+    const PLATFORM_SHARE_RATE = 0.10;
+
+    // 1. Fetch all pending rented payments with their tenant's trial info
+    const [payments] = await db.query(`
+      SELECT 
+        p.tenantId, 
+        t.businessName, 
+        p.amount, 
+        p.createdAt,
+        s.trialEndDate
+      FROM payment p
+      JOIN tenant t ON p.tenantId = t.id
+      LEFT JOIN subscription s ON s.tenantId = t.id
+      WHERE p.isRented = 1 AND p.payoutStatus = 0 AND p.status = 0
+    `);
+
+    // Grouping by tenant
+    const grouped = payments.reduce((acc, p) => {
+      if (!acc[p.tenantId]) {
+        acc[p.tenantId] = {
+          tenantId: p.tenantId,
+          businessName: p.businessName,
+          totalGross: 0,
+          platformShare: 0,
+          transactionCount: 0,
+          oldestTransaction: p.createdAt,
+          latestTransaction: p.createdAt
+        };
+      }
+      const g = acc[p.tenantId];
+      const created = new Date(p.createdAt);
+      const trialEnd = p.trialEndDate ? new Date(p.trialEndDate) : null;
+      
+      const rate = (trialEnd && created <= trialEnd) ? 0 : PLATFORM_SHARE_RATE;
+      const amount = Number(p.amount);
+      const share = amount * rate;
+
+      g.totalGross += amount;
+      g.platformShare += share;
+      g.transactionCount++;
+      if (created < new Date(g.oldestTransaction)) g.oldestTransaction = p.createdAt;
+      if (created > new Date(g.latestTransaction)) g.latestTransaction = p.createdAt;
+
+      return acc;
+    }, {});
+
+    const formattedPayouts = Object.values(grouped).map(g => ({
+      ...g,
+      netSettlement: g.totalGross - g.platformShare
+    })).sort((a, b) => b.totalGross - a.totalGross);
+
+    // Summary stats
+    const [stats] = await db.query(`
+      SELECT 
+        SUM(CASE WHEN createdAt >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN amount ELSE 0 END) as volume7Days,
+        SUM(amount) as totalVolume
+      FROM payment 
+      WHERE isRented = 1 AND status = 0
+    `);
+
+    const summary = stats[0] || { volume7Days: 0, totalVolume: 0 };
+    const totalGross = formattedPayouts.reduce((sum, item) => sum + item.totalGross, 0);
+    const totalPlatformShare = formattedPayouts.reduce((sum, item) => sum + item.platformShare, 0);
+
+    return res.json({ 
+      success: true, 
+      data: {
+        items: formattedPayouts,
+        summary: {
+          ...summary,
+          totalGross,
+          totalPlatformShare,
+          totalNetSettlement: totalGross - totalPlatformShare
+        }
+      } 
+    });
+  } catch (err) {
+    console.error('[ADMIN-PAYOUTS] Error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to fetch pending payouts' });
+  }
+};
+
+export const markPayoutPaid = async (req, res) => {
+  const { tenantId } = req.params;
+  const adminId = req.user.userId;
+
+  try {
+    const [result] = await db.query(`
+       UPDATE payment 
+       SET payoutStatus = 1, updatedAt = NOW() 
+       WHERE tenantId = ? AND isRented = 1 AND payoutStatus = 0 AND status = 0
+    `, [tenantId]);
+
+    // Log the payout
+    await db.query(`
+      INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
+      VALUES (?, ?, ?, 'Payout Processed', 'Financial', ?, NOW())
+    `, [ulid(), tenantId, adminId, `Marked ${result.affectedRows} transactions as paid/cleared.`]);
+
+    return res.json({ success: true, message: `Successfully marked ${result.affectedRows} transactions as paid.` });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to process payout' });
+  }
+};
+
