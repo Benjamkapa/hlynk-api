@@ -1,5 +1,5 @@
 import express from 'express';
-import { listSales, createSale, getSaleDetails, vendorMpesaPush } from '../controllers/sales.js';
+import { listSales, createSale, getSaleDetails, vendorMpesaPush, vendorKcbPush } from '../controllers/sales.js';
 import { authenticate } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -10,5 +10,6 @@ router.get('/', listSales);
 router.post('/', createSale);
 router.get('/:id', getSaleDetails);
 router.post('/mpesa-push', vendorMpesaPush);
+router.post('/kcb-push', vendorKcbPush);
 
 export default router;

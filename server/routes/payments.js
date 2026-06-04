@@ -54,20 +54,42 @@ router.post('/kcb/callback', express.json(), async (req, res) => {
     const [payments] = await db.query(`SELECT * FROM payment WHERE mpesaRequestId = ? LIMIT 1`, [checkoutId]);
     if (payments.length > 0) {
       const payment = payments[0];
+      const status = success ? 0 : 1;
       await db.query(`UPDATE payment SET status = ?, message = ?, rawResponse = ?, updatedAt = NOW() WHERE id = ?`,
-        [success ? 0 : 1, responseDescription, JSON.stringify(req.body), payment.id]);
+        [status, responseDescription, JSON.stringify(req.body), payment.id]);
 
       if (payment.transactionType === 'SALE') {
-        await db.query(`UPDATE sale SET status = ?, updatedAt = NOW() WHERE id = ?`, [success ? 0 : 1, payment.reference]);
+        const saleId = payment.reference;
+        await db.query(`UPDATE sale SET status = ?, updatedAt = NOW() WHERE id = ?`, [status, saleId]);
+        console.log(`[KCB-SYNC] Updated Sale ${saleId} to Status ${status} (Success: ${success})`);
         
         if (success) {
-          const saleId = payment.reference;
-          pushSaleToEtims(initLog.tenantId, saleId).catch(err => console.error('[eTIMS] KCB push failed:', err.message));
+          const tenantId = initLog?.tenantId || payment.tenantId;
+          if (tenantId) {
+            setImmediate(() => {
+              pushSaleToEtims(tenantId, saleId).catch(err => 
+                console.error(`[eTIMS] KCB callback push failed for sale ${saleId}:`, err.message)
+              );
+            });
+          }
+        } else {
+          // Restore stock on failed KCB payment
+          try {
+            const [items] = await db.query(`SELECT productId, quantity FROM saleitem WHERE saleId = ?`, [saleId]);
+            for (const item of items) {
+              if (item.productId) {
+                await db.query(`UPDATE product SET stockLevel = stockLevel + ? WHERE id = ?`, [item.quantity, item.productId]);
+              }
+            }
+            console.log(`[KCB RESTORE] Restored stock for failed sale ${saleId}`);
+          } catch (err) {
+            console.error('[KCB RESTORE] Failed to restore stock:', err);
+          }
         }
       }
     }
   } catch (err) {
-    console.error('[KCB CALLBACK PROCESING ERROR]', err);
+    console.error('[KCB CALLBACK PROCESSING ERROR]', err);
   }
 
   return res.json({ status: "Success" });

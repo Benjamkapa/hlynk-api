@@ -73,6 +73,12 @@ export async function initiateKcbStkPush(pushParams, customCredentials = null, m
     throw new Error('KCB PRODUCTION credentials missing.');
   }
 
+  // Simulation for dev
+  if (params.env === 'development' && env === 'sandbox' && (!key || key.includes('placeholder') || key === '')) {
+    console.warn('[KCB] SIMULATING SUCCESS');
+    return { MerchantRequestID: 'sim_kcb_123', CheckoutRequestID: 'sim_kcb_chk_123', ResponseDescription: 'Success' };
+  }
+
   const token = await getAccessToken(customCredentials);
 
   let phone = pushParams.phone.replace(/[^0-9]/g, '');
