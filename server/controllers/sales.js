@@ -1,6 +1,7 @@
 import { db } from '../dbms/mysql.js';
 import { ulid } from 'ulid';
 import { initiateStkPush } from '../utils/mpesa.js';
+import { initiateKcbStkPush } from '../utils/kcb.js';
 import { decrypt } from '../utils/encryption.js';
 import { pushSaleToEtims } from './etims.js';
 
@@ -295,6 +296,66 @@ export const vendorMpesaPush = async (req, res) => {
     return res.json({ success: true, data: result });
   } catch (err) {
     console.error('[SALES] M-Pesa Push Error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+export const vendorKcbPush = async (req, res) => {
+  const { tenantId } = req.user;
+  const { phone, amount, reference } = req.body;
+
+  try {
+    const [[provider]] = await db.query(`SELECT businessName, operationalSettings FROM provider WHERE tenantId = ?`, [tenantId]);
+    
+    let customCredentials = null;
+    if (provider?.operationalSettings) {
+      const ops = typeof provider.operationalSettings === 'string' 
+        ? JSON.parse(provider.operationalSettings) 
+        : provider.operationalSettings;
+      
+      const env = ops.kcb?.env || 'sandbox';
+      const kcb = ops.kcb?.[env];
+
+      if (kcb && kcb.consumerKey) {
+        customCredentials = { ...kcb, env };
+        if (customCredentials.consumerKey && customCredentials.consumerKey.includes(':')) {
+          customCredentials.consumerKey = decrypt(customCredentials.consumerKey);
+        }
+        if (customCredentials.consumerSecret && customCredentials.consumerSecret.includes(':')) {
+          customCredentials.consumerSecret = decrypt(customCredentials.consumerSecret);
+        }
+      }
+    }
+
+    if (!customCredentials || !customCredentials.consumerKey) {
+      throw new Error('KCB integration not configured for this workshop.');
+    }
+
+    const result = await initiateKcbStkPush(
+      { phone, amount, reference }, 
+      customCredentials,
+      {
+        customerName: req.body.customerName || 'Walk-in Customer',
+        initiatorName: req.user.name || 'Staff',
+        tenantName: provider.businessName || 'Business',
+        tenantId: tenantId
+      }
+    );
+
+    // Link the request ID to the Sale immediately if saleId provided
+    if (req.body.saleId && result.CheckoutRequestID) {
+      try {
+        await db.query(`UPDATE sale SET mpesaRequestId = ? WHERE id = ? AND tenantId = ?`, [result.CheckoutRequestID, req.body.saleId, tenantId]);
+        await db.query(`UPDATE payment SET mpesaRequestId = ? WHERE reference = ? AND tenantId = ?`, [result.CheckoutRequestID, req.body.saleId, tenantId]);
+        console.log(`[KCB-LINK] Linked CheckoutRequestID ${result.CheckoutRequestID} to Sale ${req.body.saleId}`);
+      } catch (linkErr) {
+        console.error('[KCB-LINK] Failed to link CheckoutRequestID:', linkErr.message);
+      }
+    }
+
+    return res.json({ success: true, data: result });
+  } catch (err) {
+    console.error('[SALES] KCB Push Error:', err);
     return res.status(500).json({ success: false, message: err.message });
   }
 };
