@@ -5,116 +5,63 @@ import { initiateStkPush } from '../utils/mpesa.js';
 import { authenticate } from '../middleware/auth.js';
 import { validateMpesaIP } from '../middleware/ipWhitelist.js';
 import { ulid } from 'ulid';
+import { pushSaleToEtims } from '../controllers/etims.js';
 
 const router = express.Router();
 
-/**
- * @route POST /api/payments/mpesa/stk-push
- * @desc General M-Pesa STK Push trigger
- */
 router.post('/mpesa/stk-push', authenticate, async (req, res) => {
   const { phone, amount, reference } = req.body;
   const { tenantId, name } = req.user;
-
   try {
     const [tenants] = await db.query(`SELECT businessName FROM tenant WHERE id = ?`, [tenantId]);
     const tenantName = tenants[0]?.businessName || 'Tenant';
-
-    const result = await initiateStkPush(
-      { phone, amount, reference }, 
-      null, 
-      {
-        customerName: name,
-        initiatorName: name,
-        tenantName: tenantName,
-        tenantId: tenantId
-      }
-    );
+    const result = await initiateStkPush({ phone, amount, reference }, null, { customerName: name, initiatorName: name, tenantName, tenantId });
     return res.json({ success: true, data: result });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }
 });
 
-/**
- * @route GET /api/payments/mpesa/logs
- * @desc Get M-Pesa transaction logs
- */
 router.get('/mpesa/logs', authenticate, async (req, res) => {
   const { tenantId, role } = req.user;
   const { page = 1, limit = 50, sortOrder = 'desc' } = req.query;
   const order = sortOrder.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
   const offset = (Number(page) - 1) * Number(limit);
-
   try {
     let whereQuery = '';
     const queryParams = [];
-
-    // Staff/Providers only see logs for their tenant
     if (role !== 'SUPER_ADMIN') {
       whereQuery = 'WHERE tenantName = (SELECT businessName FROM tenant WHERE id = ?)';
       queryParams.push(tenantId);
     }
-
     const [logs] = await db.query(`
-      SELECT 
-        l1.id,
-        l1.checkoutRequestId,
-        l1.merchantRequestId,
-        l1.phone,
-        l1.amount,
-        l1.reference,
-        l1.customerName,
-        l1.initiatorName,
-        l1.tenantName,
-        l1.type,
-        l1.status,
-        l1.resultCode,
-        l1.resultDesc,
-        l1.rawPayload,
-        l1.createdAt,
-        (SELECT COUNT(*) FROM mpesalog l2 WHERE l2.checkoutRequestId = l1.checkoutRequestId AND l2.type = 1) > 0 as isComplete
-      FROM mpesalog l1
-      ${whereQuery}
-      ORDER BY l1.createdAt ${order} 
-      LIMIT ? OFFSET ?
+      SELECT l1.id, l1.checkoutRequestId, l1.merchantRequestId, l1.phone, l1.amount, l1.reference,
+             l1.customerName, l1.initiatorName, l1.tenantName, l1.type, l1.status, l1.resultCode,
+             l1.resultDesc, l1.rawPayload, l1.createdAt,
+             (SELECT COUNT(*) FROM mpesalog l2 WHERE l2.checkoutRequestId = l1.checkoutRequestId AND l2.type = 1) > 0 as isComplete
+      FROM mpesalog l1 ${whereQuery} ORDER BY l1.createdAt ${order} LIMIT ? OFFSET ?
     `, [...queryParams, Number(limit), offset]);
-
     const [countRes] = await db.query(`SELECT COUNT(DISTINCT checkoutRequestId) as total FROM mpesalog ${whereQuery}`, queryParams);
     const total = Number(countRes[0].total);
-
-    return res.json({
-      success: true,
-      data: {
-        items: logs,
-        pagination: { total, totalPages: Math.ceil(total / Number(limit)), page: Number(page), limit: Number(limit) }
-      }
-    });
+    return res.json({ success: true, data: { items: logs, pagination: { total, totalPages: Math.ceil(total / Number(limit)), page: Number(page), limit: Number(limit) } } });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to fetch M-Pesa logs' });
   }
 });
 
-/**
- * @route POST /api/payments/mpesa/callback
- * @desc M-Pesa Daraja STK Push Callback
- */
 router.post('/mpesa/callback', express.json(), validateMpesaIP, async (req, res) => {
   const clientIP = req.clientIP;
-  
   console.log('================================================');
   console.log('[MPESA DIAGNOSTIC] Incoming Callback');
   console.log('IP:', clientIP);
   console.log('Body:', JSON.stringify(req.body, null, 2));
   console.log('================================================');
-
   console.log(`[MPESA CALLBACK] Received from ${clientIP}`);
 
   if (!req.body || !req.body.Body) {
     console.error('[MPESA CALLBACK] Error: No Body found in request');
     return res.json({ ResultCode: 1, ResultDesc: 'Invalid body' });
   }
-
   const { Body } = req.body;
   if (!Body.stkCallback) {
     console.error('[MPESA CALLBACK] Error: stkCallback missing in body');
@@ -124,36 +71,19 @@ router.post('/mpesa/callback', express.json(), validateMpesaIP, async (req, res)
   const { ResultCode, ResultDesc, CheckoutRequestID, MerchantRequestID, CallbackMetadata } = Body.stkCallback;
   const success = ResultCode === 0;
   const canceled = ResultCode === 1032;
-
   let initLog = null;
 
-  // Log the callback
   try {
     const logStatus = success ? 0 : (canceled ? 3 : 1);
-    
-    // Attempt to retrieve metadata from initiation log
     const [rows] = await db.query(
       `SELECT customerName, initiatorName, tenantName, tenantId FROM mpesalog WHERE checkoutRequestId = ? AND type = 0 LIMIT 1`,
       [CheckoutRequestID]
     );
     initLog = rows[0];
-
     await db.query(`
       INSERT INTO mpesalog (id, merchantRequestId, checkoutRequestId, customerName, initiatorName, tenantName, tenantId, type, status, resultCode, resultDesc, rawPayload)
       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
-    `, [
-      ulid(),
-      MerchantRequestID,
-      CheckoutRequestID,
-      initLog?.customerName || null,
-      initLog?.initiatorName || null,
-      initLog?.tenantName || null,
-      initLog?.tenantId || null,
-      logStatus,
-      ResultCode,
-      ResultDesc,
-      JSON.stringify(req.body)
-    ]);
+    `, [ulid(), MerchantRequestID, CheckoutRequestID, initLog?.customerName || null, initLog?.initiatorName || null, initLog?.tenantName || null, initLog?.tenantId || null, logStatus, ResultCode, ResultDesc, JSON.stringify(req.body)]);
   } catch (logErr) {
     console.error('[MPESA LOG] Failed to log callback:', logErr.message);
   }
@@ -171,35 +101,34 @@ router.post('/mpesa/callback', express.json(), validateMpesaIP, async (req, res)
   }
 
   try {
-    // SEARCH IN MASTER PAYMENT TABLE
     const [payments] = await db.query(`SELECT * FROM payment WHERE mpesaRequestId = ? LIMIT 1`, [CheckoutRequestID]);
-
     if (payments.length > 0) {
       const payment = payments[0];
       const status = canceled ? 3 : (success ? 0 : 1);
+      await db.query(`UPDATE payment SET status = ?, mpesaReceipt = ?, message = ?, rawResponse = ?, updatedAt = NOW() WHERE id = ?`,
+        [status, success ? mpesaReceipt : null, ResultDesc, JSON.stringify(req.body), payment.id]);
 
-      // 1. UPDATE MASTER PAYMENT RECORD WITH EVERY DETAIL
-      await db.query(`
-        UPDATE payment 
-        SET status = ?, mpesaReceipt = ?, message = ?, rawResponse = ?, updatedAt = NOW() 
-        WHERE id = ?
-      `, [status, success ? mpesaReceipt : null, ResultDesc, JSON.stringify(req.body), payment.id]);
-
-      // 2. TRIGGER BUSINESS LOGIC BASED ON TYPE
       if (payment.transactionType === 'SUBSCRIPTION') {
         await handlePaymentCallback(payment.reference, mpesaReceipt, success, ResultDesc);
-      } 
-      else if (payment.transactionType === 'SALE') {
-        // Update the related Sale record if it exists
+      } else if (payment.transactionType === 'SALE') {
         const [sales] = await db.query(`SELECT id FROM sale WHERE mpesaRequestId = ? OR id = ? LIMIT 1`, [CheckoutRequestID, payment.reference]);
         if (sales.length > 0) {
           const saleId = sales[0].id;
-          await db.query(`UPDATE sale SET status = ?, mpesaReceipt = ?, updatedAt = NOW() WHERE id = ?`, 
-            [status, success ? mpesaReceipt : null, saleId]);
-          
+          await db.query(`UPDATE sale SET status = ?, mpesaReceipt = ?, updatedAt = NOW() WHERE id = ?`, [status, success ? mpesaReceipt : null, saleId]);
           console.log(`[SALE-SYNC] Updated Sale ${saleId} to Status ${status} (Success: ${success})`);
-            
-          // RESTORE STOCK IF FAILED OR CANCELLED
+
+          // ─── eTIMS push after confirmed MPesa payment ───
+          if (success) {
+            const saleRow = await db.query('SELECT tenantId FROM sale WHERE id = ? LIMIT 1', [saleId]).then(([r]) => r[0]).catch(() => null);
+            if (saleRow?.tenantId) {
+              setImmediate(() => {
+                pushSaleToEtims(saleRow.tenantId, saleId).catch(err =>
+                  console.error(`[eTIMS] MPesa callback push failed for sale ${saleId}:`, err.message)
+                );
+              });
+            }
+          }
+
           if (!success) {
             try {
               const [items] = await db.query(`SELECT productId, quantity FROM saleitem WHERE saleId = ?`, [saleId]);

@@ -2,6 +2,7 @@ import { db } from '../dbms/mysql.js';
 import { ulid } from 'ulid';
 import { initiateStkPush } from '../utils/mpesa.js';
 import { decrypt } from '../utils/encryption.js';
+import { pushSaleToEtims } from './etims.js';
 
 export const listSales = async (req, res) => {
   const { tenantId } = req.user;
@@ -193,6 +194,18 @@ export const createSale = async (req, res) => {
     }
 
     await connection.commit();
+
+    // ─── eTIMS Auto-Push (fire-and-forget, never blocks the sale) ───
+    // Only push immediately for completed sales (status=0 = paid).
+    // MPesa sales are pushed after callback confirms payment.
+    if (status === 0 || status === undefined || status === null) {
+      setImmediate(() => {
+        pushSaleToEtims(tenantId, saleId).catch(err =>
+          console.error(`[eTIMS] Background push failed for sale ${saleId}:`, err.message)
+        );
+      });
+    }
+
     return res.json({ success: true, data: { saleId } });
   } catch (err) {
     await connection.rollback();
@@ -285,4 +298,3 @@ export const vendorMpesaPush = async (req, res) => {
     return res.status(500).json({ success: false, message: err.message });
   }
 };
-
