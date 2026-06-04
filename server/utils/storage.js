@@ -30,7 +30,7 @@ export const initStorage = async () => {
             await minioClient.makeBucket(bucketName, 'us-east-1');
             console.log(`🪣 Storage: MinIO bucket '${bucketName}' created.`);
         } else {
-            console.log(`🪣 Storage: MinIO connection verified (using bucket '${bucketName}').`);
+            console.log(`🪣  Storage: MinIO connection verified (using bucket '${bucketName}').`);
         }
 
         const policy = {

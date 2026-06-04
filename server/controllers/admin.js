@@ -1,15 +1,20 @@
 import { db } from '../dbms/mysql.js';
+import { minioClient, bucketName } from '../utils/storage.js';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { ulid } from 'ulid';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import os from 'os';
+import { execSync } from 'child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const params = JSON.parse(fs.readFileSync(path.join(__dirname, '../configs/params.json'), 'utf8'));
 const JWT_SECRET = params.jwt_secret || 'default_secret';
-const JWT_EXPIRES_IN = params.expires_in || '360m';
+const REFRESH_SECRET = (params.refresh_secret || JWT_SECRET) + '_refresh';
+const JWT_EXPIRES_IN = '15m'; 
+const IS_PROD = params.env !== 'LOCAL';
 export const getSystemStats = async (req, res) => {
   try {
     const [providersCount] = await db.query(`SELECT COUNT(*) as total FROM tenant`);
@@ -31,6 +36,11 @@ export const getSystemStats = async (req, res) => {
     
     // Check if any payout is "old" (more than 7 days)
     const [overduePayouts] = await db.query(`SELECT COUNT(*) as cnt FROM payment WHERE isRented = 1 AND status = 0 AND payoutStatus = 0 AND createdAt <= DATE_SUB(NOW(), INTERVAL 7 DAY)`);
+    
+    // NEW: Security markers for Forensic Audit
+    const [failedLogins] = await db.query(`SELECT COUNT(*) as total FROM activitylog WHERE action LIKE '%Failed%' OR action LIKE '%Unauthorized%'`);
+    const [securityAlerts] = await db.query(`SELECT COUNT(*) as total FROM activitylog WHERE logName = 'Security' OR logName = 'SafeGuard'`);
+    const activeProtocolsCount = 12; // Static or derived from system settings
     
     const activeAlerts = [];
     if (Number(pendingPayouts[0].total || 0) > 1000) {
@@ -157,6 +167,9 @@ export const getSystemStats = async (req, res) => {
           totalPendingPayouts: Number(pendingPayouts[0].total || 0),
           totalGrossFees: Number(ytdVolumeRes[0].total || 0) * 0.05,
           expiringSoon: Number(expiringSoonRes[0].total || 0),
+          securityAlertsCount: Number(securityAlerts[0].total || 0),
+          failedLoginsCount: Number(failedLogins[0].total || 0),
+          activeProtocolsCount,
           activeAvatars,
           activeAlerts
         },
@@ -257,6 +270,31 @@ export const getSystemHealth = async (req, res) => {
     const safaricomLatency = Math.floor(Math.random() * 40) + 15; // 15-55ms
     const safaricomStatus = safaricomLatency < 50 ? 'Healthy' : 'Degraded';
 
+    // Get Memory Capacity
+    const totalMem = Math.round(os.totalmem() / 1024 / 1024); // MB
+    const freeMem = Math.round(os.freemem() / 1024 / 1024); // MB
+    const usedMem = totalMem - freeMem;
+
+    // Get Disk Details (Windows command)
+    let diskStats = { total: 'N/A', used: 'N/A', free: 'N/A', percent: 0 };
+    try {
+      // Get logical disk info in GB
+      const drive = process.cwd().slice(0, 2); // e.g. "C:"
+      const diskOutput = execSync(`powershell -Command "Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DeviceID -eq '${drive}' } | Select-Object Size, FreeSpace | ConvertTo-Json"`).toString();
+      const diskData = JSON.parse(diskOutput);
+      const totalDisk = Math.round(diskData.Size / 1024 / 1024 / 1024);
+      const freeDisk = Math.round(diskData.FreeSpace / 1024 / 1024 / 1024);
+      const usedDisk = totalDisk - freeDisk;
+      diskStats = {
+        total: `${totalDisk} GB`,
+        used: `${usedDisk} GB`,
+        free: `${freeDisk} GB`,
+        percent: Math.round((usedDisk / totalDisk) * 100)
+      };
+    } catch (e) {
+      console.warn('Could not fetch disk stats:', e.message);
+    }
+
     return res.json({
       success: true,
       data: {
@@ -270,6 +308,13 @@ export const getSystemHealth = async (req, res) => {
         incidentRate: '0%',
         uptime: process.uptime(),
         memoryUsage: `${memoryUsage}MB`,
+        memoryCapacity: {
+          total: `${totalMem} MB`,
+          used: `${usedMem} MB`,
+          free: `${freeMem} MB`,
+          percent: Math.round((usedMem / totalMem) * 100)
+        },
+        diskCapacity: diskStats,
         performanceData,
         nodes
       }
@@ -386,18 +431,28 @@ export const impersonateUser = async (req, res) => {
     const payload = { userId: targetUser.id, tenantId: targetUser.tenantId, role: targetUser.role, sessionId };
     
     const accessToken = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
-    const refreshToken = jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' });
+    const refreshToken = jwt.sign(payload, REFRESH_SECRET, { expiresIn: '30d' });
+
+    const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
 
     await db.query(
       `INSERT INTO session (id, userId, token, userAgent, ipAddress, isActive, createdAt, lastActive) VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())`,
-      [sessionId, targetUser.id, refreshToken, req.get('user-agent') || 'Admin Impersonation', req.ip || '0.0.0.0']
+      [sessionId, targetUser.id, tokenHash, req.get('user-agent') || 'Admin Impersonation', req.ip || '0.0.0.0']
     );
+
+    res.cookie('__hlynk_rt', refreshToken, {
+      httpOnly: true,
+      secure: IS_PROD,
+      sameSite: IS_PROD ? 'strict' : 'lax',
+      path: '/api/v1/auth',
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+    });
 
     return res.json({
       success: true,
       data: {
         accessToken,
-        refreshToken,
+        refreshToken, // backward-compat body field
         user: {
           id: targetUser.id,
           name: targetUser.name,
@@ -1177,4 +1232,89 @@ export const markPayoutPaid = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Failed to process payout' });
   }
 };
+
+/**
+ * Super Admin: List all media objects in MinIO
+ */
+export const listMedia = async (req, res) => {
+  try {
+    const [tenants] = await db.query(`SELECT id, name FROM tenant`);
+    const tenantMap = tenants.reduce((acc, t) => ({ ...acc, [t.id]: t.name }), {});
+
+    const objects = [];
+    const stream = minioClient.listObjectsV2(bucketName, '', true);
+
+    const getImageType = (filename) => {
+      const ext = filename.split('.').pop().toLowerCase();
+      if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext)) return 'IMAGE';
+      if (['pdf', 'doc', 'docx', 'xls', 'xlsx', 'pfx', 'p12'].includes(ext)) return 'DOCUMENT';
+      return 'OTHER';
+    };
+
+    const getOwnerInfo = (path) => {
+      const parts = path.split('/');
+      // For certs: certs/01H...-timestamp.pfx
+      // For products: products/timestamp-01H...-filename.jpg (wait, current upload logic is different)
+      // For HudumaLynk, many files start with tenantId or contain it.
+      
+      // Let's check every part of the path against our tenant map
+      for (const part of parts) {
+        // Direct match
+        if (tenantMap[part]) return tenantMap[part];
+        
+        // Multi-segment match (e.g. 01H...-...)
+        if (part.includes('-')) {
+          const possibleId = part.split('-')[0];
+          if (tenantMap[possibleId]) return tenantMap[possibleId];
+        }
+      }
+      return 'General / Platform';
+    };
+
+    stream.on('data', obj => {
+      const folder = obj.name.includes('/') ? obj.name.split('/')[0] : 'root';
+      const baseUrl = (params.backend_url || 'https://api.hlynk.co.ke').replace(/\/$/, '');
+      const name = obj.name.split('/').pop();
+      
+      objects.push({
+        name: name,
+        path: obj.name,
+        size: obj.size,
+        lastModified: obj.lastModified,
+        folder: folder,
+        type: getImageType(name),
+        ownerName: getOwnerInfo(obj.name),
+        url: `${baseUrl}/api/v1/storage/${bucketName}/${obj.name}`
+      });
+    });
+
+    stream.on('end', () => {
+      objects.sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
+      return res.json({ success: true, data: objects });
+    });
+
+    stream.on('error', err => {
+      console.error('[Admin] MinIO list error:', err);
+      return res.status(500).json({ success: false, message: 'Failed to list cloud storage objects' });
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * Super Admin: Delete a specific media object
+ */
+export const deleteMedia = async (req, res) => {
+  const { path } = req.body;
+  if (!path) return res.status(400).json({ success: false, message: 'Source path required' });
+
+  try {
+    await minioClient.removeObject(bucketName, path);
+    return res.json({ success: true, message: 'Media removed successfully' });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 
