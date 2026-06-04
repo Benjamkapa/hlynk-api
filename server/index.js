@@ -224,9 +224,30 @@ const startServer = async () => {
         await db.query("ALTER TABLE etims_invoices ADD COLUMN retry_count INT DEFAULT 0 AFTER error_message");
       }
 
-      // console.log('💰 eTIMS: Tables ready.');
+      // 4. KCB Logs Table
+      await db.query(`CREATE TABLE IF NOT EXISTS kcblog (
+        id VARCHAR(26) PRIMARY KEY,
+        merchantRequestId VARCHAR(255),
+        checkoutRequestId VARCHAR(255),
+        phone VARCHAR(20),
+        amount DECIMAL(15,2),
+        reference VARCHAR(255),
+        customerName VARCHAR(255),
+        initiatorName VARCHAR(255),
+        tenantName VARCHAR(255),
+        tenantId VARCHAR(26),
+        status INT DEFAULT 2, -- 0:Success, 1:Failed, 2:Pending, 3:Cancelled, 4:Error
+        resultCode VARCHAR(50),
+        resultDesc TEXT,
+        rawPayload MEDIUMTEXT,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_kcb_checkout (checkoutRequestId),
+        INDEX idx_kcb_tenant (tenantId)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+      console.log('💰 eTIMS & KCB: Tables ready.');
     } catch (e) {
-      console.warn('⚠️ eTIMS Migration Warning:', e.message);
+      console.warn('⚠️ Migration Warning:', e.message);
     }
 
     // 3. Initialize Local Storage

@@ -2,6 +2,7 @@ import express from 'express';
 import { db } from '../dbms/mysql.js';
 import { handlePaymentCallback } from '../controllers/subscriptions.js';
 import { initiateStkPush } from '../utils/mpesa.js';
+import { initiateKcbStkPush } from '../utils/kcb.js';
 import { authenticate } from '../middleware/auth.js';
 import { validateMpesaIP } from '../middleware/ipWhitelist.js';
 import { ulid } from 'ulid';
@@ -20,6 +21,56 @@ router.post('/mpesa/stk-push', authenticate, async (req, res) => {
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }
+});
+
+router.post('/kcb/stk-push', authenticate, async (req, res) => {
+  const { phone, amount, reference } = req.body;
+  const { tenantId, name } = req.user;
+  try {
+    const [tenants] = await db.query(`SELECT businessName FROM tenant WHERE id = ?`, [tenantId]);
+    const tenantName = tenants[0]?.businessName || 'Tenant';
+    const result = await initiateKcbStkPush({ phone, amount, reference }, null, { customerName: name, initiatorName: name, tenantName, tenantId });
+    return res.json({ success: true, data: result });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.post('/kcb/callback', express.json(), async (req, res) => {
+  console.log('[KCB CALLBACK] Received:', JSON.stringify(req.body, null, 2));
+
+  // Extract relevant fields (Standard KCB callback format)
+  // Note: KCB callback structure can vary; we should map it to success/fail
+  const { responseCode, responseDescription, checkoutId } = req.body;
+  const success = responseCode === "00" || responseCode === "0";
+
+  try {
+    const [logs] = await db.query(`SELECT tenantId, reference FROM kcblog WHERE checkoutRequestId = ? LIMIT 1`, [checkoutId]);
+    const initLog = logs[0];
+
+    await db.query(`UPDATE kcblog SET status = ?, resultCode = ?, resultDesc = ?, rawPayload = ? WHERE checkoutRequestId = ?`,
+      [success ? 0 : 1, responseCode, responseDescription, JSON.stringify(req.body), checkoutId]);
+
+    const [payments] = await db.query(`SELECT * FROM payment WHERE mpesaRequestId = ? LIMIT 1`, [checkoutId]);
+    if (payments.length > 0) {
+      const payment = payments[0];
+      await db.query(`UPDATE payment SET status = ?, message = ?, rawResponse = ?, updatedAt = NOW() WHERE id = ?`,
+        [success ? 0 : 1, responseDescription, JSON.stringify(req.body), payment.id]);
+
+      if (payment.transactionType === 'SALE') {
+        await db.query(`UPDATE sale SET status = ?, updatedAt = NOW() WHERE id = ?`, [success ? 0 : 1, payment.reference]);
+        
+        if (success) {
+          const saleId = payment.reference;
+          pushSaleToEtims(initLog.tenantId, saleId).catch(err => console.error('[eTIMS] KCB push failed:', err.message));
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[KCB CALLBACK PROCESING ERROR]', err);
+  }
+
+  return res.json({ status: "Success" });
 });
 
 router.get('/mpesa/logs', authenticate, async (req, res) => {

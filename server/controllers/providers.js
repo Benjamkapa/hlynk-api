@@ -16,6 +16,14 @@ const decryptOperationalSettings = (operationalSettings) => {
     return res;
   };
 
+  const decryptKcb = (k) => {
+    if (!k) return k;
+    const res = { ...k };
+    if (res.consumerKey) res.consumerKey = decrypt(res.consumerKey);
+    if (res.consumerSecret) res.consumerSecret = decrypt(res.consumerSecret);
+    return res;
+  };
+
   if (ops.mpesa) {
     if (ops.mpesa.sandbox) ops.mpesa.sandbox = decryptMpesa(ops.mpesa.sandbox);
     if (ops.mpesa.production) ops.mpesa.production = decryptMpesa(ops.mpesa.production);
@@ -23,6 +31,11 @@ const decryptOperationalSettings = (operationalSettings) => {
     if (ops.mpesa.consumerKey) ops.mpesa.consumerKey = decrypt(ops.mpesa.consumerKey);
     if (ops.mpesa.consumerSecret) ops.mpesa.consumerSecret = decrypt(ops.mpesa.consumerSecret);
     if (ops.mpesa.passkey) ops.mpesa.passkey = decrypt(ops.mpesa.passkey);
+  }
+
+  if (ops.kcb) {
+    if (ops.kcb.sandbox) ops.kcb.sandbox = decryptKcb(ops.kcb.sandbox);
+    if (ops.kcb.production) ops.kcb.production = decryptKcb(ops.kcb.production);
   }
 
   if (ops.ai) {
@@ -45,6 +58,14 @@ const encryptOperationalSettings = (operationalSettings) => {
     return res;
   };
 
+  const encryptKcb = (k) => {
+    if (!k) return k;
+    const res = { ...k };
+    if (res.consumerKey && !res.consumerKey.includes(':')) res.consumerKey = encrypt(res.consumerKey);
+    if (res.consumerSecret && !res.consumerSecret.includes(':')) res.consumerSecret = encrypt(res.consumerSecret);
+    return res;
+  };
+
   if (ops.mpesa) {
     if (ops.mpesa.sandbox) ops.mpesa.sandbox = encryptMpesa(ops.mpesa.sandbox);
     if (ops.mpesa.production) ops.mpesa.production = encryptMpesa(ops.mpesa.production);
@@ -52,6 +73,11 @@ const encryptOperationalSettings = (operationalSettings) => {
     if (ops.mpesa.consumerKey && !ops.mpesa.consumerKey.includes(':')) ops.mpesa.consumerKey = encrypt(ops.mpesa.consumerKey);
     if (ops.mpesa.consumerSecret && !ops.mpesa.consumerSecret.includes(':')) ops.mpesa.consumerSecret = encrypt(ops.mpesa.consumerSecret);
     if (ops.mpesa.passkey && !ops.mpesa.passkey.includes(':')) ops.mpesa.passkey = encrypt(ops.mpesa.passkey);
+  }
+
+  if (ops.kcb) {
+    if (ops.kcb.sandbox) ops.kcb.sandbox = encryptKcb(ops.kcb.sandbox);
+    if (ops.kcb.production) ops.kcb.production = encryptKcb(ops.kcb.production);
   }
 
   if (ops.ai) {

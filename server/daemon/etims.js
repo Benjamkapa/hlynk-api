@@ -9,9 +9,9 @@ import { pushSaleToEtims } from '../controllers/etims.js';
  * and attempts to re-push them to KRA.
  */
 export const startEtimsDaemon = () => {
-    // Run every 30 minutes
-    cron.schedule('*/30 * * * *', async () => {
-        console.log('[Daemon] 🔄 Starting eTIMS auto-retry cycle...');
+    // Run once every day at 2355HRS
+    cron.schedule('55 23 * * *', async () => {
+        console.log('[Daemon] 🔄 Starting scheduled eTIMS daily retry cycle (23:55)...');
         
         try {
             // Find invoices that failed or are pending, limited to 5 retries to avoid wasting resources on permanent errors

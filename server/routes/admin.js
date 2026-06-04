@@ -27,9 +27,7 @@ import {
   updatePlatformReviewStatus,
   registerTenant,
   getPayouts,
-  markPayoutPaid,
-  listMedia,
-  deleteMedia
+  markPayoutPaid
 } from '../controllers/admin.js';
 
 import { authenticate, requireAdmin } from '../middleware/auth.js';
@@ -74,8 +72,5 @@ router.put('/sessions/:id/terminate', terminateSession);
 
 router.get('/reviews', listPlatformReviews);
 router.patch('/reviews/:id', updatePlatformReviewStatus);
-
-router.get('/media', listMedia);
-router.post('/media/delete', deleteMedia);
 
 export default router;
