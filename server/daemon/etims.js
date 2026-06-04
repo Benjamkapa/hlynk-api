@@ -46,5 +46,5 @@ export const startEtimsDaemon = () => {
         }
     });
 
-    console.log('👿 [Daemon] eTIMS Auto-Retry monitor started (30m interval).');
+    // console.log('👿 [Daemon] eTIMS Auto-Retry monitor started (30m interval).');
 };

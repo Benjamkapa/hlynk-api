@@ -224,7 +224,7 @@ const startServer = async () => {
         await db.query("ALTER TABLE etims_invoices ADD COLUMN retry_count INT DEFAULT 0 AFTER error_message");
       }
 
-      console.log('💰 eTIMS: Tables ready.');
+      // console.log('💰 eTIMS: Tables ready.');
     } catch (e) {
       console.warn('⚠️ eTIMS Migration Warning:', e.message);
     }
