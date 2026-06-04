@@ -8,7 +8,10 @@
     "db:wipe": "node scripts/wipe_db.js",
     "system:audit": "node scripts/system_audit.js",
     "sub:tool": "node scripts/sub_tool.js",
-    "user:token": "node scripts/generate_token.js"
+    "user:token": "node scripts/generate_token.js",
+    "sub:extend": "node scripts/extend_days.js",
+    "db:setup-kcb": "node scripts/setup_kcb.js",
+    "images:fix": "node scripts/fix_images.js"
   },
   "author": "",
   "license": "ISC",
