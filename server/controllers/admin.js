@@ -275,24 +275,40 @@ export const getSystemHealth = async (req, res) => {
     const freeMem = Math.round(os.freemem() / 1024 / 1024); // MB
     const usedMem = totalMem - freeMem;
 
-    // Get Disk Details (Windows command)
+    // Get Disk Details (Cross-Platform)
     let diskStats = { total: 'N/A', used: 'N/A', free: 'N/A', percent: 0 };
     try {
-      // Get logical disk info in GB
-      const drive = process.cwd().slice(0, 2); // e.g. "C:"
-      const diskOutput = execSync(`powershell -Command "Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DeviceID -eq '${drive}' } | Select-Object Size, FreeSpace | ConvertTo-Json"`).toString();
-      const diskData = JSON.parse(diskOutput);
-      const totalDisk = Math.round(diskData.Size / 1024 / 1024 / 1024);
-      const freeDisk = Math.round(diskData.FreeSpace / 1024 / 1024 / 1024);
-      const usedDisk = totalDisk - freeDisk;
-      diskStats = {
-        total: `${totalDisk} GB`,
-        used: `${usedDisk} GB`,
-        free: `${freeDisk} GB`,
-        percent: Math.round((usedDisk / totalDisk) * 100)
-      };
+      const isWin = os.platform() === 'win32';
+      if (isWin) {
+        // Windows command
+        const drive = process.cwd().slice(0, 2); // e.g. "C:"
+        const diskOutput = execSync(`powershell -Command "Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DeviceID -eq '${drive}' } | Select-Object Size, FreeSpace | ConvertTo-Json"`).toString();
+        const diskData = JSON.parse(diskOutput);
+        const totalDisk = Math.round(diskData.Size / 1024 / 1024 / 1024);
+        const freeDisk = Math.round(diskData.FreeSpace / 1024 / 1024 / 1024);
+        const usedDisk = totalDisk - freeDisk;
+        diskStats = {
+          total: `${totalDisk} GB`,
+          used: `${usedDisk} GB`,
+          free: `${freeDisk} GB`,
+          percent: Math.round((usedDisk / totalDisk) * 100)
+        };
+      } else {
+        // POSIX / Linux command
+        const diskOutput = execSync("df -k . | tail -1 | awk '{print $2, $3, $4, $5}'").toString().trim();
+        const [totalK, usedK, freeK, percentStr] = diskOutput.split(/\s+/);
+        const totalDisk = Math.round(parseInt(totalK) / 1024 / 1024);
+        const usedDisk = Math.round(parseInt(usedK) / 1024 / 1024);
+        const freeDisk = Math.round(parseInt(freeK) / 1024 / 1024);
+        diskStats = {
+          total: `${totalDisk} GB`,
+          used: `${usedDisk} GB`,
+          free: `${freeDisk} GB`,
+          percent: parseInt(percentStr?.replace('%', '')) || 0
+        };
+      }
     } catch (e) {
-      console.warn('Could not fetch disk stats:', e.message);
+      // Sliently fail stats instead of crashing logs
     }
 
     return res.json({
