@@ -35,7 +35,9 @@ export const createStaff = async (req, res) => {
 
     const [subs] = await db.query(`SELECT planName, status FROM subscription WHERE tenantId = ? LIMIT 1`, [tenantId]);
     const sub = subs[0];
-    const plan = (sub?.status === 0 || sub?.status === 2) ? sub.planName : 'LITE';
+    
+    // During trial (status 2), provide MAX-tier access regardless of intended plan
+    const plan = (sub?.status === 2) ? 'TRIAL' : (sub?.status === 0 ? sub.planName : 'LITE');
     
     const [staffCountRes] = await db.query(`SELECT COUNT(*) as total FROM user WHERE tenantId = ? AND role = 'STAFF'`, [tenantId]);
     const currentCount = Number(staffCountRes[0]?.total || 0);
