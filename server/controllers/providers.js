@@ -241,7 +241,9 @@ export const getActivityLogs = async (req, res) => {
     if (role !== 'SUPER_ADMIN') {
       const [subs] = await db.query('SELECT planName, status FROM subscription WHERE tenantId = ? LIMIT 1', [tenantId]);
       const sub = subs[0];
-      const plan = (sub?.status === 0 || sub?.status === 2) ? sub.planName : 'LITE';
+      
+      // During trial (status 2), provide MAX-tier access (Activity Logs) regardless of intended plan
+      const plan = (sub?.status === 2) ? 'TRIAL' : (sub?.status === 0 ? sub.planName : 'LITE');
 
       if (!['MAX', 'TRIAL'].includes(plan)) {
         const msg = sub?.status === 1 
