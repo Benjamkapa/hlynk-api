@@ -5,13 +5,39 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
+
+    "-- DB --": "echo '--- Database ---'",
     "db:wipe": "node scripts/wipe_db.js",
-    "system:audit": "node scripts/system_audit.js",
-    "sub:tool": "node scripts/sub_tool.js",
-    "user:token": "node scripts/generate_token.js",
-    "sub:extend": "node scripts/extend_days.js",
+    "db:migrate": "node scripts/migrate_statuses.js",
     "db:setup-kcb": "node scripts/setup_kcb.js",
-    "images:fix": "node scripts/fix_images.js"
+    "db:mpesa-logs": "node scripts/init_mpesa_logs.js",
+
+    "-- SYSTEM --": "echo '--- System ---'",
+    "system:audit": "node scripts/system_audit.js",
+    "system:check-route": "node scripts/check_route.js",
+    "system:test-api": "node scripts/test_api.js",
+    "system:check-photos": "node scripts/check_photos.js",
+
+    "-- SUBSCRIPTIONS --": "echo '--- Subscriptions ---'",
+    "sub:tool": "node scripts/sub_tool.js",
+    "sub:extend": "node scripts/extend_days.js",
+    "sub:set": "node scripts/set_subscription.js",
+    "sub:special": "node scripts/grant_special_access.js",
+    "sub:plan": "node scripts/allow_preferred_plan.js",
+    "sub:bulk": "node scripts/bulk_tool.js",
+
+    "-- TRIALS --": "echo '--- Trials ---'",
+    "trial:activate": "node scripts/activate_trial.js",
+    "trial:full": "node scripts/activate_trial_all.js",
+
+    "-- USERS --": "echo '--- Users ---'",
+    "user:token": "node scripts/generate_token.js",
+
+    "-- INVENTORY --": "echo '--- Inventory ---'",
+    "inv:optimize": "node scripts/optimize_inventory.js",
+    "inv:fix-images": "node scripts/fix_images.js",
+    "inv:fix-image-urls": "node scripts/fix_image_urls.js",
+    "inv:fix-reviews": "node scripts/fix_reviews.js"
   },
   "author": "",
   "license": "ISC",
