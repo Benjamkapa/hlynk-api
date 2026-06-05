@@ -204,7 +204,7 @@ export async function queryStkPush(checkoutRequestId) {
         Authorization: `Bearer ${token}`,
         'User-Agent': 'hlynk-api/1.0.0'
       },
-      timeout: 20000 // 20 seconds timeout
+      timeout: 25000 // 25 seconds timeout
     });
     return res.data;
   } catch (error) {
