@@ -130,7 +130,7 @@ export const initiateRenewal = async (req, res) => {
   }
 };
 
-export const initiateChangePlan = async (req, res) => {
+export const changePlan = async (req, res) => {
   const { tenantId } = req.user;
   const { plan: newPlan, phone, months = 1 } = req.body;
 
