@@ -157,6 +157,12 @@ const startServer = async () => {
       if (!cols.some(c => c.Field === 'status')) {
         await db.query('ALTER TABLE platformreview ADD COLUMN status INT DEFAULT 0 AFTER ownerName');
       }
+
+      const [userCols] = await db.query('DESCRIBE user');
+      if (!userCols.some(c => c.Field === 'eulaAcceptedAt')) {
+        // console.log('Adding eulaAcceptedAt to user...');
+        await db.query('ALTER TABLE user ADD COLUMN eulaAcceptedAt DATETIME DEFAULT NULL AFTER photoUrl');
+      }
     } catch (e) {
       console.warn("⚠️ Migration Warning:", e.message);
     }
