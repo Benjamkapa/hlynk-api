@@ -583,7 +583,7 @@ export const getSessions = async (req, res) => {
     });
     
     const formattedSessions = Array.from(latestSessionsMap.values());
-    console.log(`📡 SESSIONS_FETCHED: Found ${sessions.length} total, ${formattedSessions.length} unique active users.`);
+    // console.log(`📡 SESSIONS_FETCHED: Found ${sessions.length} total, ${formattedSessions.length} unique active users.`);
     
     return res.json({ success: true, data: formattedSessions });
   } catch (err) {

@@ -88,8 +88,9 @@ export const createProduct = async (req, res) => {
 
   try {
     // 1. Check Plan Limits
-    const [subs] = await db.query(`SELECT planName FROM subscription WHERE tenantId = ? LIMIT 1`, [tenantId]);
-    const plan = subs[0]?.planName || 'LITE';
+    const [subs] = await db.query(`SELECT planName, status FROM subscription WHERE tenantId = ? LIMIT 1`, [tenantId]);
+    const sub = subs[0];
+    const plan = (sub?.status === 0 || sub?.status === 2) ? sub.planName : 'LITE';
 
     const [productCountRes] = await db.query(`SELECT COUNT(*) as total FROM product WHERE tenantId = ?`, [tenantId]);
     const currentCount = Number(productCountRes[0]?.total || 0);
@@ -98,10 +99,10 @@ export const createProduct = async (req, res) => {
     const limit = limits[plan] || 15;
 
     if (currentCount >= limit) {
-      return res.status(403).json({ 
-        success: false, 
-        message: `Your ${plan} plan is limited to ${limit} items. Please upgrade to manage more product records.` 
-      });
+      const msg = sub?.status === 1 
+        ? `Your subscription has expired. Please renew to manage more than ${limit} items.` 
+        : `Your ${plan} plan is limited to ${limit} items. Please upgrade to manage more product records.`;
+      return res.status(403).json({ success: false, message: msg });
     }
 
     await db.query(
