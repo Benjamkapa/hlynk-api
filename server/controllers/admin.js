@@ -74,7 +74,7 @@ export const getSystemStats = async (req, res) => {
       trendsQuery = `
         SELECT DATE_FORMAT(createdAt, '%b %d') as name, SUM(amount) as value 
         FROM payment 
-        WHERE status = 0 AND createdAt >= NOW() - INTERVAL 30 DAY
+        WHERE status = 0 AND createdAt >= NOW() - INTERVAL 28 DAY
         GROUP BY name ORDER BY MIN(createdAt) ASC
       `;
     }

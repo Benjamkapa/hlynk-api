@@ -240,8 +240,8 @@ export const getActivityLogs = async (req, res) => {
     // Feature gate: Activity logs only for MAX plan or SUPER_ADMINs
     if (role !== 'SUPER_ADMIN') {
       const [subs] = await db.query('SELECT planName FROM subscription WHERE tenantId = ? LIMIT 1', [tenantId]);
-      if (subs[0]?.planName !== 'MAX') {
-        return res.status(403).json({ success: false, message: 'Activity logs are only available on the MAX package.' });
+      if (!['MAX', 'TRIAL'].includes(subs[0]?.planName)) {
+        return res.status(403).json({ success: false, message: 'Activity logs are only available on the Business Pro (MAX) package.' });
       }
     }
 

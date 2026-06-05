@@ -39,7 +39,7 @@ export const createStaff = async (req, res) => {
     const [staffCountRes] = await db.query(`SELECT COUNT(*) as total FROM user WHERE tenantId = ? AND role = 'STAFF'`, [tenantId]);
     const currentCount = Number(staffCountRes[0]?.total || 0);
 
-    const limits = { 'LITE': 0, 'PLUS': 1, 'MAX': 999999 };
+    const limits = { 'LITE': 0, 'PLUS': 1, 'MAX': 999999, 'TRIAL': 999999 };
     const limit = limits[plan] || 0;
 
     if (currentCount >= limit) {
