@@ -33,8 +33,9 @@ export const createStaff = async (req, res) => {
     const [existing] = await db.query(`SELECT id FROM user WHERE phone = ? OR (email IS NOT NULL AND email = ?) LIMIT 1`, [phone, email || '']);
     if (existing.length > 0) return res.status(409).json({ success: false, message: 'Phone or email already registered' });
 
-    const [subs] = await db.query(`SELECT planName FROM subscription WHERE tenantId = ? LIMIT 1`, [tenantId]);
-    const plan = subs[0]?.planName || 'LITE';
+    const [subs] = await db.query(`SELECT planName, status FROM subscription WHERE tenantId = ? LIMIT 1`, [tenantId]);
+    const sub = subs[0];
+    const plan = (sub?.status === 0 || sub?.status === 2) ? sub.planName : 'LITE';
     
     const [staffCountRes] = await db.query(`SELECT COUNT(*) as total FROM user WHERE tenantId = ? AND role = 'STAFF'`, [tenantId]);
     const currentCount = Number(staffCountRes[0]?.total || 0);
@@ -43,7 +44,10 @@ export const createStaff = async (req, res) => {
     const limit = limits[plan] || 0;
 
     if (currentCount >= limit) {
-      return res.status(403).json({ success: false, message: `Your ${plan} plan is limited to ${limit} team members.` });
+      const msg = sub?.status === 1
+        ? `Your subscription has expired. Please renew to manage your team.`
+        : `Your ${plan} plan is limited to ${limit} team members. Please upgrade to expand your team.`;
+      return res.status(403).json({ success: false, message: msg });
     }
 
     const passwordHash = await bcrypt.hash(password || ulid(), 10);

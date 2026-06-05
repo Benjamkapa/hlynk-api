@@ -198,7 +198,6 @@ export const createSale = async (req, res) => {
 
     // ─── eTIMS Auto-Push (fire-and-forget, never blocks the sale) ───
     // Only push immediately for completed sales (status=0 = paid).
-    // MPesa sales are pushed after callback confirms payment.
     if (status === 0 || status === undefined || status === null) {
       setImmediate(() => {
         pushSaleToEtims(tenantId, saleId).catch(err =>

@@ -239,9 +239,15 @@ export const getActivityLogs = async (req, res) => {
   try {
     // Feature gate: Activity logs only for MAX plan or SUPER_ADMINs
     if (role !== 'SUPER_ADMIN') {
-      const [subs] = await db.query('SELECT planName FROM subscription WHERE tenantId = ? LIMIT 1', [tenantId]);
-      if (!['MAX', 'TRIAL'].includes(subs[0]?.planName)) {
-        return res.status(403).json({ success: false, message: 'Activity logs are only available on the Business Pro (MAX) package.' });
+      const [subs] = await db.query('SELECT planName, status FROM subscription WHERE tenantId = ? LIMIT 1', [tenantId]);
+      const sub = subs[0];
+      const plan = (sub?.status === 0 || sub?.status === 2) ? sub.planName : 'LITE';
+
+      if (!['MAX', 'TRIAL'].includes(plan)) {
+        const msg = sub?.status === 1 
+          ? 'Your subscription has expired. Please renew to access activity logs.'
+          : 'Activity logs are only available on the Business Pro (MAX) package.';
+        return res.status(403).json({ success: false, message: msg });
       }
     }
 
