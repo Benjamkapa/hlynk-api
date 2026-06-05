@@ -72,7 +72,7 @@ export const getBillingHistory = async (req, res) => {
 
 export const initiateRenewal = async (req, res) => {
   const { tenantId } = req.user;
-  const { phone } = req.body;
+  const { phone, months = 1 } = req.body; // Added months
 
   try {
     const [recentPayments] = await db.query(`SELECT COUNT(*) as cnt FROM payment WHERE tenantId = ? AND createdAt > DATE_SUB(NOW(), INTERVAL 1 HOUR)`, [tenantId]);
@@ -84,20 +84,33 @@ export const initiateRenewal = async (req, res) => {
     if (subs.length === 0) return res.status(404).json({ success: false, message: 'Subscription not found' });
     
     const sub = subs[0];
-    const amount = PLAN_PRICES[sub.planName];
+    const baseAmount = PLAN_PRICES[sub.planName];
+    
+    // Calculate final amount and days
+    let finalAmount = baseAmount * months;
+    let daysToReward = months * 28; // Default 28 days per month
+
+    if (months === 6) {
+        daysToReward = 180;
+        finalAmount = Math.round(finalAmount * 0.95); // 5% discount
+    } else if (months === 12) {
+        daysToReward = 365;
+        finalAmount = Math.round(finalAmount * 0.85); // 15% discount
+    }
+
     const reference = `SUB-REN-${tenantId.slice(-6).toUpperCase()}-${Date.now().toString().slice(-4)}`;
     
     const paymentId = ulid();
     await db.query(`
-      INSERT INTO payment (id, tenantId, amount, phone, plan, status, reference, transactionType, createdAt) 
-      VALUES (?, ?, ?, ?, ?, 2, ?, 'SUBSCRIPTION', NOW())
-    `, [paymentId, tenantId, amount, phone, sub.planName, reference]);
+      INSERT INTO payment (id, tenantId, amount, phone, plan, status, reference, transactionType, createdAt, meta) 
+      VALUES (?, ?, ?, ?, ?, 2, ?, 'SUBSCRIPTION', NOW(), ?)
+    `, [paymentId, tenantId, finalAmount, phone, sub.planName, reference, JSON.stringify({ months, daysToReward })]);
 
     const [tenants] = await db.query(`SELECT businessName FROM tenant WHERE id = ?`, [tenantId]);
     const tenantName = tenants[0]?.businessName || 'Tenant';
 
     const result = await initiateStkPush(
-      { phone, amount, reference }, 
+      { phone, amount: finalAmount, reference }, 
       null, 
       {
         customerName: req.user.name,
@@ -117,30 +130,45 @@ export const initiateRenewal = async (req, res) => {
   }
 };
 
-export const changePlan = async (req, res) => {
+export const initiateChangePlan = async (req, res) => {
   const { tenantId } = req.user;
-  const { planName, phone } = req.body;
+  const { plan: newPlan, phone, months = 1 } = req.body;
+
+  if (!PLAN_PRICES[newPlan]) return res.status(400).json({ success: false, message: 'Invalid plan' });
 
   try {
     const [recentPayments] = await db.query(`SELECT COUNT(*) as cnt FROM payment WHERE tenantId = ? AND createdAt > DATE_SUB(NOW(), INTERVAL 1 HOUR)`, [tenantId]);
-    if (recentPayments[0].cnt >= 65) {
+    if (recentPayments[0].cnt >= 5) {
       return res.status(429).json({ success: false, message: 'Too many payment attempts. Please wait before trying again.' });
     }
 
-    const amount = PLAN_PRICES[planName];
-    const reference = `SUB-UPG-${tenantId.slice(-6).toUpperCase()}-${Date.now().toString().slice(-4)}`;
+    const baseAmount = PLAN_PRICES[newPlan];
+    
+    // Calculate final amount and days
+    let finalAmount = baseAmount * months;
+    let daysToReward = months * 28;
 
+    if (months === 6) {
+        daysToReward = 180;
+        finalAmount = Math.round(finalAmount * 0.95); // 5% discount
+    } else if (months === 12) {
+        daysToReward = 365;
+        finalAmount = Math.round(finalAmount * 0.85); // 15% discount
+    }
+
+    const reference = `SUB-UPG-${tenantId.slice(-6).toUpperCase()}-${Date.now().toString().slice(-4)}`;
     const paymentId = ulid();
+
     await db.query(`
-      INSERT INTO payment (id, tenantId, amount, phone, plan, status, reference, transactionType, createdAt) 
-      VALUES (?, ?, ?, ?, ?, 2, ?, 'SUBSCRIPTION', NOW())
-    `, [paymentId, tenantId, amount, phone, planName, reference]);
+      INSERT INTO payment (id, tenantId, amount, phone, plan, status, reference, transactionType, createdAt, meta) 
+      VALUES (?, ?, ?, ?, ?, 2, ?, 'SUBSCRIPTION', NOW(), ?)
+    `, [paymentId, tenantId, finalAmount, phone, newPlan, reference, JSON.stringify({ months, daysToReward })]);
 
     const [tenants] = await db.query(`SELECT businessName FROM tenant WHERE id = ?`, [tenantId]);
     const tenantName = tenants[0]?.businessName || 'Tenant';
 
     const result = await initiateStkPush(
-      { phone, amount, reference }, 
+      { phone, amount: finalAmount, reference },
       null, 
       {
         customerName: req.user.name,
@@ -177,18 +205,36 @@ export const handlePaymentCallback = async (reference, transactionId, success, m
       
       if (subs.length > 0) {
         const sub = subs[0];
+        
+        // Parse custom reward days from meta
+        let daysToReward = 28;
+        let monthsLabel = 'another 28 days';
+        try {
+          if (payment.meta) {
+            const meta = typeof payment.meta === 'string' ? JSON.parse(payment.meta) : payment.meta;
+            if (meta.daysToReward) {
+              daysToReward = meta.daysToReward;
+              monthsLabel = `${daysToReward} days`;
+            }
+          }
+        } catch (e) {
+          console.error('[META PARSE ERROR]', e);
+        }
+
         const isNewPlan = sub.planName !== payment.plan;
         const actionLabel = isNewPlan ? 'Plan Change' : 'Subscription Renewal';
         const notificationTitle = isNewPlan ? 'Plan Activated!' : 'Subscription Renewed!';
         const getPlanName = (p) => p === 'MAX' ? 'Business Pro' : p === 'PLUS' ? 'Growth' : 'Starter';
         const displayPlanName = getPlanName(payment.plan);
         const notificationMsg = isNewPlan 
-          ? `Your switch to the ${displayPlanName} plan was successful. New features are now active.`
-          : `Your ${displayPlanName} subscription has been extended for another 28 days.`;
+          ? `Your switch to the ${displayPlanName} plan was successful. ${daysToReward} service days added.`
+          : `Your ${displayPlanName} subscription has been extended for ${monthsLabel}.`;
 
-        const baseDate = new Date();
+        // Calculate New End Date
+        const currentEnd = sub.endDate ? new Date(sub.endDate) : new Date();
+        const baseDate = currentEnd > new Date() ? currentEnd : new Date(); // Add to current if not expired, else from now
         const newEnd = new Date(baseDate);
-        newEnd.setDate(newEnd.getDate() + 28);
+        newEnd.setDate(newEnd.getDate() + daysToReward);
 
         await connection.query(`
           UPDATE subscription 
