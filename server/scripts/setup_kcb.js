@@ -16,16 +16,26 @@ async function setup() {
         initiatorName VARCHAR(255),
         tenantName VARCHAR(255),
         tenantId VARCHAR(255),
-        status TINYINT DEFAULT 2, -- 0: Success, 1: Failed, 2: Pending, 3: Cancelled, 4: Error
+        status TINYINT DEFAULT 2,
+        -- 0: Success | 1: Failed | 2: Pending | 3: Cancelled (user) | 4: Expired (timeout)
         resultCode VARCHAR(50),
         resultDesc TEXT,
         rawPayload TEXT,
         createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX (checkoutRequestId),
         INDEX (tenantId)
       )
     `);
     console.log('✅ kcblog table created or already exists.');
+
+    // Patch existing kcblog table if updatedAt column is missing
+    const [kcbCols] = await db.query('SHOW COLUMNS FROM kcblog');
+    const kcbColNames = kcbCols.map(c => c.Field);
+    if (!kcbColNames.includes('updatedAt')) {
+      await db.query(`ALTER TABLE kcblog ADD COLUMN updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER createdAt`);
+      console.log('✅ Added updatedAt to kcblog table.');
+    }
 
     // Add mpesaRequestId to sale if missing (aliased for KCB as well)
     const [saleCols] = await db.query('SHOW COLUMNS FROM sale');

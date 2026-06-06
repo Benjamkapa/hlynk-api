@@ -39,60 +39,216 @@ router.post('/kcb/stk-push', authenticate, async (req, res) => {
 router.post('/kcb/callback', express.json(), async (req, res) => {
   console.log('[KCB CALLBACK] Received:', JSON.stringify(req.body, null, 2));
 
-  // Extract relevant fields (Standard KCB callback format)
-  // Note: KCB callback structure can vary; we should map it to success/fail
-  const { responseCode, responseDescription, checkoutId } = req.body;
-  const success = responseCode === "00" || responseCode === "0";
+  /**
+   * KCB / Buni callback payload can arrive in multiple formats.
+   * We normalise all known formats into: checkoutId, responseCode, responseDescription.
+   *
+   * Known KCB response codes:
+   *   "00" / "0"   → Success
+   *   "1032"       → Cancelled by user
+   *   "1037"       → Timeout / DS timeout (user took too long)
+   *   "1"          → Generic failure
+   *   anything else → Unknown failure
+   */
+  const body = req.body || {};
+
+  // Support both flat and nested callback formats
+  const checkoutId       = body.checkoutId       || body.CheckoutRequestID || body.request?.id || null;
+  const responseCode     = String(body.responseCode || body.ResultCode || body.resultCode || '1');
+  const responseDescription = body.responseDescription || body.ResultDesc || body.resultDesc || 'Unknown';
+
+  // ── Classify the result ───────────────────────────────────────────────
+  const isSuccess   = responseCode === '00' || responseCode === '0';
+  const isCancelled = responseCode === '1032';
+  const isExpired   = responseCode === '1037' || responseCode === '1025';
+  const isFailed    = !isSuccess; // catches cancelled, expired, and generic failure
+
+  // Numeric DB status:  0 = success | 1 = failed | 2 = pending | 3 = cancelled | 4 = expired
+  const kcbLogStatus = isSuccess ? 0 : isCancelled ? 3 : isExpired ? 4 : 1;
+  const saleStatus   = isSuccess ? 0 : isCancelled ? 3 : isExpired ? 4 : 1;
+
+  const stateLabel = isSuccess ? 'SUCCESS' : isCancelled ? 'CANCELLED' : isExpired ? 'EXPIRED' : 'FAILED';
+  console.log(`[KCB CALLBACK] State: ${stateLabel} | CheckoutID: ${checkoutId} | Code: ${responseCode} | Desc: ${responseDescription}`);
+
+  if (!checkoutId) {
+    console.warn('[KCB CALLBACK] No checkoutId in payload — cannot reconcile.');
+    return res.json({ status: 'Acknowledged' });
+  }
 
   try {
-    const [logs] = await db.query(`SELECT tenantId, reference FROM kcblog WHERE checkoutRequestId = ? LIMIT 1`, [checkoutId]);
+    // 1. Update the kcblog record
+    const [logs] = await db.query(
+      `SELECT id, tenantId, reference FROM kcblog WHERE checkoutRequestId = ? LIMIT 1`,
+      [checkoutId]
+    );
     const initLog = logs[0];
 
-    await db.query(`UPDATE kcblog SET status = ?, resultCode = ?, resultDesc = ?, rawPayload = ? WHERE checkoutRequestId = ?`,
-      [success ? 0 : 1, responseCode, responseDescription, JSON.stringify(req.body), checkoutId]);
+    await db.query(
+      `UPDATE kcblog SET status = ?, resultCode = ?, resultDesc = ?, rawPayload = ?, updatedAt = NOW()
+       WHERE checkoutRequestId = ?`,
+      [kcbLogStatus, responseCode, responseDescription, JSON.stringify(body), checkoutId]
+    );
 
-    const [payments] = await db.query(`SELECT * FROM payment WHERE mpesaRequestId = ? LIMIT 1`, [checkoutId]);
-    if (payments.length > 0) {
-      const payment = payments[0];
-      const status = success ? 0 : 1;
-      await db.query(`UPDATE payment SET status = ?, message = ?, rawResponse = ?, updatedAt = NOW() WHERE id = ?`,
-        [status, responseDescription, JSON.stringify(req.body), payment.id]);
+    // 2. Find the matching payment record
+    const [payments] = await db.query(
+      `SELECT * FROM payment WHERE mpesaRequestId = ? LIMIT 1`,
+      [checkoutId]
+    );
 
-      if (payment.transactionType === 'SALE') {
-        const saleId = payment.reference;
-        await db.query(`UPDATE sale SET status = ?, updatedAt = NOW() WHERE id = ?`, [status, saleId]);
-        console.log(`[KCB-SYNC] Updated Sale ${saleId} to Status ${status} (Success: ${success})`);
-        
-        if (success) {
-          const tenantId = initLog?.tenantId || payment.tenantId;
-          if (tenantId) {
-            setImmediate(() => {
-              pushSaleToEtims(tenantId, saleId).catch(err => 
-                console.error(`[eTIMS] KCB callback push failed for sale ${saleId}:`, err.message)
+    if (payments.length === 0) {
+      console.warn(`[KCB CALLBACK] No payment record found for CheckoutID: ${checkoutId}`);
+      return res.json({ status: 'Acknowledged' });
+    }
+
+    const payment = payments[0];
+
+    // 3. Update the payment record
+    await db.query(
+      `UPDATE payment SET status = ?, message = ?, rawResponse = ?, updatedAt = NOW() WHERE id = ?`,
+      [saleStatus, responseDescription, JSON.stringify(body), payment.id]
+    );
+
+    // 4. Handle SALE transaction type
+    if (payment.transactionType === 'SALE') {
+      const saleId = payment.reference;
+
+      // Look up the sale
+      const [sales] = await db.query(
+        `SELECT id, tenantId FROM sale WHERE id = ? OR mpesaRequestId = ? LIMIT 1`,
+        [saleId, checkoutId]
+      );
+      const sale = sales[0];
+
+      if (!sale) {
+        console.warn(`[KCB CALLBACK] No sale record found for reference: ${saleId}`);
+        return res.json({ status: 'Acknowledged' });
+      }
+
+      // Update sale status
+      await db.query(
+        `UPDATE sale SET status = ?, updatedAt = NOW() WHERE id = ?`,
+        [saleStatus, sale.id]
+      );
+      console.log(`[KCB-SYNC] Sale ${sale.id} → ${stateLabel} (status=${saleStatus})`);
+
+      if (isSuccess) {
+        // ── PAID: Push to KRA eTIMS ──────────────────────────────────
+        const tenantId = initLog?.tenantId || payment.tenantId || sale.tenantId;
+        if (tenantId) {
+          setImmediate(() => {
+            pushSaleToEtims(tenantId, sale.id).catch(err =>
+              console.error(`[eTIMS] KCB success push failed for sale ${sale.id}:`, err.message)
+            );
+          });
+        }
+      } else {
+        // ── NOT PAID: Restore stock ──────────────────────────────────
+        try {
+          const [items] = await db.query(
+            `SELECT productId, quantity FROM saleitem WHERE saleId = ?`,
+            [sale.id]
+          );
+          for (const item of items) {
+            if (item.productId) {
+              await db.query(
+                `UPDATE product SET stockLevel = stockLevel + ? WHERE id = ?`,
+                [item.quantity, item.productId]
               );
-            });
-          }
-        } else {
-          // Restore stock on failed KCB payment
-          try {
-            const [items] = await db.query(`SELECT productId, quantity FROM saleitem WHERE saleId = ?`, [saleId]);
-            for (const item of items) {
-              if (item.productId) {
-                await db.query(`UPDATE product SET stockLevel = stockLevel + ? WHERE id = ?`, [item.quantity, item.productId]);
-              }
             }
-            console.log(`[KCB RESTORE] Restored stock for failed sale ${saleId}`);
-          } catch (err) {
-            console.error('[KCB RESTORE] Failed to restore stock:', err);
           }
+          console.log(`[KCB RESTORE] Stock restored for ${stateLabel} sale ${sale.id} (${items.length} items)`);
+        } catch (restoreErr) {
+          console.error('[KCB RESTORE] Stock restore failed:', restoreErr.message);
         }
       }
     }
   } catch (err) {
-    console.error('[KCB CALLBACK PROCESSING ERROR]', err);
+    console.error('[KCB CALLBACK] Critical processing error:', err);
   }
 
-  return res.json({ status: "Success" });
+  // Always return 200 so KCB stops retrying
+  return res.json({ status: 'Success' });
+});
+
+/**
+ * KCB Payment Status Poll
+ * Called by the frontend when a pending STK push hasn't resolved after ~30s.
+ * Returns the current state of the checkout from our DB.
+ *
+ * GET /api/v1/payments/kcb/status/:checkoutId
+ */
+router.get('/kcb/status/:checkoutId', authenticate, async (req, res) => {
+  const { checkoutId } = req.params;
+  try {
+    const [logs] = await db.query(
+      `SELECT status, resultCode, resultDesc, updatedAt FROM kcblog
+       WHERE checkoutRequestId = ?
+       ORDER BY updatedAt DESC LIMIT 1`,
+      [checkoutId]
+    );
+
+    if (logs.length === 0) {
+      return res.json({ success: true, data: { state: 'PENDING', status: 2, message: 'Awaiting payment confirmation' } });
+    }
+
+    const log = logs[0];
+    // Map DB status → human-readable state
+    const stateMap = { 0: 'SUCCESS', 1: 'FAILED', 2: 'PENDING', 3: 'CANCELLED', 4: 'EXPIRED' };
+    const state = stateMap[log.status] ?? 'UNKNOWN';
+
+    return res.json({
+      success: true,
+      data: {
+        state,
+        status:    log.status,
+        message:   log.resultDesc || stateMap[log.status],
+        updatedAt: log.updatedAt,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+/**
+ * KCB Transaction Logs
+ * GET /api/v1/payments/kcb/logs
+ */
+router.get('/kcb/logs', authenticate, async (req, res) => {
+  const { tenantId, role } = req.user;
+  const { page = 1, limit = 50, sortOrder = 'desc' } = req.query;
+  const order  = sortOrder.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+  const offset = (Number(page) - 1) * Number(limit);
+  try {
+    let whereClause = '';
+    const queryParams = [];
+    if (role !== 'SUPER_ADMIN') {
+      whereClause = 'WHERE tenantId = ?';
+      queryParams.push(tenantId);
+    }
+    const [logs] = await db.query(
+      `SELECT id, checkoutRequestId, merchantRequestId, phone, amount, reference,
+              customerName, initiatorName, tenantName, status, resultCode, resultDesc,
+              createdAt, updatedAt
+       FROM kcblog ${whereClause}
+       ORDER BY createdAt ${order} LIMIT ? OFFSET ?`,
+      [...queryParams, Number(limit), offset]
+    );
+    const [countRes] = await db.query(
+      `SELECT COUNT(*) as total FROM kcblog ${whereClause}`,
+      queryParams
+    );
+    const total = Number(countRes[0].total);
+    return res.json({
+      success: true,
+      data: {
+        items: logs,
+        pagination: { total, totalPages: Math.ceil(total / Number(limit)), page: Number(page), limit: Number(limit) }
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to fetch KCB logs' });
+  }
 });
 
 router.get('/mpesa/logs', authenticate, async (req, res) => {
