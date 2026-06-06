@@ -104,13 +104,13 @@ export async function initiateKcbStkPush(pushParams, customCredentials = null, m
   const cleanReference = `${pushParams.reference}${Date.now().toString().slice(-4)}`.replace(/[^a-zA-Z0-9]/g, '');
   const sandboxCallback = CALLBACK_URL.replace('https://', 'http://');
   
+  // Minimalist version to avoid "Runtime Error" from extra fields
   const body = {
     request: {
       msisdn: phone,
-      amount: Math.round(pushParams.amount), // Strict Integer
+      amount: Math.round(pushParams.amount),
       invoiceNumber: cleanReference,
-      transactionId: cleanReference,
-      description: `Pay${cleanReference.slice(-10)}`,
+      description: `Payment${cleanReference.slice(-4)}`,
       callbackUrl: env === 'production' ? CALLBACK_URL : sandboxCallback
     }
   };
