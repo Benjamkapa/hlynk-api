@@ -239,10 +239,10 @@ export async function initiateKcbStkPush(pushParams, customCredentials = null, m
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 2, ?)
     `, [
       ulid(),
-      res.data?.MerchantRequestID || null,
+      res.data?.response?.MerchantRequestID || res.data?.MerchantRequestID || null,
       checkoutId,
       phone,
-      amount,
+      Number(amountStr),
       pushParams.reference,
       metadata.customerName  || null,
       metadata.initiatorName || null,
