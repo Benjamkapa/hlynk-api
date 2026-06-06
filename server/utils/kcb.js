@@ -74,12 +74,15 @@ async function getAccessToken(customCredentials = null) {
     throw new Error('KCB credentials (consumerKey / consumerSecret) are missing.');
   }
 
-  // Auth endpoint differs by environment
+  // Auth endpoint differs by environment. 
+  // Sandbox UAT uses /token?grant_type=client_credentials as per postman
   const url = env === 'production'
     ? 'https://api.kcbgroup.com/oauth2/token'
-    : 'https://accounts.buni.kcbgroup.com/oauth2/token';
+    : 'https://uat.buni.kcbgroup.com/token?grant_type=client_credentials';
 
   const cacheKey = `${redisKeys.kcbToken}:${key}`;
+  
+  // ... rest of auth logic remains same ...
 
   // 1. In-memory cache (fastest, works even when Redis is down)
   const memoryCached = tokenCache.get(cacheKey);
@@ -145,10 +148,10 @@ export async function initiateKcbStkPush(pushParams, customCredentials = null, m
 
   // ── API paths ──────────────────────────────────────────────
   // Production uses /v1/mobilecheckout
-  // UAT (sandbox) uses the longer versioned path
+  // UAT (sandbox) uses /stkpush as per postman
   const apiPath = env === 'production'
     ? '/v1/mobilecheckout'
-    : '/mm/api/request/1.0.0/v1/mobilecheckout';
+    : '/mm/api/request/1.0.0/stkpush';
 
   // ── Guard: production must have real credentials ───────────
   if (env === 'production' && (!key || !secret)) {
@@ -175,44 +178,40 @@ export async function initiateKcbStkPush(pushParams, customCredentials = null, m
   // ── Sanitise inputs ────────────────────────────────────────
   const phone          = normalisePhone(pushParams.phone);
   const cleanReference = buildReference(pushParams.reference);
-  const amount         = Math.round(Number(pushParams.amount));
+  const amountStr      = String(Math.round(Number(pushParams.amount)));
 
-  if (!phone || phone.length < 12) {
-    throw new Error(`Invalid phone number after normalisation: "${phone}"`);
-  }
-  if (!amount || amount <= 0) {
-    throw new Error(`Invalid amount: ${pushParams.amount}`);
-  }
-
-  // ── Request body ───────────────────────────────────────────
-  // IMPORTANT: Both invoiceNumber AND transactionId are required by KCB Buni.
-  // callbackUrl must be HTTPS in production; UAT also accepts HTTPS.
-  const callbackUrl = CALLBACK_URL.startsWith('https')
-    ? CALLBACK_URL
-    : CALLBACK_URL.replace('http://', 'https://');
-
-  const requestBody = {
+  // ── Request body (Matching Postman exactly) ────────────────
+  const requestBody = env === 'production' ? {
     request: {
-      msisdn:         phone,
-      amount,
-      invoiceNumber:  cleanReference,
-      transactionId:  cleanReference,          // ← required; was missing
-      description:    `Pay${cleanReference.slice(-8)}`,
-      callbackUrl,
-    },
+      msisdn: phone,
+      amount: Number(amountStr),
+      invoiceNumber: cleanReference,
+      transactionId: cleanReference,
+      description: `Pay${cleanReference.slice(-8)}`,
+      callbackUrl: CALLBACK_URL
+    }
+  } : {
+    phoneNumber: phone,
+    amount: amountStr,
+    invoiceNumber: cleanReference,
+    sharedShortCode: true,
+    orgShortCode: "",
+    orgPassKey: "",
+    callbackUrl: CALLBACK_URL,
+    transactionDescription: `Pay${cleanReference.slice(-8)}`
   };
 
-  console.log('[KCB-DEBUG] Environment:', env);
-  console.log('[KCB-DEBUG] Endpoint:', `${baseUrl}${apiPath}`);
-  console.log('[KCB-DEBUG] Request Body:', JSON.stringify(requestBody, null, 2));
+  console.log('[KCB-DEBUG] Target Endpoint:', `${baseUrl}${apiPath}`);
 
   try {
     const res = await axios.post(`${baseUrl}${apiPath}`, requestBody, {
       headers: {
-        'Authorization':   `Bearer ${token}`,
-        'Content-Type':    'application/json',
-        'Accept':          'application/json',
-        'X-Correlation-ID': cleanReference,    // Required for KCB UAT tracing
+        'Authorization': `Bearer ${token}`,
+        'Content-Type':  'application/json',
+        'Accept':        'application/json',
+        'routeCode':     '207',
+        'operation':     'STKPush',
+        'messageId':     cleanReference,
       },
       timeout: 15000,
     });
