@@ -106,10 +106,12 @@ export async function initiateKcbStkPush(pushParams, customCredentials = null, m
       phoneNumber: phone,
       amount: Math.round(pushParams.amount),
       invoiceNumber: pushParams.reference,
-      description: `Payment for ${pushParams.reference}`,
+      description: `Payment ${pushParams.reference}`,
       callbackUrl: CALLBACK_URL
     }
   };
+
+  console.log('[KCB-DEBUG] Sending Body:', JSON.stringify(body, null, 2));
 
   try {
     // Update path to use the context from your portal: /mm/api/request/1.0.0
@@ -123,6 +125,8 @@ export async function initiateKcbStkPush(pushParams, customCredentials = null, m
       },
       timeout: 15000
     });
+
+    console.log('[KCB-DEBUG] Response:', JSON.stringify(res.data, null, 2));
 
     // Check if we got HTML instead of JSON (gateway error)
     if (typeof res.data === 'string' && res.data.includes('<!DOCTYPE')) {
