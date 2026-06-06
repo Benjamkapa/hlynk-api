@@ -226,7 +226,8 @@ export async function initiateKcbStkPush(pushParams, customCredentials = null, m
     console.log('[KCB-DEBUG] Response:', JSON.stringify(res.data, null, 2));
 
     // KCB may return the ID under different keys depending on env
-    const checkoutId = res.data?.CheckoutRequestID
+    const checkoutId = res.data?.response?.CheckoutRequestID
+      || res.data?.CheckoutRequestID
       || res.data?.checkoutRequestId
       || res.data?.request?.id
       || ulid();
