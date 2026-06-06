@@ -112,11 +112,18 @@ export async function initiateKcbStkPush(pushParams, customCredentials = null, m
   try {
     const res = await axios.post(`${url}/v1/mobilecheckout`, body, {
       headers: { 
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json'
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
       },
       timeout: 15000
     });
+
+    // Check if we got HTML instead of JSON (gateway error)
+    if (typeof res.data === 'string' && res.data.includes('<!DOCTYPE')) {
+      console.error('[KCB] Received HTML instead of JSON. Gateway Error.');
+      throw new Error('KCB Gateway returned an error page (HTML). Please check API subscriptions.');
+    }
 
     // KCB Standard response contains CheckoutRequestID or similar
     const checkoutId = res.data?.CheckoutRequestID || res.data?.request?.id || ulid();
