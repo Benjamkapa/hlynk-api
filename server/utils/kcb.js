@@ -104,27 +104,28 @@ export async function initiateKcbStkPush(pushParams, customCredentials = null, m
   const cleanReference = `${pushParams.reference}${Date.now().toString().slice(-4)}`.replace(/[^a-zA-Z0-9]/g, '');
   const sandboxCallback = CALLBACK_URL.replace('https://', 'http://');
   
-  // Refined Hybrid Payload for mm/api/request
   const body = {
-    msisdn: phone,
-    amount: String(Math.round(pushParams.amount)),
-    invoiceNumber: cleanReference,
-    transactionId: cleanReference,
-    description: `Pay${cleanReference}`,
-    callbackUrl: env === 'production' ? CALLBACK_URL : sandboxCallback
+    request: {
+      msisdn: phone,
+      amount: Math.round(pushParams.amount), // Strict Integer
+      invoiceNumber: cleanReference,
+      transactionId: cleanReference,
+      description: `Pay${cleanReference.slice(-10)}`,
+      callbackUrl: env === 'production' ? CALLBACK_URL : sandboxCallback
+    }
   };
 
   console.log('[KCB-DEBUG] Sending Body:', JSON.stringify(body, null, 2));
 
   try {
-    // Update path to use the context from your portal: /mm/api/request/1.0.0
     const apiPath = env === 'production' ? '/v1/mobilecheckout' : '/mm/api/request/1.0.0/v1/mobilecheckout';
     
     const res = await axios.post(`${url}${apiPath}`, body, {
       headers: { 
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
-        'Accept': 'application/json'
+        'Accept': 'application/json',
+        'X-Correlation-ID': cleanReference // Critical for KCB UAT
       },
       timeout: 15000
     });
