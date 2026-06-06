@@ -21,14 +21,14 @@ const CALLBACK_URL = `${BACKEND_URL}/api/v1/payments/kcb/callback`;
 const tokenCache = new Map();
 
 async function getAccessToken(customCredentials = null) {
-  const key = customCredentials?.consumerKey || CONSUMER_KEY;
-  const secret = customCredentials?.consumerSecret || CONSUMER_SECRET;
+  const key = (customCredentials?.consumerKey || CONSUMER_KEY).trim();
+  const secret = (customCredentials?.consumerSecret || CONSUMER_SECRET).trim();
   const env = customCredentials?.env || KCB_ENV;
   
-  // Use the specific accounts endpoint for Sandbox as seen in your portal
+  // Use the exact domain from your Buni portal
   const url = env === 'production' 
     ? 'https://api.kcbgroup.com/oauth2/token' 
-    : 'https://sandbox.buni.kcbgroup.com/oauth2/token';
+    : 'https://accounts.buni.kcbgroup.com/oauth2/token';
 
   const cacheKey = `${redisKeys.kcbToken}:${key}`;
     
