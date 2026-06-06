@@ -25,10 +25,10 @@ async function getAccessToken(customCredentials = null) {
   const secret = (customCredentials?.consumerSecret || CONSUMER_SECRET).trim();
   const env = customCredentials?.env || KCB_ENV;
   
-  // Use the exact domain from your Buni portal
+  // Update Sandbox URL to UAT as per user portal
   const url = env === 'production' 
     ? 'https://api.kcbgroup.com/oauth2/token' 
-    : 'https://accounts.buni.kcbgroup.com/oauth2/token';
+    : 'https://uat.buni.kcbgroup.com/oauth2/token';
 
   const cacheKey = `${redisKeys.kcbToken}:${key}`;
     
@@ -79,9 +79,11 @@ async function getAccessToken(customCredentials = null) {
 
 export async function initiateKcbStkPush(pushParams, customCredentials = null, metadata = {}) {
   const env = customCredentials?.env || KCB_ENV;
-  const key = customCredentials?.consumerKey || CONSUMER_KEY;
-  const secret = customCredentials?.consumerSecret || CONSUMER_SECRET;
-  const url = env === 'production' ? 'https://api.kcbgroup.com' : 'https://sandbox.buni.kcbgroup.com';
+  const key = (customCredentials?.consumerKey || CONSUMER_KEY).trim();
+  const secret = (customCredentials?.consumerSecret || CONSUMER_SECRET).trim();
+  
+  // Update Sandbox URL to UAT
+  const url = env === 'production' ? 'https://api.kcbgroup.com' : 'https://uat.buni.kcbgroup.com';
 
   if (env === 'production' && (!key || !secret)) {
     throw new Error('KCB PRODUCTION credentials missing.');
@@ -110,8 +112,8 @@ export async function initiateKcbStkPush(pushParams, customCredentials = null, m
   };
 
   try {
-    // Standard Buni Sandbox path includes the service context and version
-    const apiPath = env === 'production' ? '/v1/mobilecheckout' : '/mpesaexpress/1.0.0/v1/mobilecheckout';
+    // Update path to use the context from your portal: /mm/api/request/1.0.0
+    const apiPath = env === 'production' ? '/v1/mobilecheckout' : '/mm/api/request/1.0.0/v1/mobilecheckout';
     
     const res = await axios.post(`${url}${apiPath}`, body, {
       headers: { 
@@ -124,8 +126,9 @@ export async function initiateKcbStkPush(pushParams, customCredentials = null, m
 
     // Check if we got HTML instead of JSON (gateway error)
     if (typeof res.data === 'string' && res.data.includes('<!DOCTYPE')) {
-      console.error('[KCB] Received HTML instead of JSON. Gateway Error.');
-      throw new Error('KCB Gateway returned an error page (HTML). Please check API subscriptions.');
+      const htmlSnippet = res.data.replace(/<[^>]*>?/gm, ' ').substring(0, 300).trim();
+      console.error('[KCB] Received HTML instead of JSON. Gateway Content:', htmlSnippet);
+      throw new Error(`KCB Gateway Error: ${htmlSnippet}`);
     }
 
     // KCB Standard response contains CheckoutRequestID or similar
