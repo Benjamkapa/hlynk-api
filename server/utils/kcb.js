@@ -101,12 +101,15 @@ export async function initiateKcbStkPush(pushParams, customCredentials = null, m
   if (phone.startsWith('0')) phone = '254' + phone.slice(1);
   if (phone.startsWith('7') || phone.startsWith('1')) phone = '254' + phone;
 
+  const cleanReference = pushParams.reference.replace(/[^a-zA-Z0-9]/g, '');
+  
   const body = {
     request: {
       phoneNumber: phone,
-      amount: Math.round(pushParams.amount),
-      invoiceNumber: pushParams.reference,
-      description: `Payment ${pushParams.reference}`,
+      msisdn: phone, // Added for UAT compatibility
+      amount: String(Math.round(pushParams.amount)), // Stringified amount
+      invoiceNumber: cleanReference,
+      description: `Payment${cleanReference}`,
       callbackUrl: CALLBACK_URL
     }
   };
