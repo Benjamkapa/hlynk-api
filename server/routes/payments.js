@@ -85,7 +85,7 @@ router.post('/kcb/callback', express.json(), async (req, res) => {
     const initLog = logs[0];
 
     await db.query(
-      `UPDATE kcblog SET status = ?, resultCode = ?, resultDesc = ?, rawPayload = ?, updatedAt = NOW()
+      `UPDATE kcblog SET status = ?, resultCode = ?, resultDesc = ?, rawPayload = ?
        WHERE checkoutRequestId = ?`,
       [kcbLogStatus, responseCode, responseDescription, JSON.stringify(body), checkoutId]
     );
