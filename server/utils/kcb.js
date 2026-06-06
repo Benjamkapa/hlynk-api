@@ -25,10 +25,10 @@ async function getAccessToken(customCredentials = null) {
   const secret = (customCredentials?.consumerSecret || CONSUMER_SECRET).trim();
   const env = customCredentials?.env || KCB_ENV;
   
-  // Update Sandbox URL to UAT as per user portal
+  // Auth is always on accounts.buni... for Buni Sandbox
   const url = env === 'production' 
     ? 'https://api.kcbgroup.com/oauth2/token' 
-    : 'https://uat.buni.kcbgroup.com/oauth2/token';
+    : 'https://accounts.buni.kcbgroup.com/oauth2/token';
 
   const cacheKey = `${redisKeys.kcbToken}:${key}`;
     
