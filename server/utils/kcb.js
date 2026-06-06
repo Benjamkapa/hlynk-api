@@ -102,16 +102,15 @@ export async function initiateKcbStkPush(pushParams, customCredentials = null, m
   if (phone.startsWith('7') || phone.startsWith('1')) phone = '254' + phone;
 
   const cleanReference = `${pushParams.reference}${Date.now().toString().slice(-4)}`.replace(/[^a-zA-Z0-9]/g, '');
-  const sandboxCallback = CALLBACK_URL.replace('https://', 'http://');
   
-  // Minimalist version to avoid "Runtime Error" from extra fields
   const body = {
     request: {
       msisdn: phone,
       amount: Math.round(pushParams.amount),
       invoiceNumber: cleanReference,
+      transactionId: cleanReference,
       description: `Payment${cleanReference.slice(-4)}`,
-      callbackUrl: env === 'production' ? CALLBACK_URL : sandboxCallback
+      callbackUrl: CALLBACK_URL // Back to HTTPS
     }
   };
 
@@ -125,18 +124,18 @@ export async function initiateKcbStkPush(pushParams, customCredentials = null, m
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        'X-Correlation-ID': cleanReference // Critical for KCB UAT
+        'X-Correlation-ID': cleanReference
       },
       timeout: 15000
     });
 
-    console.log('[KCB-DEBUG] Response:', JSON.stringify(res.data, null, 2));
+    console.log('[KCB-DEBUG] Success Response:', JSON.stringify(res.data, null, 2));
 
     // Check if we got HTML instead of JSON (gateway error)
     if (typeof res.data === 'string' && res.data.includes('<!DOCTYPE')) {
       const htmlSnippet = res.data.replace(/<[^>]*>?/gm, ' ').substring(0, 300).trim();
-      console.error('[KCB] Received HTML instead of JSON. Gateway Content:', htmlSnippet);
-      throw new Error(`KCB Gateway Error: ${htmlSnippet}`);
+      console.error('[KCB-DEBUG] HTML Snippet:', htmlSnippet);
+      throw new Error(`KCB Gateway Error (HTML): ${htmlSnippet}`);
     }
 
     // KCB Standard response contains CheckoutRequestID or similar
@@ -161,8 +160,13 @@ export async function initiateKcbStkPush(pushParams, customCredentials = null, m
 
     return { ...res.data, CheckoutRequestID: checkoutId };
   } catch (error) {
-    const errorMsg = error.response?.data?.errorMessage || error.response?.data?.message || error.message;
-    console.error('[KCB] Push Error:', errorMsg);
+    if (error.response) {
+       console.error('[KCB-DEBUG] Error Status:', error.response.status);
+       console.error('[KCB-DEBUG] Error Body:', JSON.stringify(error.response.data, null, 2));
+    }
+    
+    const errorData = error.response?.data;
+    const errorMsg = errorData?.errorMessage || errorData?.message || error.message;
     
     await db.query(`
       INSERT INTO kcblog (id, phone, amount, reference, customerName, initiatorName, tenantName, tenantId, status, resultDesc)
