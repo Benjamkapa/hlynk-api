@@ -24,7 +24,11 @@ async function getAccessToken(customCredentials = null) {
   const key = customCredentials?.consumerKey || CONSUMER_KEY;
   const secret = customCredentials?.consumerSecret || CONSUMER_SECRET;
   const env = customCredentials?.env || KCB_ENV;
-  const url = env === 'production' ? 'https://api.kcbgroup.com' : 'https://sandbox.buni.kcbgroup.com';
+  
+  // Use the specific accounts endpoint for Sandbox as seen in your portal
+  const url = env === 'production' 
+    ? 'https://api.kcbgroup.com/oauth2/token' 
+    : 'https://sandbox.buni.kcbgroup.com/oauth2/token';
 
   const cacheKey = `${redisKeys.kcbToken}:${key}`;
     
@@ -40,43 +44,35 @@ async function getAccessToken(customCredentials = null) {
 
   const auth = Buffer.from(`${key}:${secret}`).toString('base64');
   try {
-    // Try POST first as it's more standard for modern KCB/Buni OAuth
-    const res = await axios.post(`${url}/oauth/v1/generate?grant_type=client_credentials`, {}, {
+    // KCB Buni Sandbox requires grant_type in the body for /oauth2/token
+    const params = new URLSearchParams();
+    params.append('grant_type', 'client_credentials');
+
+    const res = await axios.post(url, params, {
       headers: { 
         'Authorization': `Basic ${auth}`,
         'Content-Type': 'application/x-www-form-urlencoded'
       },
       timeout: 15000
     });
-    const token = res.data.access_token;
     
-    if (!token) throw new Error('No access token returned');
+    const token = res.data.access_token;
+    if (!token) throw new Error('KCB did not return an access token.');
 
     await redis.setEx(cacheKey, 3300, token);
     tokenCache.set(cacheKey, { token, expiry: Date.now() + 50 * 60 * 1000 });
 
     return token;
   } catch (error) {
-    // Fallback to GET if POST fails (for older sandbox versions)
-    if (error.response?.status === 405 || error.response?.status === 404) {
-       try {
-         const res = await axios.get(`${url}/oauth/v1/generate?grant_type=client_credentials`, {
-           headers: { Authorization: `Basic ${auth}` },
-           timeout: 15000
-         });
-         return res.data.access_token;
-       } catch (getErr) {
-         throw new Error(`KCB Auth (GET Fallback): ${getErr.response?.data?.errorMessage || getErr.message}`);
-       }
-    }
-
     const errorData = error.response?.data;
     const errorMsg = errorData?.errorMessage || errorData?.message || errorData?.error_description || error.message;
-    console.error('[KCB] Auth Error:', {
+    
+    console.error('[KCB] Auth Error Details:', {
       status: error.response?.status,
       message: errorMsg,
-      url: `${url}/oauth/v1/generate`
+      url: url
     });
+    
     throw new Error(`KCB Auth [${error.response?.status || '500'}]: ${errorMsg}`);
   }
 }
