@@ -52,13 +52,14 @@ router.post('/kcb/callback', express.json(), async (req, res) => {
    */
   const body = req.body || {};
 
-  // Support both flat and nested callback formats
-  const checkoutId       = body.checkoutId       || body.CheckoutRequestID || body.request?.id || null;
-  const responseCode     = String(body.responseCode || body.ResultCode || body.resultCode || '1');
-  const responseDescription = body.responseDescription || body.ResultDesc || body.resultDesc || 'Unknown';
+  // Support both flat and nested callback formats (Buni UAT uses Body.stkCallback)
+  const stk = body.Body?.stkCallback || body.stkCallback || {};
+  const checkoutId = stk.CheckoutRequestID || body.checkoutId || body.CheckoutRequestID || body.request?.id || null;
+  const responseCode = String(stk.ResultCode ?? (stk.responseCode || body.responseCode || body.ResultCode || body.resultCode || '1'));
+  const responseDescription = stk.ResultDesc || stk.responseDescription || body.responseDescription || body.ResultDesc || body.resultDesc || 'Unknown';
 
   // ── Classify the result ───────────────────────────────────────────────
-  const isSuccess   = responseCode === '00' || responseCode === '0';
+  const isSuccess   = responseCode === '0' || responseCode === '00';
   const isCancelled = responseCode === '1032';
   const isExpired   = responseCode === '1037' || responseCode === '1025';
   const isFailed    = !isSuccess; // catches cancelled, expired, and generic failure
