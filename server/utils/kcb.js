@@ -110,7 +110,10 @@ export async function initiateKcbStkPush(pushParams, customCredentials = null, m
   };
 
   try {
-    const res = await axios.post(`${url}/v1/mobilecheckout`, body, {
+    // Standard Buni Sandbox path includes the service context and version
+    const apiPath = env === 'production' ? '/v1/mobilecheckout' : '/mpesaexpress/1.0.0/v1/mobilecheckout';
+    
+    const res = await axios.post(`${url}${apiPath}`, body, {
       headers: { 
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
