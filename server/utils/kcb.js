@@ -11,10 +11,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const params = JSON.parse(fs.readFileSync(path.join(__dirname, '../configs/params.json'), 'utf8'));
 
 const KCB_ENV = (process.env.KCB_ENV || params.kcb_env || 'sandbox').trim();
-const BASE_URL = KCB_ENV === 'production' 
-  ? 'https://api.kcbgroup.com' 
-  : 'https://sandbox.buni.kcbgroup.com';
-
 const CONSUMER_KEY = (process.env.KCB_CONSUMER_KEY || params.kcb_consumer_key || '').trim();
 const CONSUMER_SECRET = (process.env.KCB_CONSUMER_SECRET || params.kcb_consumer_secret || '').trim();
 
@@ -25,9 +21,12 @@ const CALLBACK_URL = `${BACKEND_URL}/api/v1/payments/kcb/callback`;
 const tokenCache = new Map();
 
 async function getAccessToken(customCredentials = null) {
-  const cacheKey = customCredentials 
-    ? `${redisKeys.kcbToken}:${customCredentials.consumerKey}`
-    : redisKeys.kcbToken;
+  const key = customCredentials?.consumerKey || CONSUMER_KEY;
+  const secret = customCredentials?.consumerSecret || CONSUMER_SECRET;
+  const env = customCredentials?.env || KCB_ENV;
+  const url = env === 'production' ? 'https://api.kcbgroup.com' : 'https://sandbox.buni.kcbgroup.com';
+
+  const cacheKey = `${redisKeys.kcbToken}:${key}`;
     
   const memoryCached = tokenCache.get(cacheKey);
   if (memoryCached && memoryCached.expiry > Date.now()) {
@@ -39,27 +38,46 @@ async function getAccessToken(customCredentials = null) {
     if (cached) return cached;
   } catch (err) {}
 
-  const key = customCredentials?.consumerKey || CONSUMER_KEY;
-  const secret = customCredentials?.consumerSecret || CONSUMER_SECRET;
-  const env = customCredentials?.env || KCB_ENV;
-  const url = env === 'production' ? 'https://api.kcbgroup.com' : 'https://sandbox.buni.kcbgroup.com';
-
   const auth = Buffer.from(`${key}:${secret}`).toString('base64');
   try {
-    const res = await axios.get(`${url}/oauth/v1/generate?grant_type=client_credentials`, {
-      headers: { Authorization: `Basic ${auth}` },
+    // Try POST first as it's more standard for modern KCB/Buni OAuth
+    const res = await axios.post(`${url}/oauth/v1/generate?grant_type=client_credentials`, {}, {
+      headers: { 
+        'Authorization': `Basic ${auth}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
       timeout: 15000
     });
     const token = res.data.access_token;
     
+    if (!token) throw new Error('No access token returned');
+
     await redis.setEx(cacheKey, 3300, token);
     tokenCache.set(cacheKey, { token, expiry: Date.now() + 50 * 60 * 1000 });
 
     return token;
   } catch (error) {
-    const errorMsg = error.response?.data?.errorMessage || error.message;
-    console.error('[KCB] Auth Error:', errorMsg);
-    throw new Error(`KCB Auth: ${errorMsg}`);
+    // Fallback to GET if POST fails (for older sandbox versions)
+    if (error.response?.status === 405 || error.response?.status === 404) {
+       try {
+         const res = await axios.get(`${url}/oauth/v1/generate?grant_type=client_credentials`, {
+           headers: { Authorization: `Basic ${auth}` },
+           timeout: 15000
+         });
+         return res.data.access_token;
+       } catch (getErr) {
+         throw new Error(`KCB Auth (GET Fallback): ${getErr.response?.data?.errorMessage || getErr.message}`);
+       }
+    }
+
+    const errorData = error.response?.data;
+    const errorMsg = errorData?.errorMessage || errorData?.message || errorData?.error_description || error.message;
+    console.error('[KCB] Auth Error:', {
+      status: error.response?.status,
+      message: errorMsg,
+      url: `${url}/oauth/v1/generate`
+    });
+    throw new Error(`KCB Auth [${error.response?.status || '500'}]: ${errorMsg}`);
   }
 }
 
