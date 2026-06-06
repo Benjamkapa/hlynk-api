@@ -101,17 +101,17 @@ export async function initiateKcbStkPush(pushParams, customCredentials = null, m
   if (phone.startsWith('0')) phone = '254' + phone.slice(1);
   if (phone.startsWith('7') || phone.startsWith('1')) phone = '254' + phone;
 
-  const cleanReference = pushParams.reference.replace(/[^a-zA-Z0-9]/g, '');
+  const cleanReference = `${pushParams.reference}${Date.now().toString().slice(-4)}`.replace(/[^a-zA-Z0-9]/g, '');
+  const sandboxCallback = CALLBACK_URL.replace('https://', 'http://');
   
+  // Refined Hybrid Payload for mm/api/request
   const body = {
-    request: {
-      phoneNumber: phone,
-      msisdn: phone, // Added for UAT compatibility
-      amount: String(Math.round(pushParams.amount)), // Stringified amount
-      invoiceNumber: cleanReference,
-      description: `Payment${cleanReference}`,
-      callbackUrl: CALLBACK_URL
-    }
+    msisdn: phone,
+    amount: String(Math.round(pushParams.amount)),
+    invoiceNumber: cleanReference,
+    transactionId: cleanReference,
+    description: `Pay${cleanReference}`,
+    callbackUrl: env === 'production' ? CALLBACK_URL : sandboxCallback
   };
 
   console.log('[KCB-DEBUG] Sending Body:', JSON.stringify(body, null, 2));
