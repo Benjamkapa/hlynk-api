@@ -8,6 +8,12 @@ export const PLAN_PRICES = {
   MAX: 16999, // Business Pro
 };
 
+export const REFERRAL_BONUSES = {
+  LITE: 1200,
+  PLUS: 2650,
+  MAX: 4950
+};
+
 export const getMySubscription = async (req, res) => {
   const { tenantId } = req.user;
   try {
@@ -256,6 +262,46 @@ export const handlePaymentCallback = async (reference, transactionId, success, m
           INSERT INTO notification (id, tenantId, title, message, type, status, createdAt) 
           VALUES (?, ?, ?, ?, 'success', 0, NOW())
         `, [ulid(), payment.tenantId, notificationTitle, notificationMsg]);
+
+        // 6. REFERRAL PAYOUT LOGIC
+        const [tenantRows] = await connection.query(`SELECT referredById FROM tenant WHERE id = ?`, [payment.tenantId]);
+        const referredById = tenantRows[0]?.referredById;
+
+        if (referredById && REFERRAL_BONUSES[payment.plan]) {
+          const bonusAmount = REFERRAL_BONUSES[payment.plan];
+          
+          // Check if this is a renewal (already has an endDate)
+          const isRenewal = sub.endDate && new Date(sub.endDate) > new Date(sub.createdAt);
+          
+          let shouldPayBonus = true;
+          if (isRenewal) {
+            // Season Rule: If renewal, check if they referred at least 1 new vendor in the last 180 days
+            const [newRefs] = await connection.query(
+              `SELECT COUNT(*) as cnt FROM tenant WHERE referredById = ? AND createdAt > DATE_SUB(NOW(), INTERVAL 180 DAY)`,
+              [referredById]
+            );
+            if (newRefs[0].cnt === 0) {
+              shouldPayBonus = false;
+              console.log(`[REFERRAL] Bonus skipped for ${referredById} (Renewal without new referrals)`);
+            }
+          }
+
+          if (shouldPayBonus) {
+            const payoutId = ulid();
+            await connection.query(`
+              INSERT INTO payout (id, tenantId, amount, status, type, refereeId, sourceId, message, createdAt)
+              VALUES (?, ?, ?, 'PENDING', 'REFERRAL', ?, ?, ?, NOW())
+            `, [
+              payoutId, 
+              payment.tenantId, 
+              bonusAmount, 
+              referredById, 
+              payment.id, 
+              `Referral bonus for ${displayPlanName} (${payment.tenantId})`
+            ]);
+            console.log(`[REFERRAL] Payout ${payoutId} logged for ${referredById} (Amount: ${bonusAmount})`);
+          }
+        }
       }
 
       await connection.commit();
@@ -358,7 +404,7 @@ export const submitManualPayment = async (req, res) => {
 export const getMyPayouts = async (req, res) => {
   const { tenantId } = req.user;
   try {
-    const PLATFORM_SHARE_RATE = 0.10;
+    const PLATFORM_SHARE_RATE = 0.15;
 
     // 1. Get trial status
     const [subRows] = await db.query(`SELECT trialEndDate, status FROM subscription WHERE tenantId = ? LIMIT 1`, [tenantId]);
@@ -428,5 +474,47 @@ export const getMyPayouts = async (req, res) => {
   } catch (err) {
     console.error('[MY-PAYOUTS] Error:', err);
     return res.status(500).json({ success: false, message: 'Failed to fetch payout data' });
+  }
+};
+
+export const getMyReferrals = async (req, res) => {
+  const { userId } = req.user;
+  try {
+    const [rows] = await db.query(`
+      SELECT 
+        t.id as tenantId,
+        t.businessName,
+        t.createdAt as joinedAt,
+        s.planName,
+        s.status as subStatus,
+        s.trialEndDate,
+        (
+          SELECT JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'id', p.id,
+              'amount', p.amount,
+              'status', p.status,
+              'createdAt', p.createdAt
+            )
+          )
+          FROM payout p
+          WHERE p.refereeId = ? AND p.tenantId = t.id
+        ) as payouts
+      FROM tenant t
+      LEFT JOIN subscription s ON s.tenantId = t.id
+      WHERE t.referredById = ?
+      ORDER BY t.createdAt DESC
+    `, [userId, userId]);
+
+    // Format the output
+    const formatted = rows.map(r => ({
+      ...r,
+      payouts: typeof r.payouts === 'string' ? JSON.parse(r.payouts) : (r.payouts || [])
+    }));
+
+    return res.json({ success: true, data: formatted });
+  } catch (err) {
+    console.error('[GET-MY-REFERRALS] Error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to fetch referrals' });
   }
 };

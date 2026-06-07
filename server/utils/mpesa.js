@@ -11,13 +11,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const params = JSON.parse(fs.readFileSync(path.join(__dirname, '../configs/params.json'), 'utf8'));
 
 const MPESA_ENV = (process.env.MPESA_ENV || params.mpesa_env || 'sandbox').trim();
-const BASE_URL = MPESA_ENV === 'production' 
-  ? 'https://api.safaricom.co.ke' 
+const BASE_URL = MPESA_ENV === 'production'
+  ? 'https://api.safaricom.co.ke'
   : 'https://sandbox.safaricom.co.ke';
 
 const CONSUMER_KEY = (process.env.MPESA_CONSUMER_KEY || params.mpesa_consumer_key || '').trim();
 const CONSUMER_SECRET = (process.env.MPESA_CONSUMER_SECRET || params.mpesa_consumer_secret || '').trim();
-const BUSINESS_SHORT_CODE = (process.env.MPESA_SHORTCODE || params.mpesa_shortcode || '').trim();
+const BUSINESS_SHORT_CODE = (process.env.MPESA_C2B_SHORTCODE || params.mpesa_c2b_shortcode || '').trim();
 const PASSKEY = (process.env.MPESA_PASSKEY || params.mpesa_passkey || '').trim();
 
 const BACKEND_URL = (process.env.BACKEND_URL || params.backend_url || '').replace(/\/$/, '');
@@ -31,10 +31,10 @@ if (!BACKEND_URL || BACKEND_URL.includes('localhost')) {
 const tokenCache = new Map();
 
 async function getAccessToken(customCredentials = null) {
-  const cacheKey = customCredentials 
+  const cacheKey = customCredentials
     ? `${redisKeys.mpesaToken}:${customCredentials.consumerKey}`
     : redisKeys.mpesaToken;
-    
+
   // 1. Try in-memory fallback FIRST (Super Fast)
   const memoryCached = tokenCache.get(cacheKey);
   if (memoryCached && memoryCached.expiry > Date.now()) {
@@ -58,17 +58,17 @@ async function getAccessToken(customCredentials = null) {
   try {
     console.log(`[MPESA] Auth Attempt | Env: ${env} | Key Prefix: ${key.substring(0, 4)}...`);
     const res = await axios.get(`${url}/oauth/v1/generate?grant_type=client_credentials`, {
-      headers: { 
+      headers: {
         Authorization: `Basic ${auth}`,
         'User-Agent': 'hlynk-api/1.0.0'
       },
       timeout: 15000 // 15 seconds timeout (reduced from 25)
     });
     const token = res.data.access_token;
-    
+
     // Save to Redis
     await redis.setEx(cacheKey, 3300, token);
-    
+
     // Save to in-memory fallback (valid for 50 minutes)
     tokenCache.set(cacheKey, {
       token,
@@ -79,11 +79,11 @@ async function getAccessToken(customCredentials = null) {
   } catch (error) {
     const errorMsg = error.response?.data?.errorMessage || error.response?.data?.message || error.message;
     console.error('[MPESA] Auth Error:', errorMsg);
-    
+
     // Clear cache on auth failure so next attempt tries fresh
     await redis.del(cacheKey);
     tokenCache.delete(cacheKey);
-    
+
     throw new Error(`M-Pesa Auth: ${errorMsg}`);
   }
 }
@@ -130,7 +130,7 @@ export async function initiateStkPush(pushParams, customCredentials = null, meta
 
   try {
     const res = await axios.post(`${url}/mpesa/stkpush/v1/processrequest`, body, {
-      headers: { 
+      headers: {
         Authorization: `Bearer ${token}`,
         'User-Agent': 'hlynk-api/1.0.0'
       },
@@ -142,11 +142,11 @@ export async function initiateStkPush(pushParams, customCredentials = null, meta
       INSERT INTO mpesalog (id, merchantRequestId, checkoutRequestId, phone, amount, reference, customerName, initiatorName, tenantName, tenantId, type, status, isRented, rawPayload)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 2, ?, ?)
     `, [
-      ulid(), 
-      res.data.MerchantRequestID, 
-      res.data.CheckoutRequestID, 
-      phone, 
-      pushParams.amount, 
+      ulid(),
+      res.data.MerchantRequestID,
+      res.data.CheckoutRequestID,
+      phone,
+      pushParams.amount,
       pushParams.reference,
       metadata.customerName || null,
       metadata.initiatorName || null,
@@ -160,15 +160,15 @@ export async function initiateStkPush(pushParams, customCredentials = null, meta
   } catch (error) {
     const errorMsg = error.response?.data?.errorMessage || error.response?.data?.message || error.message;
     console.error('[MPESA] Push Error:', errorMsg);
-    
+
     // Log the failure
     await db.query(`
       INSERT INTO mpesalog (id, phone, amount, reference, customerName, initiatorName, tenantName, tenantId, type, status, isRented, resultDesc)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 4, ?, ?)
     `, [
-      ulid(), 
-      pushParams.phone, 
-      pushParams.amount, 
+      ulid(),
+      pushParams.phone,
+      pushParams.amount,
       pushParams.reference,
       metadata.customerName || null,
       metadata.initiatorName || null,
@@ -200,7 +200,7 @@ export async function queryStkPush(checkoutRequestId) {
 
   try {
     const res = await axios.post(`${BASE_URL}/mpesa/stkpushquery/v1/query`, body, {
-      headers: { 
+      headers: {
         Authorization: `Bearer ${token}`,
         'User-Agent': 'hlynk-api/1.0.0'
       },
@@ -209,5 +209,37 @@ export async function queryStkPush(checkoutRequestId) {
     return res.data;
   } catch (error) {
     throw new Error(error.response?.data?.errorMessage || 'Failed to query STK Push status.');
+  }
+}
+export async function initiateB2C(params) {
+  const token = await getAccessToken();
+  const url = MPESA_ENV === 'production' ? 'https://api.safaricom.co.ke' : 'https://sandbox.safaricom.co.ke';
+
+  const body = {
+    InitiatorName: params.initiatorName || process.env.MPESA_INITIATOR || 'api_initiator',
+    SecurityCredential: params.securityCredential || process.env.MPESA_SECURITY_CREDENTIAL || 'placeholder',
+    CommandID: params.commandId || 'BusinessPayment',
+    Amount: Math.round(params.amount),
+    PartyA: BUSINESS_SHORT_CODE,
+    PartyB: params.phone,
+    Remarks: params.remarks || 'Hlynk Payout',
+    QueueTimeOutURL: `${BACKEND_URL}/api/v1/payments/mpesa/b2c/timeout`,
+    ResultURL: `${BACKEND_URL}/api/v1/payments/mpesa/b2c/result`,
+    Occasion: params.occasion || 'Withdrawal'
+  };
+
+  try {
+    const res = await axios.post(`${url}/mpesa/b2c/v1/paymentrequest`, body, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'User-Agent': 'hlynk-api/1.0.0'
+      },
+      timeout: 30000
+    });
+    return res.data;
+  } catch (error) {
+    const msg = error.response?.data?.errorMessage || error.message;
+    console.error('[MPESA-B2C] Error:', msg);
+    throw new Error(msg);
   }
 }

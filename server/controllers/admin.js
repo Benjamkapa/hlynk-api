@@ -1,5 +1,6 @@
 import { db } from '../dbms/mysql.js';
 import { minioClient, bucketName } from '../utils/storage.js';
+import { initiateB2C } from '../utils/mpesa.js';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { ulid } from 'ulid';
@@ -1144,10 +1145,19 @@ export const registerTenant = async (req, res) => {
 
 export const getPayouts = async (req, res) => {
   try {
-    const PLATFORM_SHARE_RATE = 0.10;
+    const PLATFORM_SHARE_RATE = 0.15;
 
-    // 1. Fetch all pending rented payments with their tenant's trial info
-    const [payments] = await db.query(`
+    // 1. Fetch ACTUAL Payout Records (Already batched or triggered)
+    const [payoutRecords] = await db.query(`
+      SELECT p.*, t.businessName, t.phone as tenantPhone, t.payoutAccount
+      FROM payout p
+      JOIN tenant t ON p.tenantId = t.id
+      WHERE p.status = 'PENDING'
+      ORDER BY p.createdAt DESC
+    `);
+
+    // 2. Fetch ACCRUED (Unbatched) Volume for Rented Paybill
+    const [accruedPayments] = await db.query(`
       SELECT 
         p.tenantId, 
         t.businessName, 
@@ -1160,8 +1170,8 @@ export const getPayouts = async (req, res) => {
       WHERE p.isRented = 1 AND p.payoutStatus = 0 AND p.status = 0
     `);
 
-    // Grouping by tenant
-    const grouped = payments.reduce((acc, p) => {
+    // Group accrued by tenant
+    const accruedGrouped = accruedPayments.reduce((acc, p) => {
       if (!acc[p.tenantId]) {
         acc[p.tenantId] = {
           tenantId: p.tenantId,
@@ -1169,54 +1179,38 @@ export const getPayouts = async (req, res) => {
           totalGross: 0,
           platformShare: 0,
           transactionCount: 0,
-          oldestTransaction: p.createdAt,
-          latestTransaction: p.createdAt
+          oldestTransaction: p.createdAt
         };
       }
       const g = acc[p.tenantId];
-      const created = new Date(p.createdAt);
       const trialEnd = p.trialEndDate ? new Date(p.trialEndDate) : null;
+      const rate = (trialEnd && new Date(p.createdAt) <= trialEnd) ? 0 : PLATFORM_SHARE_RATE;
       
-      const rate = (trialEnd && created <= trialEnd) ? 0 : PLATFORM_SHARE_RATE;
       const amount = Number(p.amount);
-      const share = amount * rate;
-
       g.totalGross += amount;
-      g.platformShare += share;
+      g.platformShare += amount * rate;
       g.transactionCount++;
-      if (created < new Date(g.oldestTransaction)) g.oldestTransaction = p.createdAt;
-      if (created > new Date(g.latestTransaction)) g.latestTransaction = p.createdAt;
-
       return acc;
     }, {});
 
-    const formattedPayouts = Object.values(grouped).map(g => ({
+    const pendingAccrued = Object.values(accruedGrouped).map(g => ({
       ...g,
       netSettlement: g.totalGross - g.platformShare
-    })).sort((a, b) => b.totalGross - a.totalGross);
+    }));
 
     // Summary stats
-    const [stats] = await db.query(`
-      SELECT 
-        SUM(CASE WHEN createdAt >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN amount ELSE 0 END) as volume7Days,
-        SUM(amount) as totalVolume
-      FROM payment 
-      WHERE isRented = 1 AND status = 0
-    `);
-
-    const summary = stats[0] || { volume7Days: 0, totalVolume: 0 };
-    const totalGross = formattedPayouts.reduce((sum, item) => sum + item.totalGross, 0);
-    const totalPlatformShare = formattedPayouts.reduce((sum, item) => sum + item.platformShare, 0);
+    const totalPendingPayouts = payoutRecords.reduce((sum, p) => sum + Number(p.amount), 0);
+    const totalAccruedNet = pendingAccrued.reduce((sum, g) => sum + g.netSettlement, 0);
 
     return res.json({ 
       success: true, 
       data: {
-        items: formattedPayouts,
+        payouts: payoutRecords, // Actual records ready for B2C
+        accrued: pendingAccrued, // Accumulating for next week
         summary: {
-          ...summary,
-          totalGross,
-          totalPlatformShare,
-          totalNetSettlement: totalGross - totalPlatformShare
+          totalDue: totalPendingPayouts,
+          totalAccrued: totalAccruedNet,
+          shareRate: PLATFORM_SHARE_RATE
         }
       } 
     });
@@ -1228,25 +1222,170 @@ export const getPayouts = async (req, res) => {
 
 export const markPayoutPaid = async (req, res) => {
   const { tenantId } = req.params;
+  const { payoutId, disburse = false } = req.body;
   const adminId = req.user.userId;
 
   try {
-    const [result] = await db.query(`
-       UPDATE payment 
-       SET payoutStatus = 1, updatedAt = NOW() 
-       WHERE tenantId = ? AND isRented = 1 AND payoutStatus = 0 AND status = 0
-    `, [tenantId]);
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
 
-    // Log the payout
+      let payoutAmount = 0;
+      let payoutPhone = '';
+      let payoutType = '';
+
+      if (payoutId) {
+        // Mark specific payout as PAID
+        const [pRows] = await connection.query(`
+          SELECT p.*, t.payoutAccount, t.phone as tenantPhone 
+          FROM payout p 
+          JOIN tenant t ON p.tenantId = t.id 
+          WHERE p.id = ?
+        `, [payoutId]);
+        
+        if (pRows.length === 0) throw new Error('Payout record not found');
+        const payout = pRows[0];
+        payoutAmount = payout.amount;
+        payoutPhone = payout.payoutAccount || payout.tenantPhone;
+        payoutType = payout.type;
+
+        if (disburse) {
+          // Trigger automated disburse via M-Pesa B2C
+          // This will send money from our paybill to the vendor/referee
+          const result = await initiateB2C({
+            amount: payoutAmount,
+            phone: payoutPhone,
+            remarks: `Hlynk ${payoutType} Payout`
+          });
+          console.log(`[B2C-INITIATED] Payout ${payoutId} for ${payoutPhone}: ${result.ResponseDescription}`);
+        }
+
+        await connection.query(`UPDATE payout SET status = 'PAID', updatedAt = NOW() WHERE id = ?`, [payoutId]);
+      } else {
+        // Legacy: Mark all pending rented payments as paid for this tenant
+        const [result] = await connection.query(`
+           UPDATE payment 
+           SET payoutStatus = 1, updatedAt = NOW() 
+           WHERE tenantId = ? AND isRented = 1 AND payoutStatus = 0 AND status = 0
+        `, [tenantId]);
+        
+        await connection.query(`
+          INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
+          VALUES (?, ?, ?, 'Payout Processed', 'Financial', ?, NOW())
+        `, [ulid(), tenantId, adminId, `Marked ${result.affectedRows} transactions as paid/cleared.`]);
+      }
+
+      await connection.query(`
+        INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
+        VALUES (?, ?, ?, 'Payout Settled', 'Financials', ?, NOW())
+      `, [ulid(), tenantId, adminId, `Marked payout ${payoutId || 'bulk'} as PAID${disburse ? ' and disbursed via M-Pesa' : ''}`]);
+
+      await connection.commit();
+      return res.json({ success: true, message: disburse ? `Successfully initiated disbursement and marked as paid.` : `Successfully marked payout as paid.` });
+    } catch (err) {
+      await connection.rollback();
+      throw err;
+    } finally {
+      connection.release();
+    }
+  } catch (err) {
+    console.error('[ADMIN-PAYOUTS] Error:', err);
+    return res.status(500).json({ success: false, message: err.message || 'Failed to process payout' });
+  }
+};
+
+export const updateTenantPayoutAccount = async (req, res) => {
+  const { id } = req.params;
+  const { payoutMethod, payoutAccount } = req.body;
+
+  try {
+    await db.query(`UPDATE tenant SET payoutMethod = ?, payoutAccount = ?, updatedAt = NOW() WHERE id = ?`, [payoutMethod, payoutAccount, id]);
+    
     await db.query(`
       INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
-      VALUES (?, ?, ?, 'Payout Processed', 'Financial', ?, NOW())
-    `, [ulid(), tenantId, adminId, `Marked ${result.affectedRows} transactions as paid/cleared.`]);
+      VALUES (?, ?, ?, 'Payout Info Updated', 'Management', ?, NOW())
+    `, [ulid(), id, req.user.userId, `Set payout to ${payoutMethod} (${payoutAccount})`]);
 
-    return res.json({ success: true, message: `Successfully marked ${result.affectedRows} transactions as paid.` });
+    return res.json({ success: true, message: 'Payout account updated' });
   } catch (err) {
-    return res.status(500).json({ success: false, message: 'Failed to process payout' });
+    return res.status(500).json({ success: false, message: 'Failed to update payout account' });
+  }
+};
+
+export const listNewPayouts = async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT p.*, t.businessName, t.payoutMethod, t.payoutAccount
+      FROM payout p
+      JOIN tenant t ON p.tenantId = t.id
+      ORDER BY p.createdAt DESC
+    `);
+    
+    return res.json({ success: true, data: rows });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to list payout records' });
+  }
+};
+
+export const getVaultStats = async (req, res) => {
+  try {
+    // 1. Total Collections (Money in the paybill from success payments)
+    const [collections] = await db.query(`SELECT SUM(amount) as total FROM payment WHERE status = 0`);
+    
+    // 2. Pending Liabilities
+    const [pendingPayouts] = await db.query(`
+      SELECT 
+        SUM(CASE WHEN type = 'REFERRAL' THEN amount ELSE 0 END) as pendingReferral,
+        SUM(CASE WHEN type = 'VENDOR_PAYOUT' THEN amount ELSE 0 END) as pendingVendor
+      FROM payout WHERE status = 'PENDING'
+    `);
+
+    // 3. Settled/Paid 
+    const [settledPayouts] = await db.query(`
+      SELECT SUM(amount) as total FROM payout WHERE status = 'PAID'
+    `);
+
+    const totalIn = Number(collections[0].total || 0);
+    const pRef = Number(pendingPayouts[0].pendingReferral || 0);
+    const pVend = Number(pendingPayouts[0].pendingVendor || 0);
+    const totalOut = Number(settledPayouts[0].total || 0);
+
+    return res.json({
+      success: true,
+      data: {
+        totalCollections: totalIn,
+        pendingLiabilities: pRef + pVend,
+        pendingReferral: pRef,
+        pendingVendor: pVend,
+        totalSettled: totalOut,
+        vaultBalance: totalIn - totalOut, // How much SHOULD be in the buni account right now
+        platformNetPotential: totalIn - (pRef + pVend + totalOut)
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to fetch vault stats' });
   }
 };
 
 
+export const testB2C = async (req, res) => {
+  const { phone, amount, remarks } = req.body;
+  try {
+    const result = await initiateB2C({
+      amount: Number(amount),
+      phone,
+      remarks: remarks || 'Hlynk Diagnostic Test'
+    });
+    
+    // Log the test action
+    await db.query(`
+      INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
+      VALUES (?, NULL, ?, 'B2C Test Execution', 'System', ?, NOW())
+    `, [ulid(), req.user.userId, `B2C Test: KES ${amount} to ${phone}. Response: ${result.ResponseDescription}`]);
+
+    return res.json({ success: true, message: 'B2C Initiation Successful', data: result });
+  } catch (err) {
+    console.error('[ADMIN-TEST-B2C] Error:', err);
+    return res.status(500).json({ success: false, message: err.message || 'B2C Test Failed' });
+  }
+};
