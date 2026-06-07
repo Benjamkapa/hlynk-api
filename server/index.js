@@ -181,6 +181,16 @@ const startServer = async () => {
         await db.query('ALTER TABLE tenant ADD COLUMN payoutAccount VARCHAR(50) AFTER payoutMethod');
       }
 
+      // Payout tracking columns on payment table
+      const [paymentCols] = await db.query('DESCRIBE payment');
+      const paymentColNames = paymentCols.map(c => c.Field);
+      if (!paymentColNames.includes('payoutStatus')) {
+        await db.query('ALTER TABLE payment ADD COLUMN payoutStatus INT DEFAULT 0 AFTER status');
+      }
+      if (!paymentColNames.includes('isRented')) {
+        await db.query('ALTER TABLE payment ADD COLUMN isRented TINYINT DEFAULT 0 AFTER payoutStatus');
+      }
+
       // Payout table
       await db.query(`CREATE TABLE IF NOT EXISTS payout (
         id VARCHAR(50) PRIMARY KEY,
