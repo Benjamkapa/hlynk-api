@@ -60,7 +60,7 @@ router.post('/settings', updateSettings);
 router.put('/settings', updateSettings);
 
 router.get('/schedules', getSchedules);
-router.get('/reports/query', runReportQuery);
+router.post('/reports/query', runReportQuery);
 router.get('/transactions', getGlobalTransactions);
 router.get('/transactions/:id', getTransactionDetails);
 
