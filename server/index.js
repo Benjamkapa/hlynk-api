@@ -290,9 +290,15 @@ const startServer = async () => {
         resultDesc TEXT,
         rawPayload MEDIUMTEXT,
         createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_kcb_checkout (checkoutRequestId),
         INDEX idx_kcb_tenant (tenantId)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+      const [kcbCols] = await db.query('DESCRIBE kcblog').catch(() => [[]]);
+      if (kcbCols.length && !kcbCols.some(c => c.Field === 'updatedAt')) {
+        await db.query("ALTER TABLE kcblog ADD COLUMN updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER createdAt");
+      }
 
       console.log('💰 eTIMS & KCB: Tables ready.');
     } catch (e) {

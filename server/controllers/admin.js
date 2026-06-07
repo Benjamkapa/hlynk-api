@@ -1149,9 +1149,10 @@ export const getPayouts = async (req, res) => {
 
     // 1. Fetch ACTUAL Payout Records (Already batched or triggered)
     const [payoutRecords] = await db.query(`
-      SELECT p.*, t.businessName, t.phone as tenantPhone, t.payoutAccount
+      SELECT p.*, t.businessName, u.phone as tenantPhone, t.payoutAccount
       FROM payout p
       JOIN tenant t ON p.tenantId = t.id
+      JOIN user u ON t.id = u.tenantId AND u.role = 'PROVIDER'
       WHERE p.status = 'PENDING'
       ORDER BY p.createdAt DESC
     `);
@@ -1237,9 +1238,10 @@ export const markPayoutPaid = async (req, res) => {
       if (payoutId) {
         // Mark specific payout as PAID
         const [pRows] = await connection.query(`
-          SELECT p.*, t.payoutAccount, t.phone as tenantPhone 
+          SELECT p.*, t.payoutAccount, u.phone as tenantPhone 
           FROM payout p 
           JOIN tenant t ON p.tenantId = t.id 
+          JOIN user u ON t.id = u.tenantId AND u.role = 'PROVIDER'
           WHERE p.id = ?
         `, [payoutId]);
         
