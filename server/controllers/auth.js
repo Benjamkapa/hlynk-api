@@ -90,7 +90,7 @@ export const googleAuth = async (req, res) => {
     const email = payload.email;
 
     const [userRows] = await db.query(`
-      SELECT u.*, t.isActive as tenantIsActive, t.slug as tenantSlug, t.businessName, 
+      SELECT u.*, t.isActive as tenantIsActive, t.slug as tenantSlug, t.businessName, t.referralCode,
              s.planName, s.status, s.trialEndDate, s.endDate
       FROM user u
       JOIN tenant t ON u.tenantId = t.id
@@ -104,6 +104,13 @@ export const googleAuth = async (req, res) => {
     if (user && payload.picture && user.photoUrl !== payload.picture) {
       await db.query(`UPDATE user SET photoUrl = ?, updatedAt = NOW() WHERE id = ?`, [payload.picture, user.id]);
       user.photoUrl = payload.picture;
+    }
+
+    // HEAL REFERRAL CODE: Fix legacy accounts missing a code
+    if (user && !user.referralCode) {
+      const newRef = (user.businessName || 'HLNK').replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase();
+      await db.query(`UPDATE tenant SET referralCode = ?, updatedAt = NOW() WHERE id = ?`, [newRef, user.tenantId]);
+      user.referralCode = newRef;
     }
 
     if (!user) {
@@ -134,18 +141,36 @@ export const googleAuth = async (req, res) => {
       const userId = ulid();
       const slug = await uniqueSlug(registration.businessName);
 
-      const isTrialMode = registration.isTrial === true || registration.isTrial === 'true';
-      const requestedPlan = isTrialMode ? 'TRIAL' : (registration.planName || 'LITE');
-      const subStatus = (isTrialMode || requestedPlan === 'LITE') ? 2 : 1; 
-      const trialEnd = (isTrialMode || requestedPlan === 'LITE') ? `DATE_ADD(NOW(), INTERVAL 14 DAY)` : `NULL`;
-
       const connection = await db.getConnection();
       try {
         await connection.beginTransaction();
-        await connection.query(`INSERT INTO tenant (id, slug, businessName, isActive, createdAt, updatedAt) VALUES (?, ?, ?, 1, NOW(), NOW())`, [tenantId, slug, registration.businessName.trim()]);
+
+        const isTrialMode = registration.isTrial === true || registration.isTrial === 'true';
+        const requestedPlan = isTrialMode ? 'TRIAL' : (registration.planName || 'LITE');
+        const subStatus = (isTrialMode || requestedPlan === 'LITE') ? 2 : 1; 
+        
+        let trialDays = 14;
+        let referredById = null;
+        let referralApplied = false;
+
+        if (registration.referralCode) {
+          const [refRows] = await connection.query(`SELECT ownerId FROM (SELECT u.id as ownerId, t.referralCode FROM user u JOIN tenant t ON u.tenantId = t.id WHERE u.role = 'PROVIDER') as refs WHERE referralCode = ? LIMIT 1`, [registration.referralCode.trim().toUpperCase()]);
+          if (refRows.length > 0) {
+            referredById = refRows[0].ownerId;
+            trialDays = 14; 
+            referralApplied = true;
+          }
+        }
+
+        const trialEndVal = (isTrialMode || requestedPlan === 'LITE') ? `DATE_ADD(NOW(), INTERVAL ${trialDays} DAY)` : `NULL`;
+
+        // Generate a new unique referral code for this tenant
+        const newReferralCode = (registration.businessName.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase());
+
+        await connection.query(`INSERT INTO tenant (id, slug, businessName, referralCode, referredById, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())`, [tenantId, slug, registration.businessName.trim(), newReferralCode, referredById]);
         await connection.query(`INSERT INTO user (id, tenantId, name, phone, email, role, photoUrl, eulaAcceptedAt, passwordHash, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 'PROVIDER', ?, NOW(), 'GOOGLE_AUTH', 1, NOW(), NOW())`, [userId, tenantId, registration.ownerName.trim() || payload.name, registration.phone.trim(), email, payload.picture || null]);
         await connection.query(`INSERT INTO provider (id, tenantId, userId, businessName, phone, category, county, location, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`, [ulid(), tenantId, userId, registration.businessName.trim(), registration.phone.trim(), registration.category || 'Other', registration.county || 'Nairobi', registration.location || 'Unknown']);
-        await connection.query(`INSERT INTO subscription (id, tenantId, planName, status, trialEndDate, createdAt, updatedAt) VALUES (?, ?, ?, ?, ${trialEnd}, NOW(), NOW())`, [ulid(), tenantId, requestedPlan, subStatus]);
+        await connection.query(`INSERT INTO subscription (id, tenantId, planName, status, trialEndDate, createdAt, updatedAt) VALUES (?, ?, ?, ?, ${trialEndVal}, NOW(), NOW())`, [ulid(), tenantId, requestedPlan, subStatus]);
         
         const [admins] = await connection.query(`SELECT id, tenantId FROM user WHERE role = 'SUPER_ADMIN'`);
         for (const admin of admins) {
@@ -153,13 +178,23 @@ export const googleAuth = async (req, res) => {
         }
         
         await connection.commit();
-        
-        user = { id: userId, tenantId, role: 'PROVIDER', tenantIsActive: 1 };
+
+        const [newUser] = await db.query(`SELECT * FROM user WHERE id = ?`, [userId]);
+        const { accessToken, refreshToken } = await issueTokens(newUser[0], res, userAgent, ipAddress);
+        return res.json({ 
+          success: true, 
+          data: { 
+            accessToken, 
+            refreshToken, 
+            referralApplied,
+            user: { ...newUser[0], subscription: { planName: requestedPlan, status: subStatus } } 
+          } 
+        });
       } catch (err) {
-        await connection.rollback();
+        if (connection) await connection.rollback();
         throw err;
       } finally {
-        connection.release();
+        if (connection) connection.release();
       }
     }
 
@@ -205,7 +240,7 @@ export const me = async (req, res) => {
     const [rows] = await db.query(`
       SELECT 
         u.id, u.name, u.phone, u.email, u.role, u.photoUrl, u.permissions,
-        t.id as tenantId, t.slug as tenantSlug, t.businessName,
+        t.id as tenantId, t.slug as tenantSlug, t.businessName, t.referralCode,
         s.planName, s.status, s.trialEndDate, s.endDate,
         (SELECT COUNT(*) FROM payment WHERE tenantId = t.id AND isRented = 1 LIMIT 1) as isRented
       FROM user u
@@ -219,6 +254,13 @@ export const me = async (req, res) => {
     }
 
     const user = rows[0];
+
+    // HEAL REFERRAL CODE
+    if (!user.referralCode) {
+      const newRef = (user.businessName || 'HLNK').replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase();
+      await db.query(`UPDATE tenant SET referralCode = ?, updatedAt = NOW() WHERE id = ?`, [newRef, user.tenantId]);
+      user.referralCode = newRef;
+    }
 
     // SYNC PHOTO IF MISSING: If the DB has no photo but we can get it from Google, sync it
     if (!user.photoUrl && req.user?.picture) {

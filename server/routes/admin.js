@@ -27,7 +27,11 @@ import {
   updatePlatformReviewStatus,
   registerTenant,
   getPayouts,
-  markPayoutPaid
+  markPayoutPaid,
+  updateTenantPayoutAccount,
+  listNewPayouts,
+  getVaultStats,
+  testB2C
 } from '../controllers/admin.js';
 
 import { authenticate, requireAdmin } from '../middleware/auth.js';
@@ -45,6 +49,7 @@ router.put('/tenants/:id/activate', activateTenant);
 router.delete('/tenants/:id', deleteTenant);
 router.put('/tenants/:id', updateTenant);
 router.post('/tenants', registerTenant);
+router.put('/tenants/:id/payout-account', updateTenantPayoutAccount);
 
 router.get('/health', getSystemHealth);
 router.get('/subscriptions', getSubscriptions);
@@ -61,6 +66,9 @@ router.get('/transactions/:id', getTransactionDetails);
 
 router.get('/payouts', getPayouts);
 router.post('/payouts/:tenantId/mark-paid', markPayoutPaid);
+router.get('/payouts/records', listNewPayouts);
+router.get('/finance/vault', getVaultStats);
+router.post('/test-b2c', testB2C);
 
 router.get('/users', getUsers);
 router.delete('/users/:id', deleteUser);

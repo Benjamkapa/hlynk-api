@@ -160,9 +160,42 @@ const startServer = async () => {
 
       const [userCols] = await db.query('DESCRIBE user');
       if (!userCols.some(c => c.Field === 'eulaAcceptedAt')) {
-        // console.log('Adding eulaAcceptedAt to user...');
         await db.query('ALTER TABLE user ADD COLUMN eulaAcceptedAt DATETIME DEFAULT NULL AFTER photoUrl');
       }
+
+      // Referral & Payout columns on tenant
+      const [tenantCols] = await db.query('DESCRIBE tenant');
+      const tenantColNames = tenantCols.map(c => c.Field);
+      if (!tenantColNames.includes('referralCode')) {
+        console.log('Adding referralCode to tenant...');
+        await db.query('ALTER TABLE tenant ADD COLUMN referralCode VARCHAR(20) UNIQUE AFTER slug');
+      }
+      if (!tenantColNames.includes('referredById')) {
+        console.log('Adding referredById to tenant...');
+        await db.query('ALTER TABLE tenant ADD COLUMN referredById VARCHAR(50) AFTER referralCode');
+      }
+      if (!tenantColNames.includes('payoutMethod')) {
+        await db.query('ALTER TABLE tenant ADD COLUMN payoutMethod VARCHAR(50) DEFAULT "MPESA" AFTER isActive');
+      }
+      if (!tenantColNames.includes('payoutAccount')) {
+        await db.query('ALTER TABLE tenant ADD COLUMN payoutAccount VARCHAR(50) AFTER payoutMethod');
+      }
+
+      // Payout table
+      await db.query(`CREATE TABLE IF NOT EXISTS payout (
+        id VARCHAR(50) PRIMARY KEY,
+        tenantId VARCHAR(50) NOT NULL,
+        amount DECIMAL(15, 2) NOT NULL,
+        status VARCHAR(20) DEFAULT 'PENDING',
+        type VARCHAR(20) NOT NULL,
+        refereeId VARCHAR(50),
+        sourceId VARCHAR(50),
+        message TEXT,
+        processedAt DATETIME,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (tenantId) REFERENCES tenant(id) ON DELETE CASCADE
+      )`);
     } catch (e) {
       console.warn("⚠️ Migration Warning:", e.message);
     }
