@@ -81,7 +81,7 @@ export const initiateRenewal = async (req, res) => {
   const { phone, months = 1 } = req.body; // Added months
 
   try {
-    const limit = process.env.NODE_ENV === 'development' ? 50 : 5;
+    const limit = process.env.NODE_ENV === 'development' ? 7 : 5;
     const [recentPayments] = await db.query(`SELECT COUNT(*) as cnt FROM payment WHERE tenantId = ? AND createdAt > DATE_SUB(NOW(), INTERVAL 1 HOUR)`, [tenantId]);
     if (recentPayments[0].cnt >= limit) {
       return res.status(429).json({ success: false, message: `Too many payment attempts (${recentPayments[0].cnt}/${limit}). Please wait before trying again.` });
