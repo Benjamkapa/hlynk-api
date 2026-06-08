@@ -211,22 +211,28 @@ export async function queryStkPush(checkoutRequestId) {
     throw new Error(error.response?.data?.errorMessage || 'Failed to query STK Push status.');
   }
 }
-export async function initiateB2C(params) {
+export async function initiateB2C(b2cParams) {
   const token = await getAccessToken();
   const url = MPESA_ENV === 'production' ? 'https://api.safaricom.co.ke' : 'https://sandbox.safaricom.co.ke';
 
+  let phone = String(b2cParams.phone).replace(/[^0-9]/g, '');
+  if (phone.startsWith('0')) phone = '254' + phone.slice(1);
+  if (phone.startsWith('7') || phone.startsWith('1')) phone = '254' + phone;
+
   const body = {
-    InitiatorName: params.initiatorName || process.env.MPESA_INITIATOR || 'api_initiator',
-    SecurityCredential: params.securityCredential || process.env.MPESA_SECURITY_CREDENTIAL || 'placeholder',
-    CommandID: params.commandId || 'BusinessPayment',
-    Amount: Math.round(params.amount),
+    InitiatorName: b2cParams.initiatorName || process.env.MPESA_INITIATOR || 'api_initiator',
+    SecurityCredential: b2cParams.securityCredential || process.env.MPESA_SECURITY_CREDENTIAL || 'placeholder',
+    CommandID: b2cParams.commandId || 'BusinessPayment',
+    Amount: Math.round(b2cParams.amount),
     PartyA: BUSINESS_SHORT_CODE,
-    PartyB: params.phone,
-    Remarks: params.remarks || 'Hlynk Payout',
+    PartyB: phone,
+    Remarks: b2cParams.remarks || 'Hlynk Payout',
     QueueTimeOutURL: `${BACKEND_URL}/api/v1/payments/mpesa/b2c/timeout`,
     ResultURL: `${BACKEND_URL}/api/v1/payments/mpesa/b2c/result`,
-    Occasion: params.occasion || 'Withdrawal'
+    Occasion: b2cParams.occasion || 'Withdrawal'
   };
+
+  const logId = ulid();
 
   try {
     const res = await axios.post(`${url}/mpesa/b2c/v1/paymentrequest`, body, {
@@ -236,10 +242,40 @@ export async function initiateB2C(params) {
       },
       timeout: 30000
     });
-    return res.data;
+
+    // Log successful initiation
+    await db.query(`
+      INSERT INTO b2clog (id, conversationId, originatorConversationId, phone, amount, payoutId, tenantId, remarks, status, rawRequest, rawResponse)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 2, ?, ?)
+    `, [
+      logId,
+      res.data.ConversationID || null,
+      res.data.OriginatorConversationID || null,
+      phone,
+      Math.round(b2cParams.amount),
+      b2cParams.payoutId || null,
+      b2cParams.tenantId || null,
+      b2cParams.remarks || 'Hlynk Payout',
+      JSON.stringify(body),
+      JSON.stringify(res.data)
+    ]);
+
+    console.log(`[MPESA-B2C] Initiated | LogID: ${logId} | ConvID: ${res.data.ConversationID} | Phone: ${phone} | Amount: ${Math.round(b2cParams.amount)}`);
+    return { ...res.data, logId };
   } catch (error) {
     const msg = error.response?.data?.errorMessage || error.message;
     console.error('[MPESA-B2C] Error:', msg);
+
+    // Log failed initiation
+    await db.query(`
+      INSERT INTO b2clog (id, phone, amount, payoutId, tenantId, remarks, status, resultDesc, rawRequest)
+      VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+    `, [
+      logId, phone, Math.round(b2cParams.amount),
+      b2cParams.payoutId || null, b2cParams.tenantId || null,
+      b2cParams.remarks || 'Hlynk Payout', msg, JSON.stringify(body)
+    ]);
+
     throw new Error(msg);
   }
 }

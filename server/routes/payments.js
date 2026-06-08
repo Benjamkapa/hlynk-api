@@ -386,4 +386,172 @@ router.post('/mpesa/callback', express.json(), validateMpesaIP, async (req, res)
   return res.json({ ResultCode: 0, ResultDesc: 'Success' });
 });
 
+/**
+ * M-Pesa B2C Result Callback
+ * Safaricom sends this when a B2C payment completes (success or fail).
+ * POST /api/v1/payments/mpesa/b2c/result
+ */
+router.post('/mpesa/b2c/result', express.json(), async (req, res) => {
+  console.log('================================================');
+  console.log('[B2C RESULT] Incoming Callback');
+  console.log('Body:', JSON.stringify(req.body, null, 2));
+  console.log('================================================');
+
+  const body = req.body || {};
+  const result = body.Result || {};
+
+  const conversationId = result.ConversationID || null;
+  const originatorConversationId = result.OriginatorConversationID || null;
+  const resultCode = Number(result.ResultCode ?? 1);
+  const resultDesc = result.ResultDesc || 'Unknown';
+  const transactionId = result.TransactionID || null;
+
+  const isSuccess = resultCode === 0;
+  const logStatus = isSuccess ? 0 : 1;
+
+  // Extract result parameters (amount, phone, receipt, etc.)
+  let transactionAmount = null;
+  let transactionReceipt = null;
+  let receiverPhone = null;
+
+  if (isSuccess && result.ResultParameters?.ResultParameter) {
+    for (const param of result.ResultParameters.ResultParameter) {
+      if (param.Key === 'TransactionAmount') transactionAmount = param.Value;
+      if (param.Key === 'TransactionReceipt') transactionReceipt = param.Value;
+      if (param.Key === 'ReceiverPartyPublicName') receiverPhone = param.Value;
+    }
+  }
+
+  console.log(`[B2C RESULT] ${isSuccess ? 'SUCCESS' : 'FAILED'} | ConvID: ${conversationId} | Code: ${resultCode} | Desc: ${resultDesc} | Receipt: ${transactionReceipt}`);
+
+  try {
+    // 1. Find and update the b2clog record
+    let payoutId = null;
+    if (conversationId) {
+      const [logs] = await db.query(
+        `SELECT id, payoutId, tenantId FROM b2clog WHERE conversationId = ? LIMIT 1`,
+        [conversationId]
+      );
+
+      if (logs.length > 0) {
+        payoutId = logs[0].payoutId;
+        await db.query(
+          `UPDATE b2clog SET status = ?, resultCode = ?, resultDesc = ?, transactionId = ?, transactionReceipt = ?, rawCallback = ?, updatedAt = NOW() WHERE id = ?`,
+          [logStatus, resultCode, resultDesc, transactionId, transactionReceipt, JSON.stringify(body), logs[0].id]
+        );
+      }
+    }
+
+    // 2. Update linked payout record
+    if (payoutId) {
+      const newStatus = isSuccess ? 'PAID' : 'FAILED';
+      await db.query(
+        `UPDATE payout SET status = ?, processedAt = NOW(), message = ?, updatedAt = NOW() WHERE id = ?`,
+        [newStatus, isSuccess ? `B2C Success: ${transactionReceipt || resultDesc}` : `B2C Failed: ${resultDesc}`, payoutId]
+      );
+      console.log(`[B2C RESULT] Payout ${payoutId} → ${newStatus}`);
+
+      // 3. Log activity
+      const [payoutRows] = await db.query(`SELECT tenantId FROM payout WHERE id = ?`, [payoutId]);
+      if (payoutRows.length > 0) {
+        await db.query(`
+          INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
+          VALUES (?, ?, NULL, ?, 'Financials', ?, NOW())
+        `, [
+          ulid(),
+          payoutRows[0].tenantId,
+          isSuccess ? 'B2C Payout Success' : 'B2C Payout Failed',
+          `${isSuccess ? 'Disbursement confirmed' : 'Disbursement failed'}: ${transactionReceipt || resultDesc} (KES ${transactionAmount || 'N/A'})`
+        ]);
+      }
+    }
+  } catch (err) {
+    console.error('[B2C RESULT] Critical processing error:', err);
+  }
+
+  // Always return success to Safaricom
+  return res.json({ ResultCode: 0, ResultDesc: 'Success' });
+});
+
+/**
+ * M-Pesa B2C Timeout Callback
+ * Safaricom sends this when a B2C request times out.
+ * POST /api/v1/payments/mpesa/b2c/timeout
+ */
+router.post('/mpesa/b2c/timeout', express.json(), async (req, res) => {
+  console.log('[B2C TIMEOUT] Received:', JSON.stringify(req.body, null, 2));
+
+  const body = req.body || {};
+  const result = body.Result || {};
+  const conversationId = result.ConversationID || null;
+  const resultDesc = result.ResultDesc || 'B2C Request Timed Out';
+
+  try {
+    if (conversationId) {
+      const [logs] = await db.query(
+        `SELECT id, payoutId FROM b2clog WHERE conversationId = ? LIMIT 1`,
+        [conversationId]
+      );
+
+      if (logs.length > 0) {
+        await db.query(
+          `UPDATE b2clog SET status = 3, resultDesc = ?, rawCallback = ?, updatedAt = NOW() WHERE id = ?`,
+          [resultDesc, JSON.stringify(body), logs[0].id]
+        );
+
+        // Mark payout as failed so it can be retried
+        if (logs[0].payoutId) {
+          await db.query(
+            `UPDATE payout SET status = 'FAILED', message = ?, updatedAt = NOW() WHERE id = ?`,
+            [`B2C Timeout: ${resultDesc}`, logs[0].payoutId]
+          );
+          console.log(`[B2C TIMEOUT] Payout ${logs[0].payoutId} → FAILED (timeout)`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[B2C TIMEOUT] Processing error:', err);
+  }
+
+  return res.json({ ResultCode: 0, ResultDesc: 'Success' });
+});
+
+/**
+ * B2C Disbursement Logs
+ * GET /api/v1/payments/b2c/logs
+ */
+router.get('/b2c/logs', authenticate, async (req, res) => {
+  const { role } = req.user;
+  if (role !== 'SUPER_ADMIN') {
+    return res.status(403).json({ success: false, message: 'Admin access required' });
+  }
+
+  const { page = 1, limit = 50, sortOrder = 'desc' } = req.query;
+  const order = sortOrder.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+  const offset = (Number(page) - 1) * Number(limit);
+
+  try {
+    const [logs] = await db.query(`
+      SELECT b.*, p.type as payoutType, t.businessName
+      FROM b2clog b
+      LEFT JOIN payout p ON b.payoutId = p.id
+      LEFT JOIN tenant t ON b.tenantId = t.id
+      ORDER BY b.createdAt ${order} LIMIT ? OFFSET ?
+    `, [Number(limit), offset]);
+
+    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM b2clog`);
+    const total = Number(countRes[0].total);
+
+    return res.json({
+      success: true,
+      data: {
+        items: logs,
+        pagination: { total, totalPages: Math.ceil(total / Number(limit)), page: Number(page), limit: Number(limit) }
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to fetch B2C logs' });
+  }
+});
+
 export default router;

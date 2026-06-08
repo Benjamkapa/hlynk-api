@@ -42,6 +42,7 @@ import platformRoutes from "./routes/platform.js";
 import etimsRoutes from "./routes/etims.js";
 import { startSubscriptionDaemon } from "./daemon/subscriptions.js";
 import { startEtimsDaemon } from "./daemon/etims.js";
+import { startPayoutDaemon } from "./daemon/payouts.js";
 import { db } from "./dbms/mysql.js";
 import { initStorage, minioClient } from "./utils/storage.js";
 
@@ -57,6 +58,7 @@ app.set('trust proxy', true);
 // Start background tasks
 startSubscriptionDaemon();
 startEtimsDaemon();
+startPayoutDaemon();
 
 // Middleware
 app.use(cors({
@@ -304,6 +306,32 @@ const startServer = async () => {
       }
 
       console.log('💰 eTIMS & KCB: Tables ready.');
+
+      // B2C Disbursement Log Table
+      await db.query(`CREATE TABLE IF NOT EXISTS b2clog (
+        id VARCHAR(26) PRIMARY KEY,
+        conversationId VARCHAR(255),
+        originatorConversationId VARCHAR(255),
+        phone VARCHAR(20),
+        amount DECIMAL(15,2),
+        payoutId VARCHAR(50),
+        tenantId VARCHAR(50),
+        remarks TEXT,
+        status INT DEFAULT 2, -- 0:Success, 1:Failed, 2:Pending, 3:Timeout
+        resultCode INT,
+        resultDesc TEXT,
+        transactionId VARCHAR(100),
+        transactionReceipt VARCHAR(100),
+        rawRequest MEDIUMTEXT,
+        rawResponse MEDIUMTEXT,
+        rawCallback MEDIUMTEXT,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_b2c_conv (conversationId),
+        INDEX idx_b2c_payout (payoutId),
+        INDEX idx_b2c_tenant (tenantId)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+      console.log('💸 B2C: Log table ready.');
     } catch (e) {
       console.warn('⚠️ Migration Warning:', e.message);
     }
