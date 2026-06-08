@@ -144,7 +144,7 @@ export const changePlan = async (req, res) => {
 
   try {
     const [recentPayments] = await db.query(`SELECT COUNT(*) as cnt FROM payment WHERE tenantId = ? AND createdAt > DATE_SUB(NOW(), INTERVAL 1 HOUR)`, [tenantId]);
-    if (recentPayments[0].cnt >= 5) {
+    if (recentPayments[0].cnt >= 15) {
       return res.status(429).json({ success: false, message: 'Too many payment attempts. Please wait before trying again.' });
     }
 
