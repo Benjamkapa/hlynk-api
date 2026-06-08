@@ -81,9 +81,10 @@ export const initiateRenewal = async (req, res) => {
   const { phone, months = 1 } = req.body; // Added months
 
   try {
+    const limit = process.env.NODE_ENV === 'development' ? 50 : 5;
     const [recentPayments] = await db.query(`SELECT COUNT(*) as cnt FROM payment WHERE tenantId = ? AND createdAt > DATE_SUB(NOW(), INTERVAL 1 HOUR)`, [tenantId]);
-    if (recentPayments[0].cnt >= 5) {
-      return res.status(429).json({ success: false, message: 'Too many payment attempts. Please wait before trying again.' });
+    if (recentPayments[0].cnt >= limit) {
+      return res.status(429).json({ success: false, message: `Too many payment attempts (${recentPayments[0].cnt}/${limit}). Please wait before trying again.` });
     }
 
     const [subs] = await db.query(`SELECT * FROM subscription WHERE tenantId = ? LIMIT 1`, [tenantId]);
@@ -143,9 +144,10 @@ export const changePlan = async (req, res) => {
   if (!PLAN_PRICES[newPlan]) return res.status(400).json({ success: false, message: 'Invalid plan' });
 
   try {
+    const limit = process.env.NODE_ENV === 'development' ? 50 : 5;
     const [recentPayments] = await db.query(`SELECT COUNT(*) as cnt FROM payment WHERE tenantId = ? AND createdAt > DATE_SUB(NOW(), INTERVAL 1 HOUR)`, [tenantId]);
-    if (recentPayments[0].cnt >= 15) {
-      return res.status(429).json({ success: false, message: 'Too many payment attempts. Please wait before trying again.' });
+    if (recentPayments[0].cnt >= limit) {
+      return res.status(429).json({ success: false, message: `Too many payment attempts (${recentPayments[0].cnt}/${limit}). Please wait before trying again.` });
     }
 
     const baseAmount = PLAN_PRICES[newPlan];
