@@ -1257,12 +1257,17 @@ export const markPayoutPaid = async (req, res) => {
           const result = await initiateB2C({
             amount: payoutAmount,
             phone: payoutPhone,
+            payoutId: payoutId,
+            tenantId: tenantId,
             remarks: `Hlynk ${payoutType} Payout`
           });
           console.log(`[B2C-INITIATED] Payout ${payoutId} for ${payoutPhone}: ${result.ResponseDescription}`);
+          // Mark as PROCESSING — the B2C callback will finalize to PAID or FAILED
+          await connection.query(`UPDATE payout SET status = 'PROCESSING', updatedAt = NOW() WHERE id = ?`, [payoutId]);
+        } else {
+          // Manual mark as paid (no B2C disbursement)
+          await connection.query(`UPDATE payout SET status = 'PAID', processedAt = NOW(), updatedAt = NOW() WHERE id = ?`, [payoutId]);
         }
-
-        await connection.query(`UPDATE payout SET status = 'PAID', updatedAt = NOW() WHERE id = ?`, [payoutId]);
       } else {
         // Legacy: Mark all pending rented payments as paid for this tenant
         const [result] = await connection.query(`
@@ -1376,14 +1381,16 @@ export const testB2C = async (req, res) => {
     const result = await initiateB2C({
       amount: Number(amount),
       phone,
-      remarks: remarks || 'Hlynk Diagnostic Test'
+      remarks: remarks || 'Hlynk Diagnostic Test',
+      tenantId: null,
+      payoutId: null
     });
     
     // Log the test action
     await db.query(`
       INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
       VALUES (?, NULL, ?, 'B2C Test Execution', 'System', ?, NOW())
-    `, [ulid(), req.user.userId, `B2C Test: KES ${amount} to ${phone}. Response: ${result.ResponseDescription}`]);
+    `, [ulid(), req.user.userId, `B2C Test: KES ${amount} to ${phone}. LogID: ${result.logId}. Response: ${result.ResponseDescription}`]);
 
     return res.json({ success: true, message: 'B2C Initiation Successful', data: result });
   } catch (err) {
