@@ -190,6 +190,9 @@ const startServer = async () => {
       if (!paymentColNames.includes('isRented')) {
         await db.query('ALTER TABLE payment ADD COLUMN isRented TINYINT DEFAULT 0 AFTER payoutStatus');
       }
+      if (!paymentColNames.includes('meta')) {
+        await db.query('ALTER TABLE payment ADD COLUMN meta JSON DEFAULT NULL');
+      }
 
       // Payout table
       await db.query(`CREATE TABLE IF NOT EXISTS payout (
