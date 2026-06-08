@@ -4,7 +4,7 @@ import 'dotenv/config';
 async function test() {
   console.log('--- DB Connection Test ---');
   const url = process.env.DATABASE_URL;
-  console.log('URL:', url.replace(/:[^:@]+@/, ':****@')); // mask password
+  console.log('URL:', url.replace(/:[^:@]+@/, ':****@')); // mask your password
   
   try {
     const conn = await mysql.createConnection(url);
