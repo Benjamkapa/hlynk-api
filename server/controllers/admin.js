@@ -1148,27 +1148,35 @@ export const getPayouts = async (req, res) => {
     const PLATFORM_SHARE_RATE = 0.15;
 
     // 1. Fetch ACTUAL Payout Records (Already batched or triggered)
+    // Using GROUP BY p.id to avoid duplicates if multiple users have the PROVIDER role
     const [payoutRecords] = await db.query(`
-      SELECT p.*, t.businessName, u.phone as tenantPhone, t.payoutAccount
+      SELECT p.*, t.businessName, ANY_VALUE(u.phone) as tenantPhone, t.payoutAccount
       FROM payout p
       JOIN tenant t ON p.tenantId = t.id
       JOIN user u ON t.id = u.tenantId AND u.role = 'PROVIDER'
       WHERE p.status = 'PENDING'
+      GROUP BY p.id
       ORDER BY p.createdAt DESC
     `);
 
     // 2. Fetch ACCRUED (Unbatched) Volume for Rented Paybill
+    // Uses UNION to catch:
+    //   a) Payments already correctly flagged isRented = 1
+    //   b) Payments where mpesalog confirms system paybill was used (historical bug guard)
     const [accruedPayments] = await db.query(`
-      SELECT 
-        p.tenantId, 
-        t.businessName, 
-        p.amount, 
-        p.createdAt,
-        s.trialEndDate
+      SELECT p.tenantId, t.businessName, p.amount, p.createdAt, s.trialEndDate
       FROM payment p
       JOIN tenant t ON p.tenantId = t.id
       LEFT JOIN subscription s ON s.tenantId = t.id
-      WHERE p.isRented = 1 AND p.payoutStatus = 0 AND p.status = 0
+      WHERE p.payoutStatus = 0 AND p.status = 0 AND (
+        p.isRented = 1
+        OR EXISTS (
+          SELECT 1 FROM mpesalog ml 
+          WHERE ml.checkoutRequestId = p.mpesaRequestId 
+          AND ml.type = 0 
+          AND ml.isRented = 1
+        )
+      )
     `);
 
     // Group accrued by tenant
@@ -1238,11 +1246,12 @@ export const markPayoutPaid = async (req, res) => {
       if (payoutId) {
         // Mark specific payout as PAID
         const [pRows] = await connection.query(`
-          SELECT p.*, t.payoutAccount, u.phone as tenantPhone 
+          SELECT p.*, t.payoutAccount, ANY_VALUE(u.phone) as tenantPhone 
           FROM payout p 
           JOIN tenant t ON p.tenantId = t.id 
           JOIN user u ON t.id = u.tenantId AND u.role = 'PROVIDER'
           WHERE p.id = ?
+          GROUP BY p.id
         `, [payoutId]);
         
         if (pRows.length === 0) throw new Error('Payout record not found');
@@ -1273,7 +1282,15 @@ export const markPayoutPaid = async (req, res) => {
         const [result] = await connection.query(`
            UPDATE payment 
            SET payoutStatus = 1, updatedAt = NOW() 
-           WHERE tenantId = ? AND isRented = 1 AND payoutStatus = 0 AND status = 0
+           WHERE tenantId = ? AND payoutStatus = 0 AND status = 0 AND (
+             isRented = 1 
+             OR EXISTS (
+               SELECT 1 FROM mpesalog ml 
+               WHERE ml.checkoutRequestId = payment.mpesaRequestId 
+               AND ml.type = 0 
+               AND ml.isRented = 1
+             )
+           )
         `, [tenantId]);
         
         await connection.query(`

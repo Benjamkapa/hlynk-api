@@ -10,14 +10,22 @@ async function processWeeklyPayouts() {
     try {
       await connection.beginTransaction();
 
-      // 1. Find all successful, un-payout-ed rented payments older than 7 days
-      // (or all if we just want to sweep them)
+      // 1. Find all successful, un-payout-ed rented payments
+      // (Safety net: also check mpesalog if isRented flag was missed on payment table)
       const [payments] = await connection.query(`
         SELECT p.*, t.payoutMethod, t.payoutAccount, s.trialEndDate
         FROM payment p
         JOIN tenant t ON p.tenantId = t.id
         LEFT JOIN subscription s ON s.tenantId = t.id
-        WHERE p.isRented = 1 AND p.status = 0 AND p.payoutStatus = 0
+        WHERE p.payoutStatus = 0 AND p.status = 0 AND (
+          p.isRented = 1
+          OR EXISTS (
+            SELECT 1 FROM mpesalog ml 
+            WHERE ml.checkoutRequestId = p.mpesaRequestId 
+            AND ml.type = 0 
+            AND ml.isRented = 1
+          )
+        )
         ORDER BY p.tenantId, p.createdAt ASC
       `);
 

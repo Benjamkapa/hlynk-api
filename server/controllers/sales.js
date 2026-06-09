@@ -4,6 +4,14 @@ import { initiateStkPush } from '../utils/mpesa.js';
 import { initiateKcbStkPush } from '../utils/kcb.js';
 import { decrypt } from '../utils/encryption.js';
 import { pushSaleToEtims } from './etims.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const _params = JSON.parse(fs.readFileSync(path.join(__dirname, '../configs/params.json'), 'utf8'));
+const SYSTEM_SHORTCODE = (process.env.MPESA_C2B_SHORTCODE || _params.mpesa_c2b_shortcode || '').trim();
+const SYSTEM_CONSUMER_KEY = (process.env.MPESA_CONSUMER_KEY || _params.mpesa_consumer_key || '').trim();
 
 export const listSales = async (req, res) => {
   const { tenantId } = req.user;
@@ -262,11 +270,29 @@ export const vendorMpesaPush = async (req, res) => {
       }
     }
 
+    // ──────────────────────────────────────────────────────────────────────
+    // RENTED PAYBILL DETECTION
+    // A provider is "renting" the system paybill if:
+    //   a) They have no custom credentials configured, OR
+    //   b) Their stored credentials match the system-level shortcode/consumerKey
+    //      (i.e. the super-admin vendor account saved the platform's own keys)
+    // ──────────────────────────────────────────────────────────────────────
     let isRented = false;
     if (!customCredentials || !customCredentials.consumerKey) {
-      // Allow renting system paybill
       isRented = true;
-      console.log(`[SALES] Tenant ${tenantId} is renting system paybill.`);
+      console.log(`[SALES] Tenant ${tenantId} is renting system paybill (no custom credentials).`);
+    } else {
+      // Check if they're using the system's own shortcode or consumer key
+      const providerShortcode = (customCredentials.shortcode || '').trim();
+      const providerKey = (customCredentials.consumerKey || '').trim();
+      const shortcodeMatchesSystem = SYSTEM_SHORTCODE && providerShortcode === SYSTEM_SHORTCODE;
+      const keyMatchesSystem = SYSTEM_CONSUMER_KEY && providerKey === SYSTEM_CONSUMER_KEY;
+
+      if (shortcodeMatchesSystem || keyMatchesSystem) {
+        isRented = true;
+        customCredentials = null; // Use system credentials — don't duplicate
+        console.log(`[SALES] Tenant ${tenantId} configured the SYSTEM paybill as their own — treating as rented.`);
+      }
     }
 
     const result = await initiateStkPush(
