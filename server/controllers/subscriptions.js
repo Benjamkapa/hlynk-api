@@ -413,12 +413,25 @@ export const getMyPayouts = async (req, res) => {
     const sub = subRows[0];
     const trialEnd = sub?.trialEndDate ? new Date(sub.trialEndDate) : null;
 
-    // 2. Get all successful rented payments
+    // 2. Get all successful rented payments for this tenant
+    // UNION catches: (a) properly-flagged records, and (b) mpesalog-confirmed records (historical bug guard)
     const [payments] = await db.query(`
       SELECT amount, createdAt, status, payoutStatus
-      FROM payment 
+      FROM payment
       WHERE tenantId = ? AND isRented = 1 AND status = 0
-    `, [tenantId]);
+
+      UNION
+
+      SELECT p.amount, p.createdAt, p.status, p.payoutStatus
+      FROM payment p
+      JOIN mpesalog ml ON ml.checkoutRequestId = p.mpesaRequestId
+                      AND ml.type = 0
+                      AND ml.isRented = 1
+      WHERE p.tenantId = ?
+        AND p.isRented = 0
+        AND p.status = 0
+        AND p.mpesaRequestId IS NOT NULL
+    `, [tenantId, tenantId]);
 
     let pendingGross = 0;
     let settledGross = 0;

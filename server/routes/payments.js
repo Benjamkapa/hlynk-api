@@ -16,7 +16,14 @@ router.post('/mpesa/stk-push', authenticate, async (req, res) => {
   try {
     const [tenants] = await db.query(`SELECT businessName FROM tenant WHERE id = ?`, [tenantId]);
     const tenantName = tenants[0]?.businessName || 'Tenant';
-    const result = await initiateStkPush({ phone, amount, reference }, null, { customerName: name, initiatorName: name, tenantName, tenantId });
+    const isRented = req.user.role === 'PROVIDER';
+    const result = await initiateStkPush({ phone, amount, reference }, null, { 
+      customerName: name, 
+      initiatorName: name, 
+      tenantName, 
+      tenantId,
+      isRented 
+    });
     return res.json({ success: true, data: result });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
@@ -29,7 +36,14 @@ router.post('/kcb/stk-push', authenticate, async (req, res) => {
   try {
     const [tenants] = await db.query(`SELECT businessName FROM tenant WHERE id = ?`, [tenantId]);
     const tenantName = tenants[0]?.businessName || 'Tenant';
-    const result = await initiateKcbStkPush({ phone, amount, reference }, null, { customerName: name, initiatorName: name, tenantName, tenantId });
+    const isRented = req.user.role === 'PROVIDER';
+    const result = await initiateKcbStkPush({ phone, amount, reference }, null, { 
+      customerName: name, 
+      initiatorName: name, 
+      tenantName, 
+      tenantId,
+      isRented 
+    });
     return res.json({ success: true, data: result });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
@@ -306,7 +320,7 @@ router.post('/mpesa/callback', express.json(), validateMpesaIP, async (req, res)
   try {
     const logStatus = success ? 0 : (canceled ? 3 : 1);
     const [rows] = await db.query(
-      `SELECT customerName, initiatorName, tenantName, tenantId FROM mpesalog WHERE checkoutRequestId = ? AND type = 0 LIMIT 1`,
+      `SELECT customerName, initiatorName, tenantName, tenantId, amount, phone, reference, isRented FROM mpesalog WHERE checkoutRequestId = ? AND type = 0 LIMIT 1`,
       [CheckoutRequestID]
     );
     initLog = rows[0];
@@ -335,8 +349,10 @@ router.post('/mpesa/callback', express.json(), validateMpesaIP, async (req, res)
     if (payments.length > 0) {
       const payment = payments[0];
       const status = canceled ? 3 : (success ? 0 : 1);
-      await db.query(`UPDATE payment SET status = ?, mpesaReceipt = ?, message = ?, rawResponse = ?, updatedAt = NOW() WHERE id = ?`,
-        [status, success ? mpesaReceipt : null, ResultDesc, JSON.stringify(req.body), payment.id]);
+      // Also sync isRented from initLog — fixes records created before the isRented detection was in place
+      const resolvedIsRented = initLog?.isRented === 1 ? 1 : payment.isRented;
+      await db.query(`UPDATE payment SET status = ?, mpesaReceipt = ?, message = ?, rawResponse = ?, isRented = ?, updatedAt = NOW() WHERE id = ?`,
+        [status, success ? mpesaReceipt : null, ResultDesc, JSON.stringify(req.body), resolvedIsRented, payment.id]);
 
       if (payment.transactionType === 'SUBSCRIPTION') {
         await handlePaymentCallback(payment.reference, mpesaReceipt, success, ResultDesc);
@@ -377,7 +393,32 @@ router.post('/mpesa/callback', express.json(), validateMpesaIP, async (req, res)
         }
       }
     } else {
-      console.warn(`[MASTER CALLBACK] Orphaned callback received for ID: ${CheckoutRequestID}. No matching record in Master Payment table.`);
+      if (initLog) {
+        console.log(`[MASTER CALLBACK] Auto-reconciling orphan for CheckoutID: ${CheckoutRequestID}`);
+        const status = canceled ? 3 : (success ? 0 : 1);
+        const paymentId = ulid();
+        
+        await db.query(`
+          INSERT INTO payment (id, tenantId, amount, phone, plan, status, reference, mpesaRequestId, mpesaReceipt, transactionType, isRented, message, rawResponse, createdAt, updatedAt)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'SALE', ?, ?, ?, NOW(), NOW())
+        `, [
+          paymentId,
+          initLog.tenantId,
+          initLog.amount || 0,
+          initLog.phone || 'UNKNOWN',
+          null,
+          status,
+          initLog.reference || CheckoutRequestID,
+          CheckoutRequestID,
+          success ? mpesaReceipt : null,
+          initLog.isRented || 1, // Default to 1 if we are in this situation
+          ResultDesc,
+          JSON.stringify(req.body)
+        ]);
+        console.log(`[MASTER CALLBACK] Created missing payment record: ${paymentId}`);
+      } else {
+        console.warn(`[MASTER CALLBACK] Orphaned callback received for ID: ${CheckoutRequestID}. No matching record in Master Payment table OR mpesalog.`);
+      }
     }
   } catch (err) {
     console.error('[MASTER CALLBACK] Critical processing error:', err);
