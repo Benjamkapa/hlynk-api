@@ -34,7 +34,7 @@ export const startPayoutDaemon = () => {
     }
   });
 
-  console.log('🏦 [Daemon] Payout scheduler started (Weekly Monday 06:00 EAT).');
+  // console.log('🏦 [Daemon] Payout scheduler started (Weekly Monday 06:00 EAT).');
 };
 
 /**

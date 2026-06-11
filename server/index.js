@@ -40,6 +40,7 @@ import serviceRoutes from "./routes/services.js";
 import requestRoutes from "./routes/requests.js";
 import platformRoutes from "./routes/platform.js";
 import etimsRoutes from "./routes/etims.js";
+import notificationRoutes from "./routes/notifications.js";
 import { startSubscriptionDaemon } from "./daemon/subscriptions.js";
 import { startEtimsDaemon } from "./daemon/etims.js";
 import { startPayoutDaemon } from "./daemon/payouts.js";
@@ -100,6 +101,7 @@ app.use("/api/v1/services", serviceRoutes);
 app.use("/api/v1/requests", requestRoutes);
 app.use("/api/v1/platform", platformRoutes);
 app.use("/api/v1/etims",    etimsRoutes);
+app.use("/api/v1/notifications", notificationRoutes);
 
 // Secure Storage Proxy (Fixes Mixed Content errors)
 app.get("/api/v1/storage/:bucket/:folder/:file", async (req, res) => {
@@ -305,7 +307,7 @@ const startServer = async () => {
         await db.query("ALTER TABLE kcblog ADD COLUMN updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER createdAt");
       }
 
-      console.log('💰 eTIMS & KCB: Tables ready.');
+      // console.log('💰 eTIMS & KCB: Tables ready.');
 
       // B2C Disbursement Log Table
       await db.query(`CREATE TABLE IF NOT EXISTS b2clog (
@@ -331,7 +333,21 @@ const startServer = async () => {
         INDEX idx_b2c_payout (payoutId),
         INDEX idx_b2c_tenant (tenantId)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
-      console.log('💸 B2C: Log table ready.');
+      // console.log('💸 B2C: Log table ready.');
+
+      // 5. Push Subscriptions Table
+      await db.query(`CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id VARCHAR(50) PRIMARY KEY,
+        userId VARCHAR(50),
+        tenantId VARCHAR(50),
+        endpoint TEXT NOT NULL,
+        p256dh TEXT NOT NULL,
+        auth TEXT NOT NULL,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_push_user (userId),
+        INDEX idx_push_tenant (tenantId)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
     } catch (e) {
       console.warn('⚠️ Migration Warning:', e.message);
     }
@@ -341,7 +357,7 @@ const startServer = async () => {
 
     // 4. Start Listener
     app.listen(PORT, () => {
-      console.log(`🚀 hlynk Server running on http://localhost:${PORT}`);
+      console.log(`🚀 Server running on http://127.0.0.1:${PORT}`);
       if (process.send) {
         process.send('ready');
       }

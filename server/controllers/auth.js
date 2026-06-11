@@ -145,11 +145,11 @@ export const googleAuth = async (req, res) => {
       try {
         await connection.beginTransaction();
 
-        const isTrialMode = registration.isTrial === true || registration.isTrial === 'true';
-        const requestedPlan = isTrialMode ? 'TRIAL' : (registration.planName || 'LITE');
-        const subStatus = (isTrialMode || requestedPlan === 'LITE') ? 2 : 1; 
+        // FORCE MAX PLAN FOR TRIAL (The "Full Experience")
+        const requestedPlan = 'MAX';
+        const subStatus = 2; // 2 = TRIAL
         
-        let trialDays = 14;
+        let trialDays = 14; 
         let referredById = null;
         let referralApplied = false;
 
@@ -157,12 +157,13 @@ export const googleAuth = async (req, res) => {
           const [refRows] = await connection.query(`SELECT ownerId FROM (SELECT u.id as ownerId, t.referralCode FROM user u JOIN tenant t ON u.tenantId = t.id WHERE u.role = 'PROVIDER') as refs WHERE referralCode = ? LIMIT 1`, [registration.referralCode.trim().toUpperCase()]);
           if (refRows.length > 0) {
             referredById = refRows[0].ownerId;
+            // You can optionally give extra trial days for referrals here if desired
             trialDays = 14; 
             referralApplied = true;
           }
         }
 
-        const trialEndVal = (isTrialMode || requestedPlan === 'LITE') ? `DATE_ADD(NOW(), INTERVAL ${trialDays} DAY)` : `NULL`;
+        const trialEndVal = `DATE_ADD(NOW(), INTERVAL ${trialDays} DAY)`;
 
         // Generate a new unique referral code for this tenant
         const newReferralCode = (registration.businessName.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase());

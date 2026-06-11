@@ -7,6 +7,7 @@ import { authenticate } from '../middleware/auth.js';
 import { validateMpesaIP } from '../middleware/ipWhitelist.js';
 import { ulid } from 'ulid';
 import { pushSaleToEtims } from '../controllers/etims.js';
+import { sendPushToTenant } from '../controllers/notifications.js';
 
 const router = express.Router();
 
@@ -154,6 +155,13 @@ router.post('/kcb/callback', express.json(), async (req, res) => {
             pushSaleToEtims(tenantId, sale.id).catch(err =>
               console.error(`[eTIMS] KCB success push failed for sale ${sale.id}:`, err.message)
             );
+            
+            // alert the provider
+            sendPushToTenant(tenantId, {
+              title: 'Payment Received! 💰',
+              body: `KES ${payment.amount} received via KCB for sale #${sale.id.slice(-6).toUpperCase()}`,
+              data: { url: '/dashboard/sales' }
+            }).catch(e => console.error('[PUSH] Failed to alert provider:', e.message));
           });
         }
       } else {
@@ -371,6 +379,13 @@ router.post('/mpesa/callback', express.json(), validateMpesaIP, async (req, res)
                 pushSaleToEtims(saleRow.tenantId, saleId).catch(err =>
                   console.error(`[eTIMS] MPesa callback push failed for sale ${saleId}:`, err.message)
                 );
+
+                // alert the provider
+                sendPushToTenant(saleRow.tenantId, {
+                  title: 'Payment Received! 💰',
+                  body: `KES ${payment.amount} received via M-Pesa for sale #${saleId.slice(-6).toUpperCase()}`,
+                  data: { url: '/dashboard/sales' }
+                }).catch(e => console.error('[PUSH] Failed to alert provider:', e.message));
               });
             }
           }
