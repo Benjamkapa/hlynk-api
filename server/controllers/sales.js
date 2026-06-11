@@ -4,6 +4,7 @@ import { initiateStkPush } from '../utils/mpesa.js';
 import { initiateKcbStkPush } from '../utils/kcb.js';
 import { decrypt } from '../utils/encryption.js';
 import { pushSaleToEtims } from './etims.js';
+import { sendPushToTenant } from './notifications.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -171,6 +172,20 @@ export const createSale = async (req, res) => {
       // Update inventory (Physical Goods only)
       if (item.productId) {
         await connection.query(`UPDATE product SET stockLevel = stockLevel - ? WHERE id = ? AND tenantId = ? AND type != 'SERVICE'`, [item.quantity, item.productId, tenantId]);
+        
+        // Low Stock Check
+        const [[prod]] = await connection.query(`SELECT p.name, p.stockLevel, pr.operationalSettings FROM product p JOIN provider pr ON p.tenantId = pr.tenantId WHERE p.id = ?`, [item.productId]);
+        if (prod) {
+          const ops = typeof prod.operationalSettings === 'string' ? JSON.parse(prod.operationalSettings) : prod.operationalSettings;
+          const threshold = ops?.lowStockThreshold || 5;
+          if (prod.stockLevel <= threshold) {
+            sendPushToTenant(tenantId, {
+              title: 'Low Stock Alert! ⚠️',
+              body: `Only ${prod.stockLevel} left of "${prod.name}". Time to restock!`,
+              data: { url: '/dashboard/products' }
+            }).catch(e => console.error('[PUSH] Low stock alert failed:', e.message));
+          }
+        }
       }
     }
 

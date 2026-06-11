@@ -1121,15 +1121,15 @@ export const registerTenant = async (req, res) => {
       [ulid(), tenantId, userId, businessName, phone, category || 'Other']
     );
 
-    // 4. Initialize subscription
-    const isTrial = planName === 'LITE' || planName === 'BUSINESS_PRO';
-    const subStatus = isTrial ? 2 : 1; 
-    const trialEndQuery = isTrial ? 'DATE_ADD(NOW(), INTERVAL 14 DAY)' : 'NULL';
+    // 4. Initialize subscription (FORCE MAX for 14-day trial experience)
+    const requestedPlan = 'MAX';
+    const subStatus = 2; // 2 = TRIAL
+    const trialEndQuery = 'DATE_ADD(NOW(), INTERVAL 14 DAY)';
     
     await connection.query(
       `INSERT INTO subscription (id, tenantId, planName, status, trialEndDate, createdAt, updatedAt) 
        VALUES (?, ?, ?, ?, ${trialEndQuery}, NOW(), NOW())`,
-      [subId, tenantId, planName, subStatus]
+      [subId, tenantId, requestedPlan, subStatus]
     );
 
     await connection.commit();
