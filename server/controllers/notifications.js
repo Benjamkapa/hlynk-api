@@ -134,3 +134,45 @@ export const sendPushToTenant = async (tenantId, message) => {
         console.error('sendPushToTenant Error:', error);
     }
 };
+
+// Utility to send push to all Super Admins
+export const sendPushToAdmins = async (message) => {
+    try {
+        // Find subscriptions belonging to users with SUPER_ADMIN role
+        const [subs] = await db.query(`
+            SELECT ps.* 
+            FROM push_subscriptions ps
+            JOIN user u ON ps.userId = u.id
+            WHERE u.role = 'SUPER_ADMIN'
+        `);
+        
+        if (subs.length === 0) return;
+
+        const payload = JSON.stringify({
+            title: message.title || 'hlynk System Alert',
+            body: message.body,
+            icon: message.icon || '/logo.png',
+            data: message.data || {}
+        });
+
+        await Promise.all(subs.map(async (sub) => {
+            const pushSubscription = {
+                endpoint: sub.endpoint,
+                keys: {
+                    p256dh: sub.p256dh,
+                    auth: sub.auth
+                }
+            };
+
+            try {
+                await webPush.sendNotification(pushSubscription, payload);
+            } catch (err) {
+                if (err.statusCode === 410 || err.statusCode === 404) {
+                    await db.query('DELETE FROM push_subscriptions WHERE id = ?', [sub.id]);
+                }
+            }
+        }));
+    } catch (error) {
+        console.error('sendPushToAdmins Error:', error);
+    }
+};

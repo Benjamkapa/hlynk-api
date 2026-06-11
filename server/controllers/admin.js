@@ -1,6 +1,7 @@
 import { db } from '../dbms/mysql.js';
 import { minioClient, bucketName } from '../utils/storage.js';
 import { initiateB2C } from '../utils/mpesa.js';
+import { sendPushToAdmins } from './notifications.js';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { ulid } from 'ulid';
@@ -1133,6 +1134,14 @@ export const registerTenant = async (req, res) => {
     );
 
     await connection.commit();
+
+    // Notify Super Admins of new registration
+    sendPushToAdmins({
+      title: 'New Business Joined! 🚀',
+      body: `${businessName} has registered. Plan: MAX (Trial)`,
+      data: { url: '/admin/businesses' }
+    }).catch(e => console.error('[PUSH] Admin registration alert failed:', e.message));
+
     return res.json({ success: true, message: 'Business and primary owner registered successfully', data: { tenantId, slug } });
   } catch (err) {
     await connection.rollback();
@@ -1305,6 +1314,14 @@ export const markPayoutPaid = async (req, res) => {
       `, [ulid(), tenantId, adminId, `Marked payout ${payoutId || 'bulk'} as PAID${disburse ? ' and disbursed via M-Pesa' : ''}`]);
 
       await connection.commit();
+
+      // Notify Super Admins of payout settlement
+      sendPushToAdmins({
+        title: 'Payout Settled 💳',
+        body: `${disburse ? 'Automated' : 'Manual'} payout of KES ${payoutAmount} processed for ${payoutPhone}.`,
+        data: { url: '/admin/financials' }
+      }).catch(e => console.error('[PUSH] Admin payout alert failed:', e.message));
+
       return res.json({ success: true, message: disburse ? `Successfully initiated disbursement and marked as paid.` : `Successfully marked payout as paid.` });
     } catch (err) {
       await connection.rollback();
@@ -1408,6 +1425,13 @@ export const testB2C = async (req, res) => {
       INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
       VALUES (?, NULL, ?, 'B2C Test Execution', 'System', ?, NOW())
     `, [ulid(), req.user.userId, `B2C Test: KES ${amount} to ${phone}. LogID: ${result.logId}. Response: ${result.ResponseDescription}`]);
+
+    // Notify Super Admins of B2C test
+    sendPushToAdmins({
+      title: 'B2C Test Executed 🧪',
+      body: `KES ${amount} test disbursement to ${phone}. Host: ${os.hostname()}`,
+      data: { url: '/admin/system-performance' }
+    }).catch(e => console.error('[PUSH] Admin B2C test alert failed:', e.message));
 
     return res.json({ success: true, message: 'B2C Initiation Successful', data: result });
   } catch (err) {

@@ -1,4 +1,5 @@
 import { db } from '../dbms/mysql.js';
+import { sendPushToAdmins } from './notifications.js';
 
 export const getPublicStats = async (req, res) => {
   try {
@@ -98,6 +99,13 @@ export const submitPlatformReview = async (req, res) => {
       INSERT INTO platformreview (id, tenantId, userId, rating, reviewText, businessName, ownerName, status, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, 0, NOW())
     `, [reviewId, tenantId, userId, rating, reviewText, tenant?.businessName || 'Business', user?.name || 'Owner']);
+
+    // Notify Super Admins of new review
+    sendPushToAdmins({
+      title: 'New Platform Review ⭐',
+      body: `Review from ${user?.name || 'Owner'} (${tenant?.businessName}): "${reviewText.substring(0, 50)}${reviewText.length > 50 ? '...' : ''}"`,
+      data: { url: '/admin/reviews' }
+    }).catch(e => console.error('[PUSH] Admin notification failed:', e.message));
 
     return res.json({ success: true, message: 'Review submitted successfully' });
   } catch (err) {
