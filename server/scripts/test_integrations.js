@@ -194,6 +194,7 @@ async function run() {
   await testKcb();
   await printChecklist();
 
+  
   process.exit(0);
 }
 
