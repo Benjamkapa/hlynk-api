@@ -539,7 +539,7 @@ export const deleteUser = async (req, res) => {
     // Log Action
     await db.query(`
       INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
-      VALUES (?, NULL, ?, 'User Deleted', 'Danger', ?, NOW())
+      VALUES (?, 'SYSTEM', ?, 'User Deleted', 'Danger', ?, NOW())
     `, [ulid(), req.user.userId, `Deleted user ID: ${req.params.id}`]);
 
     return res.json({ success: true, message: 'User deleted' });
@@ -1423,7 +1423,7 @@ export const testB2C = async (req, res) => {
     // Log the test action
     await db.query(`
       INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
-      VALUES (?, NULL, ?, 'B2C Test Execution', 'System', ?, NOW())
+      VALUES (?, 'SYSTEM', ?, 'B2C Test Execution', 'System', ?, NOW())
     `, [ulid(), req.user.userId, `B2C Test: KES ${amount} to ${phone}. LogID: ${result.logId}. Response: ${result.ResponseDescription}`]);
 
     // Notify Super Admins of B2C test

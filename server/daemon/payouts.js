@@ -179,7 +179,7 @@ async function processPendingPayouts() {
   // Log summary
   await db.query(`
     INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
-    VALUES (?, NULL, NULL, 'Automated Payout Cycle', 'System', ?, NOW())
+    VALUES (?, 'SYSTEM', NULL, 'Automated Payout Cycle', 'System', ?, NOW())
   `, [
     ulid(),
     `Weekly payout cycle: ${successCount} initiated, ${failCount} failed out of ${pendingPayouts.length} total.`
