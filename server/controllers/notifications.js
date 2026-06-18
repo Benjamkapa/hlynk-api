@@ -28,13 +28,13 @@ export const subscribe = async (req, res) => {
             // Update existing subscription
             await db.query(
                 'UPDATE push_subscriptions SET userId = ?, tenantId = ?, p256dh = ?, auth = ?, updatedAt = NOW() WHERE endpoint = ?',
-                [userId, tenantId, subscription.keys.p256dh, subscription.keys.auth, subscription.endpoint]
+                [userId, tenantId || null, subscription.keys.p256dh, subscription.keys.auth, subscription.endpoint]
             );
         } else {
             // Insert new subscription
             await db.query(
                 'INSERT INTO push_subscriptions (id, userId, tenantId, endpoint, p256dh, auth) VALUES (?, ?, ?, ?, ?, ?)',
-                [ulid(), userId, tenantId, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth]
+                [ulid(), userId, tenantId || null, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth]
             );
         }
 

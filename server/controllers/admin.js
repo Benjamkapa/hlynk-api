@@ -19,7 +19,7 @@ const JWT_EXPIRES_IN = '15m';
 const IS_PROD = params.env !== 'LOCAL';
 export const getSystemStats = async (req, res) => {
   try {
-    const [providersCount] = await db.query(`SELECT COUNT(*) as total FROM tenant`);
+    const [providersCount] = await db.query(`SELECT COUNT(*) as total FROM user WHERE role = 'PROVIDER'`);
     const [payingProviders] = await db.query(`SELECT COUNT(*) as total FROM subscription WHERE status = 0`);
     const [totalRevenue] = await db.query(`SELECT SUM(amount) as total FROM payment WHERE status = 0`);
     
