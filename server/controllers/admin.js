@@ -1,7 +1,7 @@
 import { db } from '../dbms/mysql.js';
 import { minioClient, bucketName } from '../utils/storage.js';
 import { initiateB2C } from '../utils/mpesa.js';
-import { sendPushToAdmins } from './notifications.js';
+import { sendPushToAdmins, sendPushToTenant, createNotification } from './notifications.js';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { ulid } from 'ulid';
@@ -630,6 +630,9 @@ export const upgradePlan = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Subscription not found for this tenant' });
     }
 
+    const getPlanName = (p) => p === 'MAX' ? 'Business Pro' : p === 'PLUS' ? 'Growth' : 'Starter';
+    const displayPlan = getPlanName(planName);
+
     // Force switch to active status with new plan
     await db.query(`
       UPDATE subscription 
@@ -637,22 +640,20 @@ export const upgradePlan = async (req, res) => {
       WHERE tenantId = ?
     `, [planName, id]);
 
-    // Also notify the tenant
-    await db.query(`
-      INSERT INTO notification (id, tenantId, title, message, type, status, createdAt) 
-      VALUES (?, ?, ?, ?, 'SYSTEM', 0, NOW())
-    `, [
-      ulid(), 
-      id, 
-      'Subscription Upgraded', 
-      `Your subscription has been manually upgraded to ${planName} by the Super Admin.`
-    ]);
+    // Notify Tenant (DB + Push)
+    await createNotification({
+      tenantId: id,
+      title: '🎉 Subscription Upgraded!',
+      message: `Your account has been upgraded to the ${displayPlan} plan by hlynk Support. Enjoy your new features!`,
+      type: 'success',
+      data: { url: '/dashboard/subscription' }
+    });
 
-    // 3. Log Action
+    // Log Action
     await db.query(`
       INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
       VALUES (?, ?, ?, 'Plan Upgrade', 'Billing', ?, NOW())
-    `, [ulid(), id, req.user.userId, `Upgraded to ${planName}`]);
+    `, [ulid(), id, req.user.userId, `Upgraded to ${planName} (${displayPlan})`]);
 
     return res.json({ success: true, message: 'Subscription upgraded' });
   } catch (err) {
@@ -662,14 +663,25 @@ export const upgradePlan = async (req, res) => {
 };
 
 export const suspendTenant = async (req, res) => {
+  const tenantId = req.params.id;
   try {
-    await db.query(`UPDATE tenant SET isActive = 0 WHERE id = ?`, [req.params.id]);
-    await db.query(`UPDATE user SET isActive = 0 WHERE tenantId = ?`, [req.params.id]);
+    await db.query(`UPDATE tenant SET isActive = 0 WHERE id = ?`, [tenantId]);
+    await db.query(`UPDATE user SET isActive = 0 WHERE tenantId = ?`, [tenantId]);
+
+    // Notify Tenant
+    await createNotification({
+      tenantId,
+      title: '⚠️ Account Suspended',
+      message: 'Your account has been temporarily suspended by hlynk Support. Contact us if you believe this is an error.',
+      type: 'warning',
+      data: { url: '/dashboard/subscription' }
+    });
+
     // Log Action
     await db.query(`
       INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
       VALUES (?, ?, ?, 'Tenant Suspended', 'Security', ?, NOW())
-    `, [ulid(), req.params.id, req.user.userId, 'Tenant and all associated users suspended by Admin']);
+    `, [ulid(), tenantId, req.user.userId, 'Tenant and all associated users suspended by Admin']);
 
     return res.json({ success: true, message: 'Tenant suspended' });
   } catch (err) {
@@ -678,18 +690,89 @@ export const suspendTenant = async (req, res) => {
 };
 
 export const activateTenant = async (req, res) => {
+  const tenantId = req.params.id;
   try {
-    await db.query(`UPDATE tenant SET isActive = 1 WHERE id = ?`, [req.params.id]);
-    await db.query(`UPDATE user SET isActive = 1 WHERE tenantId = ?`, [req.params.id]);
+    await db.query(`UPDATE tenant SET isActive = 1 WHERE id = ?`, [tenantId]);
+    await db.query(`UPDATE user SET isActive = 1 WHERE tenantId = ?`, [tenantId]);
+
+    // Notify Tenant
+    await createNotification({
+      tenantId,
+      title: '✅ Account Reactivated',
+      message: 'Great news! Your hlynk account has been reactivated. You can resume all operations now.',
+      type: 'success',
+      data: { url: '/dashboard' }
+    });
+
     // Log Action
     await db.query(`
       INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
       VALUES (?, ?, ?, 'Tenant Activated', 'Security', ?, NOW())
-    `, [ulid(), req.params.id, req.user.userId, 'Tenant and all associated users activated by Admin']);
+    `, [ulid(), tenantId, req.user.userId, 'Tenant and all associated users activated by Admin']);
 
     return res.json({ success: true, message: 'Tenant activated' });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to activate tenant' });
+  }
+};
+
+export const extendSubscriptionDays = async (req, res) => {
+  const { id } = req.params; // tenantId
+  const { days, reason } = req.body;
+
+  if (!days || isNaN(Number(days))) {
+    return res.status(400).json({ success: false, message: 'Valid number of days required' });
+  }
+
+  const daysNum = Number(days);
+
+  try {
+    const [subs] = await db.query(`SELECT * FROM subscription WHERE tenantId = ? LIMIT 1`, [id]);
+    if (subs.length === 0) {
+      return res.status(404).json({ success: false, message: 'Subscription not found' });
+    }
+
+    const sub = subs[0];
+    const isTrial = Number(sub.status) === 2 || sub.status === 'TRIAL';
+    const dateField = isTrial ? 'trialEndDate' : 'endDate';
+
+    // Calculate new end date: extend from current end (or now if expired)
+    const currentEnd = sub[dateField] ? new Date(sub[dateField]) : new Date();
+    const baseDate = currentEnd > new Date() ? currentEnd : new Date();
+    const newEnd = new Date(baseDate);
+    newEnd.setDate(newEnd.getDate() + daysNum);
+
+    await db.query(
+      `UPDATE subscription SET ${dateField} = ?, updatedAt = NOW() WHERE tenantId = ?`,
+      [newEnd, id]
+    );
+
+    const direction = daysNum > 0 ? 'extended' : 'reduced';
+    const absDays = Math.abs(daysNum);
+    const reasonNote = reason ? ` Reason: ${reason}` : '';
+    const notifMsg = daysNum > 0
+      ? `Your subscription has been extended by ${absDays} day${absDays !== 1 ? 's' : ''} by hlynk Support.${reasonNote} New expiry: ${newEnd.toDateString()}.`
+      : `Your subscription has been adjusted by ${absDays} day${absDays !== 1 ? 's' : ''}.${reasonNote} New expiry: ${newEnd.toDateString()}.`;
+
+    // Notify Tenant
+    await createNotification({
+      tenantId: id,
+      title: daysNum > 0 ? `⏳ ${absDays} Days Added to Your Account!` : `📅 Subscription Days Adjusted`,
+      message: notifMsg,
+      type: 'success',
+      data: { url: '/dashboard/subscription' }
+    });
+
+    // Activity log
+    await db.query(`
+      INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt)
+      VALUES (?, ?, ?, 'Subscription Days Adjusted', 'Billing', ?, NOW())
+    `, [ulid(), id, req.user.userId, `${direction} by ${absDays} days via admin. New ${dateField}: ${newEnd.toISOString()}. ${reason || ''}`.trim()]);
+
+    return res.json({ success: true, message: `Subscription ${direction} by ${absDays} days. New expiry: ${newEnd.toDateString()}`, data: { newEnd } });
+  } catch (err) {
+    console.error('[EXTEND-DAYS] Error:', err);
+    return res.status(500).json({ success: false, message: err.message || 'Failed to extend subscription' });
   }
 };
 

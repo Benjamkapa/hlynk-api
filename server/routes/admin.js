@@ -31,7 +31,8 @@ import {
   updateTenantPayoutAccount,
   listNewPayouts,
   getVaultStats,
-  testB2C
+  testB2C,
+  extendSubscriptionDays
 } from '../controllers/admin.js';
 
 import { authenticate, requireAdmin } from '../middleware/auth.js';
@@ -44,6 +45,7 @@ router.use(requireAdmin);
 router.get('/stats', getSystemStats);
 router.get('/tenants', listTenants);
 router.put('/tenants/:id/upgrade', upgradePlan);
+router.post('/tenants/:id/extend-days', extendSubscriptionDays);
 router.put('/tenants/:id/suspend', suspendTenant);
 router.put('/tenants/:id/activate', activateTenant);
 router.delete('/tenants/:id', deleteTenant);
