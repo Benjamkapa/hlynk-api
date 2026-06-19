@@ -1,6 +1,12 @@
 import { db } from '../dbms/mysql.js';
 import webPush from 'web-push';
 import { ulid } from 'ulid';
+import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(__dirname, '../.env') });
 
 // Initialize web-push with VAPID keys
 const setupWebPush = () => {
@@ -110,6 +116,7 @@ export const sendPushToTenant = async (tenantId, message) => {
             title: message.title || 'hlynk Alert',
             body: message.body,
             icon: message.icon || '/logo.png',
+            type: message.type || 'info',
             data: message.data || {}
         });
 
@@ -152,6 +159,7 @@ export const sendPushToAdmins = async (message) => {
             title: message.title || 'hlynk System Alert',
             body: message.body,
             icon: message.icon || '/logo.png',
+            type: message.type || 'info',
             data: message.data || {}
         });
 
@@ -174,5 +182,110 @@ export const sendPushToAdmins = async (message) => {
         }));
     } catch (error) {
         console.error('sendPushToAdmins Error:', error);
+    }
+};
+
+/**
+ * Utility to create a notification (DB + Push) for a specific tenant
+ */
+export const createNotification = async ({ tenantId, title, message, type = 'info', data = {} }) => {
+  try {
+    // 1. Insert into database (for in-app bell)
+    await db.query(`
+      INSERT INTO notification (id, tenantId, title, message, type, status, createdAt) 
+      VALUES (?, ?, ?, ?, ?, 0, NOW())
+    `, [ulid(), tenantId, title, message, type]);
+
+    // 2. Send push notification (for OS-level tray)
+    await sendPushToTenant(tenantId, { title, body: message, type, data });
+    
+    return true;
+  } catch (err) {
+    console.error('createNotification Error:', err);
+    return false;
+  }
+};
+
+/**
+ * Super Admin Broadcast Controller
+ */
+export const broadcastNotification = async (req, res) => {
+    try {
+        const { target, emails, title, message, type = 'info' } = req.body;
+        
+        // Safety check
+        if (req.user.role !== 'SUPER_ADMIN') {
+            return res.status(403).json({ success: false, message: 'Only Super Admins can broadcast notifications' });
+        }
+
+        if (!title || !message) {
+            return res.status(400).json({ success: false, message: 'Title and message are required' });
+        }
+
+        let targetTenants = [];
+
+        if (target === 'all') {
+            const [tenants] = await db.query('SELECT id FROM tenant');
+            targetTenants = tenants.map(t => t.id);
+        } else if (target === 'specific') {
+            // Support both array and comma-separated string
+            const emailList = Array.isArray(emails) 
+                ? emails 
+                : emails.split(',').map(e => e.trim()).filter(e => e.includes('@'));
+
+            if (emailList.length === 0) {
+                return res.status(400).json({ success: false, message: 'Invalid or empty email list' });
+            }
+
+            const [users] = await db.query('SELECT DISTINCT tenantId FROM user WHERE email IN (?)', [emailList]);
+            targetTenants = users.map(u => u.tenantId).filter(id => id !== null);
+        }
+
+        if (targetTenants.length === 0) {
+            return res.status(404).json({ success: false, message: 'No matching users found' });
+        }
+
+        // Send to all targets (createNotification handles both DB and Push)
+        await Promise.all(targetTenants.map(tenantId => 
+            createNotification({ tenantId, title, message, type })
+        ));
+
+        res.status(200).json({ 
+            success: true, 
+            message: `Successfully sent to ${targetTenants.length} vendors`,
+            count: targetTenants.length
+        });
+    } catch (error) {
+        console.error('Broadcast Error:', error);
+        res.status(500).json({ success: false, message: 'Internal server error during broadcast' });
+    }
+};
+
+/**
+ * Super Admin User Search (for suggestions)
+ */
+export const searchUsers = async (req, res) => {
+    try {
+        if (req.user.role !== 'SUPER_ADMIN') {
+            return res.status(403).json({ success: false, message: 'Unauthorized' });
+        }
+
+        const { query = '' } = req.query;
+        
+        // Find users matching email or name, limited to 50 for performance
+        const [users] = await db.query(`
+            SELECT id, name, email, role 
+            FROM user 
+            WHERE email LIKE ? OR name LIKE ?
+            LIMIT 50
+        `, [`%${query}%`, `%${query}%`]);
+
+        res.status(200).json({ 
+            success: true, 
+            items: users 
+        });
+    } catch (error) {
+        console.error('Search Users Error:', error);
+        res.status(500).json({ success: false, message: 'Failed to search users' });
     }
 };
