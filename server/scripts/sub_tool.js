@@ -1,4 +1,5 @@
 import { db } from '../dbms/mysql.js';
+import { createNotification } from '../controllers/notifications.js';
 
 const args = process.argv.slice(2);
 const command = args[0]; // 'check', 'gift', or 'expire'
@@ -88,6 +89,14 @@ async function run() {
       console.log(`Reference Date: ${baseDate.toLocaleString()}`);
       console.log(`New Expiry:     ${newEnd.toLocaleString()}`);
       console.log(`Status:         ACTIVE (0)`);
+
+      // Notify the provider
+      await createNotification({
+        tenantId,
+        title: `🎁 ${value} Gift Days Added!`,
+        message: `hlynk Support has gifted your account ${value} extra days. Your new expiry is ${newEnd.toDateString()}.`,
+        type: 'success'
+      });
     } else if (command === 'expire') {
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
@@ -97,6 +106,14 @@ async function run() {
       console.log(`\n🥀 SUCCESS: subscription for ${businessName} has been EXPIRED.`);
       console.log(`New Expiry (Simulated): ${yesterday.toLocaleString()}`);
       console.log(`Status set to: 1 (EXPIRED)`);
+
+      // Notify the provider
+      await createNotification({
+        tenantId,
+        title: '⌛ Subscription Expired',
+        message: 'Your subscription has been manually expired by Support. Please renew to continue using the platform.',
+        type: 'warning'
+      });
     }
 
     process.exit(0);

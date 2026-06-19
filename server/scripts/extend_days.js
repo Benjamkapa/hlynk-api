@@ -1,4 +1,5 @@
 import { db, pool } from '../dbms/mysql.js';
+import { createNotification } from '../controllers/notifications.js';
 
 const args = process.argv.slice(2);
 if (args.length === 0) {
@@ -6,12 +7,22 @@ if (args.length === 0) {
   process.exit(1);
 }
 
-// Check if the last argument is a number (days). If so, pop it. Otherwise, default to 30.
-let daysToAdd = 30;
-const lastArg = parseInt(args[args.length - 1]);
-if (!isNaN(lastArg)) {
-  daysToAdd = lastArg;
-  args.pop(); // remove the number from the list of emails
+// Find the first argument that is a valid number (could be positive or negative)
+let daysToAdd = 0;
+let foundNumIndex = -1;
+
+for (let i = 0; i < args.length; i++) {
+  const parsed = parseInt(args[i]);
+  // We check if it's a number and if it's NOT an email (emails usually don't parse to full numbers)
+  if (!isNaN(parsed) && String(parsed) === args[i]) {
+    daysToAdd = parsed;
+    foundNumIndex = i;
+    break;
+  }
+}
+
+if (foundNumIndex !== -1) {
+  args.splice(foundNumIndex, 1);
 }
 
 const emails = args;
@@ -21,7 +32,7 @@ const extendDays = async () => {
     for (const email of emails) {
       // 1. Find user and tenant
       const [users] = await db.query('SELECT tenantId, name FROM user WHERE email = ? LIMIT 1', [email]);
-      
+
       if (users.length === 0) {
         console.error(`❌ Error: User with email ${email} not found.`);
         continue;
@@ -32,30 +43,53 @@ const extendDays = async () => {
 
       // 2. Check current subscription
       const [subs] = await db.query('SELECT * FROM subscription WHERE tenantId = ? LIMIT 1', [tenantId]);
-      
+
       if (subs.length === 0) {
         console.error(`❌ Error: No subscription record found for tenant ${tenantId}.`);
         continue;
       }
 
       const sub = subs[0];
+      const now = new Date();
       let currentEndDate = new Date(sub.endDate);
-      
-      // If expired, start from today. If still active, extend from existing endDate.
-      const startFrom = currentEndDate > new Date() ? currentEndDate : new Date();
-      const newEndDate = new Date(startFrom);
+
+      let newEndDate;
+      if (daysToAdd > 0) {
+        // Extending: Start from existing end date if still active, otherwise start from now
+        const baseDate = currentEndDate > now ? currentEndDate : now;
+        newEndDate = new Date(baseDate);
+      } else {
+        // Reducing: Always subtract from the current end date
+        newEndDate = new Date(currentEndDate);
+      }
       newEndDate.setDate(newEndDate.getDate() + daysToAdd);
 
-      // 3. Update subscription
+      // 3. Update subscription (Automatically expire if date is now in the past)
+      const newStatus = newEndDate > now ? 0 : 1;
+
       await db.query(`
         UPDATE subscription 
-        SET endDate = ?, status = 0, updatedAt = NOW() 
+        SET endDate = ?, status = ?, updatedAt = NOW() 
         WHERE tenantId = ?
-      `, [newEndDate, tenantId]);
+      `, [newEndDate, newStatus, tenantId]);
 
-      console.log(`✅ Success! Subscription for ${email} extended by ${daysToAdd} days.`);
+      const actionText = daysToAdd >= 0 ? 'extended' : 'reduced';
+      const statusText = newStatus === 0 ? 'ACTIVE' : 'EXPIRED';
+
+      console.log(`✅ Success! Subscription for ${email} ${actionText} by ${Math.abs(daysToAdd)} days.`);
+      console.log(`📡 New Status: ${statusText} (${newStatus})`);
       console.log(`📅 Old Expiry: ${sub.endDate}`);
       console.log(`📅 New Expiry: ${newEndDate.toISOString().slice(0, 19).replace('T', ' ')}`);
+
+      // 4. Notify the provider
+      const absDays = Math.abs(daysToAdd);
+      const direction = daysToAdd > 0 ? 'extended' : 'reduced';
+      await createNotification({
+        tenantId,
+        title: daysToAdd > 0 ? `⏳ ${absDays} Extra Days Added!` : '📅 Subscription Adjusted',
+        message: `Your subscription has been ${direction} by ${absDays} day${absDays !== 1 ? 's' : ''} by Support. New expiry: ${newEndDate.toDateString()}.`,
+        type: 'success'
+      });
     }
 
     await pool.end();

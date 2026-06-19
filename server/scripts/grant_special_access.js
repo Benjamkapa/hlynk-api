@@ -1,4 +1,5 @@
 import { db } from '../dbms/mysql.js';
+import { createNotification } from '../controllers/notifications.js';
 import 'dotenv/config';
 
 /**
@@ -56,6 +57,14 @@ async function main() {
 
         console.log(`✅ Success! ${tenant.businessName} now has FULL ACCESS for the next ${days} days.`);
         console.log(`📜 Status set to 'TRIAL' (2). Original plan name remains preserved.`);
+
+        // 3. Notify the provider
+        await createNotification({
+            tenantId: tenant.id,
+            title: '✨ Special Access Granted!',
+            message: `You have been granted full system access for the next ${days} days by hlynk Support. Enjoy your premium features!`,
+            type: 'success'
+        });
 
     } catch (error) {
         console.error('❌ Database Error:', error.message);

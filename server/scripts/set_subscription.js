@@ -1,4 +1,5 @@
 import { db } from '../dbms/mysql.js';
+import { createNotification } from '../controllers/notifications.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -55,6 +56,16 @@ async function setSubscription() {
     }
 
     console.log(`📅 Trial/Period End Date: ${trialEndDate.toDateString()}`);
+
+    // Create a meaningful notification
+    const displayPlan = planName === 'MAX' ? 'Business Pro' : planName === 'PLUS' ? 'Growth' : 'Starter';
+    await createNotification({
+        tenantId: tenant.id,
+        title: '🎉 Subscription Updated!',
+        message: `Your account has been updated to the ${displayPlan} plan (${status.toUpperCase()}). New features are now available!`,
+        type: 'success'
+    });
+
     process.exit(0);
   } catch (err) {
     console.error('❌ Error updating subscription:', err.message);
