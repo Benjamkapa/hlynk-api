@@ -7,7 +7,7 @@ import { authenticate } from '../middleware/auth.js';
 import { validateMpesaIP } from '../middleware/ipWhitelist.js';
 import { ulid } from 'ulid';
 import { pushSaleToEtims } from '../controllers/etims.js';
-import { sendPushToTenant } from '../controllers/notifications.js';
+import { sendPushToTenant, createAdminNotification } from '../controllers/notifications.js';
 
 const router = express.Router();
 
@@ -182,6 +182,15 @@ router.post('/kcb/callback', express.json(), async (req, res) => {
           console.log(`[KCB RESTORE] Stock restored for ${stateLabel} sale ${sale.id} (${items.length} items)`);
         } catch (restoreErr) {
           console.error('[KCB RESTORE] Stock restore failed:', restoreErr.message);
+        }
+
+        // Notify Admins of Failure (Awareness)
+        if (!isCancelled) {
+          createAdminNotification({
+            title: `⚠️ KCB Payment ${stateLabel}`,
+            message: `${payment.id} failed for ${initLog?.tenantName || 'Unknown'}. Reason: ${responseDescription}`,
+            type: 'warning'
+          });
         }
       }
     }
@@ -403,6 +412,15 @@ router.post('/mpesa/callback', express.json(), validateMpesaIP, async (req, res)
               console.error('[SALE RESTORE] Failed to restore stock:', err);
             }
           }
+
+          // Notify Admins of Failure (Awareness)
+          if (!canceled && !success) {
+            createAdminNotification({
+              title: '⚠️ M-Pesa Payment Failed',
+              message: `Payment for ${initLog?.tenantName || 'Unknown'} failed. Reason: ${ResultDesc}`,
+              type: 'warning'
+            });
+          }
         } else {
           console.warn(`[SALE-SYNC] Failed to find Sale record for reference ${payment.reference} or RequestID ${CheckoutRequestID}`);
         }
@@ -510,7 +528,7 @@ router.post('/mpesa/b2c/result', express.json(), async (req, res) => {
       // 3. Log activity
       const [payoutRows] = await db.query(`SELECT tenantId FROM payout WHERE id = ?`, [payoutId]);
       if (payoutRows.length > 0) {
-        await db.query(`
+        await connection.query(`
           INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
           VALUES (?, ?, NULL, ?, 'Financials', ?, NOW())
         `, [
@@ -519,6 +537,15 @@ router.post('/mpesa/b2c/result', express.json(), async (req, res) => {
           isSuccess ? 'B2C Payout Success' : 'B2C Payout Failed',
           `${isSuccess ? 'Disbursement confirmed' : 'Disbursement failed'}: ${transactionReceipt || resultDesc} (KES ${transactionAmount || 'N/A'})`
         ]);
+
+        // 4. Notify Super Admins of Result (DB + Push)
+        createAdminNotification({
+          title: isSuccess ? '💸 Payout Disbursement Successful' : '🔴 Payout Disbursement Failed',
+          message: isSuccess 
+            ? `KES ${transactionAmount} sent to ${receiverPhone}. Receipt: ${transactionReceipt}`
+            : `Disbursement to ${receiverPhone} failed. Reason: ${resultDesc}`,
+          type: isSuccess ? 'success' : 'error'
+        });
       }
     }
   } catch (err) {

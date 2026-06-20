@@ -1,6 +1,7 @@
 import { db } from '../dbms/mysql.js';
 import { initiateStkPush, queryStkPush } from '../utils/mpesa.js';
 import { ulid } from 'ulid';
+import { createAdminNotification } from './notifications.js';
 
 export const PLAN_PRICES = {
   LITE: 4450, // Starter
@@ -266,8 +267,16 @@ export const handlePaymentCallback = async (reference, transactionId, success, m
         `, [ulid(), payment.tenantId, notificationTitle, notificationMsg]);
 
         // 6. REFERRAL PAYOUT LOGIC
-        const [tenantRows] = await connection.query(`SELECT referredById FROM tenant WHERE id = ?`, [payment.tenantId]);
+        const [tenantRows] = await connection.query(`SELECT businessName, referredById FROM tenant WHERE id = ?`, [payment.tenantId]);
+        const tenantName = tenantRows[0]?.businessName || 'Vendor';
         const referredById = tenantRows[0]?.referredById;
+
+        // 7. Notify Admins
+        await createAdminNotification({
+          title: '💰 subscription Payment Received',
+          message: `${tenantName} paid KES ${payment.amount} for ${getPlanName(payment.plan)} plan.`,
+          type: 'success'
+        });
 
         if (referredById && REFERRAL_BONUSES[payment.plan]) {
           const bonusAmount = REFERRAL_BONUSES[payment.plan];
@@ -379,17 +388,12 @@ export const submitManualPayment = async (req, res) => {
       VALUES (?, ?, ?, ?, ?, 2, ?, 'SUBSCRIPTION', ?, 'Manual submission awaiting verification', NOW())
     `, [paymentId, tenantId, amount || PLAN_PRICES[planName], phone || 'MANUAL', planName, reference, mpesaCode.toUpperCase()]);
 
-    // Notify Admins
-    const [tenants] = await db.query(`SELECT businessName FROM tenant WHERE id = ?`, [tenantId]);
-    const tenantName = tenants[0]?.businessName || 'Tenant';
-    
-    const [admins] = await db.query(`SELECT tenantId FROM user WHERE role = 'SUPER_ADMIN'`);
-    for (const admin of admins) {
-      await db.query(`
-        INSERT INTO notification (id, tenantId, title, message, type, status, createdAt) 
-        VALUES (?, ?, 'Manual Payment Submitted', ?, 'SYSTEM', 0, NOW())
-      `, [ulid(), admin.tenantId, `${tenantName} submitted manual code ${mpesaCode} for ${planName} plan.`]);
-    }
+    // Notify Admins (DB + Push)
+    await createAdminNotification({
+      title: 'Manual Payment Submitted',
+      message: `${tenantName} submitted manual code ${mpesaCode} for ${planName} plan.`,
+      type: 'warning'
+    });
 
     return res.json({ 
       success: true, 
