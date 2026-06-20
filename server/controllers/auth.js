@@ -6,6 +6,7 @@ import { ulid } from 'ulid';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createAdminNotification } from './notifications.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const params = JSON.parse(fs.readFileSync(path.join(__dirname, '../configs/params.json'), 'utf8'));
@@ -173,12 +174,15 @@ export const googleAuth = async (req, res) => {
         await connection.query(`INSERT INTO provider (id, tenantId, userId, businessName, phone, category, county, location, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`, [ulid(), tenantId, userId, registration.businessName.trim(), registration.phone.trim(), registration.category || 'Other', registration.county || 'Nairobi', registration.location || 'Unknown']);
         await connection.query(`INSERT INTO subscription (id, tenantId, planName, status, trialEndDate, createdAt, updatedAt) VALUES (?, ?, ?, ?, ${trialEndVal}, NOW(), NOW())`, [ulid(), tenantId, requestedPlan, subStatus]);
         
-        const [admins] = await connection.query(`SELECT id, tenantId FROM user WHERE role = 'SUPER_ADMIN'`);
-        for (const admin of admins) {
-          await connection.query(`INSERT INTO notification (id, tenantId, title, message, type, status, createdAt) VALUES (?, ?, 'New Vendor Registration', ?, 'SYSTEM', 0, NOW())`, [ulid(), admin.tenantId, `${registration.businessName} has just joined the platform.`]);
-        }
         
         await connection.commit();
+
+        // 3. Notify Admins (Native Push + In-App)
+        await createAdminNotification({
+          title: 'New Vendor Registration',
+          message: `${registration.businessName} has just joined the platform.`,
+          type: 'system'
+        });
 
         const [newUser] = await db.query(`SELECT * FROM user WHERE id = ?`, [userId]);
         const { accessToken, refreshToken } = await issueTokens(newUser[0], res, userAgent, ipAddress);
