@@ -177,7 +177,8 @@ export const getStats = async (req, res) => {
     const [
       [salesToday],
       [totalCustomers],
-      [lowStock]
+      [lowStock],
+      [txToday]
     ] = await Promise.all([
       db.query(`SELECT SUM(totalAmount) as total FROM sale WHERE tenantId = ? ${saleFilter} AND status = 0 AND createdAt >= CURDATE()`, saleParams),
       db.query(`
@@ -186,7 +187,8 @@ export const getStats = async (req, res) => {
         WHERE u.tenantId = ? AND u.role = 'CUSTOMER'
         ${isStaff ? 'AND EXISTS (SELECT 1 FROM sale s WHERE s.customerId = u.id AND s.userId = ?)' : ''}
       `, isStaff ? [tenantId, userId] : [tenantId]),
-      db.query(`SELECT COUNT(*) as total FROM product WHERE tenantId = ? AND type != 'SERVICE' AND stockLevel <= ?`, [tenantId, threshold])
+      db.query(`SELECT COUNT(*) as total FROM product WHERE tenantId = ? AND type != 'SERVICE' AND stockLevel <= ?`, [tenantId, threshold]),
+      db.query(`SELECT COUNT(*) as total FROM sale WHERE tenantId = ? ${saleFilter} AND status = 0 AND createdAt >= CURDATE()`, saleParams)
     ]);
 
     // Calculate Estimated Profit (Revenue - COGS)
@@ -211,15 +213,14 @@ export const getStats = async (req, res) => {
       SELECT 
         IFNULL(s.source, 'In-Store') as name,
         SUM(s.totalAmount) as sales,
-        SUM(s.totalAmount) - IFNULL((
-          SELECT SUM(IFNULL(si2.buyingPrice, IF(IFNULL(p2.type, 'GOOD') = 'SERVICE', 0, IFNULL(p2.buyingPrice, 0))) * si2.quantity)
-          FROM saleitem si2
-          LEFT JOIN product p2 ON si2.productId = p2.id
-          WHERE si2.saleId = s.id
+        SUM(s.totalAmount) - IFNULL(SUM(
+          IFNULL(si.buyingPrice, IF(IFNULL(p.type, 'GOOD') = 'SERVICE', 0, IFNULL(p.buyingPrice, 0))) * si.quantity
         ), 0) as profit
       FROM sale s
+      LEFT JOIN saleitem si ON si.saleId = s.id
+      LEFT JOIN product p ON si.productId = p.id
       WHERE s.tenantId = ? ${saleFilter.replace('userId = ?', 's.userId = ?')} AND s.status = 0
-      GROUP BY name
+      GROUP BY IFNULL(s.source, 'In-Store')
       ORDER BY profit DESC
     `, saleParams);
 
@@ -227,7 +228,7 @@ export const getStats = async (req, res) => {
     const [chartRows] = await db.query(`
       SELECT 
         DATE_FORMAT(s.createdAt, '%a') as name,
-        SUM(DISTINCT s.id) as nothing_just_grouping,
+        COUNT(DISTINCT s.id) as nothing_just_grouping,
         (SELECT SUM(s2.totalAmount) FROM sale s2 WHERE DATE(s2.createdAt) = DATE(s.createdAt) AND s2.tenantId = ? ${saleFilter.replace('userId = ?', 's2.userId = ?')} AND s2.status = 0) as sales,
         (SELECT SUM(s2.totalAmount) FROM sale s2 WHERE DATE(s2.createdAt) = DATE(s.createdAt) AND s2.tenantId = ? ${saleFilter.replace('userId = ?', 's2.userId = ?')} AND s2.status = 0) -
         IFNULL((
@@ -260,6 +261,7 @@ export const getStats = async (req, res) => {
     return res.json({
       success: true,
       dailySales: Number(salesToday[0]?.total || 0),
+      dailyTransactions: Number(txToday[0]?.total || 0),
       newCustomers: Number(totalCustomers[0]?.total || 0),
       outOfStockCount: Number(lowStock[0]?.total || 0),
       profit: Number(profitRes[0]?.dailyProfit || 0),
