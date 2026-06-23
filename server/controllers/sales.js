@@ -52,6 +52,11 @@ export const listSales = async (req, res) => {
       queryParams.push(status);
     }
 
+    if (req.query.source) {
+      whereQuery += ' AND IFNULL(s.source, \'In-Store\') = ?';
+      queryParams.push(req.query.source);
+    }
+
     const offset = (Number(page) - 1) * Number(limit);
 
     const [sales] = await db.query(`
@@ -100,9 +105,18 @@ export const listSales = async (req, res) => {
           SUM(totalAmount) as totalAmount,
           COUNT(*) as transactions
         FROM sale s
-        WHERE s.tenantId = ? AND s.status = 0
-        ${req.user.role === 'STAFF' ? 'AND s.userId = ?' : ''}
-      `, req.user.role === 'STAFF' ? [tenantId, req.user.userId] : [tenantId]);
+        ${whereQuery} AND s.status = 0
+      `, queryParams);
+
+      const [sourceStatsRes] = await db.query(`
+        SELECT 
+          IFNULL(source, 'In-Store') as source,
+          SUM(totalAmount) as totalAmount,
+          COUNT(*) as transactions
+        FROM sale s
+        ${whereQuery} AND s.status = 0
+        GROUP BY IFNULL(source, 'In-Store')
+      `, queryParams);
 
       const totalAmount = Number(statsRes[0].totalAmount || 0);
       const transactions = Number(statsRes[0].transactions || 0);
@@ -111,7 +125,8 @@ export const listSales = async (req, res) => {
       response.stats = {
         totalToday: totalAmount,
         transactions,
-        avgSale
+        avgSale,
+        bySource: sourceStatsRes
       };
     }
 
@@ -123,7 +138,7 @@ export const listSales = async (req, res) => {
 
 export const createSale = async (req, res) => {
   const { tenantId, userId } = req.user;
-  let { items, totalAmount, paymentMethod, status, mpesaRequestId, customerId, customerName, customerPhone } = req.body;
+  let { items, totalAmount, paymentMethod, status, mpesaRequestId, customerId, customerName, customerPhone, source } = req.body;
   const clientIp = req.ip;
 
   const connection = await db.getConnection();
@@ -159,14 +174,23 @@ export const createSale = async (req, res) => {
 
     const saleId = ulid();
     await connection.query(
-      `INSERT INTO sale (id, tenantId, userId, customerId, customerName, totalAmount, paymentMethod, status, mpesaRequestId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-      [saleId, tenantId, userId || null, customerId || null, customerName || null, totalAmount, paymentMethod || 'CASH', status !== undefined ? status : 0, mpesaRequestId || null]
+      `INSERT INTO sale (id, tenantId, userId, customerId, customerName, totalAmount, paymentMethod, status, mpesaRequestId, source, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      [saleId, tenantId, userId || null, customerId || null, customerName || null, totalAmount, paymentMethod || 'CASH', status !== undefined ? status : 0, mpesaRequestId || null, source || 'In-Store']
     );
 
     for (const item of items) {
+      // Get current buying price if not provided from frontend
+      let finalBuyingPrice = item.buyingPrice !== undefined ? item.buyingPrice : 0;
+      if (item.productId && item.buyingPrice === undefined) {
+          const [[prod]] = await connection.query(`SELECT buyingPrice, type FROM product WHERE id = ?`, [item.productId]);
+          if (prod && prod.type !== 'SERVICE') {
+              finalBuyingPrice = prod.buyingPrice;
+          }
+      }
+
       await connection.query(
-        `INSERT INTO saleitem (id, saleId, productId, name, quantity, price) VALUES (?, ?, ?, ?, ?, ?)`,
-        [ulid(), saleId, item.productId || null, item.name, item.quantity, item.price]
+        `INSERT INTO saleitem (id, saleId, productId, name, quantity, price, buyingPrice) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [ulid(), saleId, item.productId || null, item.name, item.quantity, item.price, finalBuyingPrice]
       );
 
       // Update inventory (Physical Goods only)
@@ -294,8 +318,7 @@ export const vendorMpesaPush = async (req, res) => {
     // ──────────────────────────────────────────────────────────────────────
     let isRented = false;
     if (!customCredentials || !customCredentials.consumerKey) {
-      isRented = true;
-      console.log(`[SALES] Tenant ${tenantId} is renting system paybill (no custom credentials).`);
+      throw new Error('Please configure your M-Pesa Payment Gateway in Settings to accept STK push payments.');
     } else {
       // Check if they're using the system's own shortcode or consumer key
       const providerShortcode = (customCredentials.shortcode || '').trim();
@@ -304,9 +327,7 @@ export const vendorMpesaPush = async (req, res) => {
       const keyMatchesSystem = SYSTEM_CONSUMER_KEY && providerKey === SYSTEM_CONSUMER_KEY;
 
       if (shortcodeMatchesSystem || keyMatchesSystem) {
-        isRented = true;
-        customCredentials = null; // Use system credentials — don't duplicate
-        console.log(`[SALES] Tenant ${tenantId} configured the SYSTEM paybill as their own — treating as rented.`);
+        throw new Error('Using the platform test credentials is not allowed for live sales. Refer to the documentation to get your own credentials.');
       }
     }
 

@@ -8,18 +8,16 @@ if (args.length === 0) {
 }
 
 // Find the first argument that is a valid number (could be positive or negative)
-let daysToAdd = 0;
-let foundNumIndex = -1;
+// We need to parse strict numbers, since "-10" might be interpreted poorly by loose matching.
+let daysToAddStr = args.find(arg => !isNaN(Number(arg)) && arg.trim() !== '');
 
-for (let i = 0; i < args.length; i++) {
-  const parsed = parseInt(args[i]);
-  // We check if it's a number and if it's NOT an email (emails usually don't parse to full numbers)
-  if (!isNaN(parsed) && String(parsed) === args[i]) {
-    daysToAdd = parsed;
-    foundNumIndex = i;
-    break;
-  }
+if (daysToAddStr === undefined) {
+  console.log('Error: Please provide a valid number of days (e.g. 5 or -5) to extend/reduce.');
+  process.exit(1);
 }
+
+let daysToAdd = Number(daysToAddStr);
+let foundNumIndex = args.indexOf(daysToAddStr);
 
 if (foundNumIndex !== -1) {
   args.splice(foundNumIndex, 1);

@@ -186,25 +186,63 @@ export const getStats = async (req, res) => {
         WHERE u.tenantId = ? AND u.role = 'CUSTOMER'
         ${isStaff ? 'AND EXISTS (SELECT 1 FROM sale s WHERE s.customerId = u.id AND s.userId = ?)' : ''}
       `, isStaff ? [tenantId, userId] : [tenantId]),
-      db.query(`SELECT COUNT(*) as total FROM product WHERE tenantId = ? AND stockLevel <= ?`, [tenantId, threshold])
+      db.query(`SELECT COUNT(*) as total FROM product WHERE tenantId = ? AND type != 'SERVICE' AND stockLevel <= ?`, [tenantId, threshold])
     ]);
 
-    // Calculate Estimated Profit (Simplified for demonstration, normally would be revenue - COGS)
-    // For staff, profit is also filtered by their sales
-    const [profitRes] = await db.query(`SELECT SUM(totalAmount) * 0.25 as profit FROM sale WHERE tenantId = ? ${saleFilter} AND status = 0 AND MONTH(createdAt) = MONTH(CURRENT_DATE())`, saleParams);
+    // Calculate Estimated Profit (Revenue - COGS)
+    const [profitRes] = await db.query(`
+      SELECT 
+        (SELECT SUM(totalAmount) FROM sale WHERE tenantId = ? ${saleFilter} AND status = 0 AND DATE(createdAt) = CURDATE()) 
+        - IFNULL((SELECT SUM(IFNULL(si.buyingPrice, IF(IFNULL(p.type, 'GOOD') = 'SERVICE', 0, IFNULL(p.buyingPrice, 0))) * si.quantity)
+          FROM sale s
+          JOIN saleitem si ON s.id = si.saleId
+          LEFT JOIN product p ON si.productId = p.id
+          WHERE s.tenantId = ? ${saleFilter} AND s.status = 0 AND DATE(s.createdAt) = CURDATE()), 0) as dailyProfit,
+          
+        (SELECT SUM(totalAmount) FROM sale WHERE tenantId = ? ${saleFilter} AND status = 0) 
+        - IFNULL((SELECT SUM(IFNULL(si.buyingPrice, IF(IFNULL(p.type, 'GOOD') = 'SERVICE', 0, IFNULL(p.buyingPrice, 0))) * si.quantity)
+          FROM sale s
+          JOIN saleitem si ON s.id = si.saleId
+          LEFT JOIN product p ON si.productId = p.id
+          WHERE s.tenantId = ? ${saleFilter} AND s.status = 0), 0) as cumulativeProfit
+    `, [...saleParams, ...saleParams, ...saleParams, ...saleParams]);
+
+    const [profitBySourceRes] = await db.query(`
+      SELECT 
+        IFNULL(s.source, 'In-Store') as name,
+        SUM(s.totalAmount) as sales,
+        SUM(s.totalAmount) - IFNULL((
+          SELECT SUM(IFNULL(si2.buyingPrice, IF(IFNULL(p2.type, 'GOOD') = 'SERVICE', 0, IFNULL(p2.buyingPrice, 0))) * si2.quantity)
+          FROM saleitem si2
+          LEFT JOIN product p2 ON si2.productId = p2.id
+          WHERE si2.saleId = s.id
+        ), 0) as profit
+      FROM sale s
+      WHERE s.tenantId = ? ${saleFilter.replace('userId = ?', 's.userId = ?')} AND s.status = 0
+      GROUP BY name
+      ORDER BY profit DESC
+    `, saleParams);
 
     // REAL aggregation for chart data (Last 7 Days)
     const [chartRows] = await db.query(`
       SELECT 
-        DATE_FORMAT(createdAt, '%a') as name,
-        SUM(totalAmount) as sales,
-        SUM(totalAmount) * 0.25 as profit
-      FROM sale 
-      WHERE tenantId = ? ${saleFilter} AND status = 0
-      AND createdAt >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
-      GROUP BY DATE(createdAt), name
-      ORDER BY DATE(createdAt) ASC
-    `, saleParams);
+        DATE_FORMAT(s.createdAt, '%a') as name,
+        SUM(DISTINCT s.id) as nothing_just_grouping,
+        (SELECT SUM(s2.totalAmount) FROM sale s2 WHERE DATE(s2.createdAt) = DATE(s.createdAt) AND s2.tenantId = ? ${saleFilter.replace('userId = ?', 's2.userId = ?')} AND s2.status = 0) as sales,
+        (SELECT SUM(s2.totalAmount) FROM sale s2 WHERE DATE(s2.createdAt) = DATE(s.createdAt) AND s2.tenantId = ? ${saleFilter.replace('userId = ?', 's2.userId = ?')} AND s2.status = 0) -
+        IFNULL((
+          SELECT SUM(IFNULL(si.buyingPrice, IF(IFNULL(p.type, 'GOOD') = 'SERVICE', 0, IFNULL(p.buyingPrice, 0))) * si.quantity)
+          FROM sale s3 
+          JOIN saleitem si ON s3.id = si.saleId 
+          LEFT JOIN product p ON si.productId = p.id
+          WHERE DATE(s3.createdAt) = DATE(s.createdAt) AND s3.tenantId = ? ${saleFilter.replace('userId = ?', 's3.userId = ?')} AND s3.status = 0
+        ), 0) as profit
+      FROM sale s
+      WHERE s.tenantId = ? ${saleFilter.replace('userId = ?', 's.userId = ?')} AND s.status = 0
+      AND s.createdAt >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+      GROUP BY DATE(s.createdAt), name
+      ORDER BY DATE(s.createdAt) ASC
+    `, [...saleParams, ...saleParams, ...saleParams, ...saleParams]);
 
     // Generate last 7 days array with 0 values
     const salesChart = Array.from({ length: 7 }).map((_, i) => {
@@ -224,7 +262,13 @@ export const getStats = async (req, res) => {
       dailySales: Number(salesToday[0]?.total || 0),
       newCustomers: Number(totalCustomers[0]?.total || 0),
       outOfStockCount: Number(lowStock[0]?.total || 0),
-      profit: Number(profitRes[0]?.profit || 0),
+      profit: Number(profitRes[0]?.dailyProfit || 0),
+      cumulativeProfit: Number(profitRes[0]?.cumulativeProfit || 0),
+      profitBySource: profitBySourceRes.map(row => ({
+        name: row.name,
+        sales: Number(row.sales),
+        profit: Number(row.profit)
+      })),
       salesChart,
       rating: 4.8
     });

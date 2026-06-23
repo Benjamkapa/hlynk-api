@@ -111,7 +111,8 @@ export const createProduct = async (req, res) => {
       `INSERT INTO product (id, tenantId, name, category, price, buyingPrice, stockLevel, sku, imageUrl, description, minLevel, isPerishable, type, expiryDate, isActive, createdAt, updatedAt)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`,
       [
-        id, tenantId, data.name, data.category || 'General', data.price, data.buyingPrice || 0, 
+        id, tenantId, data.name, data.category || 'General', data.price, 
+        data.type === 'SERVICE' ? 0 : (data.buyingPrice || 0), 
         parseInt(data.stock) || 0, sku, data.imageUrl || null, data.description || null, 
         parseInt(data.minLevel) || 5, data.isPerishable ? 1 : 0, 
         data.type || 'GOOD', data.expiryDate || null
@@ -134,8 +135,13 @@ export const updateProduct = async (req, res) => {
     const updateParams = [];
 
     if (data.name) { updateQuery += ', name = ?'; updateParams.push(data.name); }
-    if (data.price) { updateQuery += ', price = ?'; updateParams.push(data.price); }
+    if (data.price !== undefined) { updateQuery += ', price = ?'; updateParams.push(data.price); }
     if (data.stock !== undefined) { updateQuery += ', stockLevel = ?'; updateParams.push(parseInt(data.stock)); }
+    if (data.category) { updateQuery += ', category = ?'; updateParams.push(data.category); }
+    if (data.buyingPrice !== undefined) { updateQuery += ', buyingPrice = ?'; updateParams.push(data.type === 'SERVICE' ? 0 : data.buyingPrice); }
+    if (data.type) { updateQuery += ', type = ?'; updateParams.push(data.type); }
+    if (data.isPerishable !== undefined) { updateQuery += ', isPerishable = ?'; updateParams.push(data.isPerishable ? 1 : 0); }
+    if (data.expiryDate !== undefined) { updateQuery += ', expiryDate = ?'; updateParams.push(data.expiryDate || null); }
 
     updateQuery += ' WHERE id = ? AND tenantId = ?';
     updateParams.push(id, tenantId);
