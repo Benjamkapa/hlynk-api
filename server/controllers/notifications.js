@@ -112,12 +112,14 @@ export const sendPushToTenant = async (tenantId, message) => {
     try {
         const [subs] = await db.query('SELECT * FROM push_subscriptions WHERE tenantId = ?', [tenantId]);
         
+        const dataObj = Object.keys(message.data || {}).length > 0 ? message.data : { url: '/dashboard' };
+
         const payload = JSON.stringify({
             title: message.title || 'hlynk Alert',
             body: message.body,
             icon: message.icon || '/logo.png',
             type: message.type || 'info',
-            data: message.data || {}
+            data: dataObj
         });
 
         await Promise.all(subs.map(async (sub) => {
@@ -132,6 +134,7 @@ export const sendPushToTenant = async (tenantId, message) => {
             try {
                 await webPush.sendNotification(pushSubscription, payload);
             } catch (err) {
+                console.error(`sendPushToTenant worker error for ${sub.endpoint}:`, err);
                 if (err.statusCode === 410 || err.statusCode === 404) {
                     await db.query('DELETE FROM push_subscriptions WHERE id = ?', [sub.id]);
                 }
@@ -155,12 +158,14 @@ export const sendPushToAdmins = async (message) => {
         
         if (subs.length === 0) return;
 
+        const dataObj = Object.keys(message.data || {}).length > 0 ? message.data : { url: '/admin/dashboard' };
+
         const payload = JSON.stringify({
             title: message.title || 'hlynk System Alert',
             body: message.body,
             icon: message.icon || '/logo.png',
             type: message.type || 'info',
-            data: message.data || {}
+            data: dataObj
         });
 
         await Promise.all(subs.map(async (sub) => {
@@ -175,6 +180,7 @@ export const sendPushToAdmins = async (message) => {
             try {
                 await webPush.sendNotification(pushSubscription, payload);
             } catch (err) {
+                console.error(`sendPushToAdmins worker error for ${sub.endpoint}:`, err);
                 if (err.statusCode === 410 || err.statusCode === 404) {
                     await db.query('DELETE FROM push_subscriptions WHERE id = ?', [sub.id]);
                 }
