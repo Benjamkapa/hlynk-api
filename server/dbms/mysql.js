@@ -34,3 +34,29 @@ export const db = {
     return pool.getConnection();
   }
 };
+
+// Automatic migrations
+(async () => {
+  try {
+    const [cols] = await db.query("SHOW COLUMNS FROM saleitem");
+    if (!cols.some(c => c.Field === 'buyingPrice')) {
+      console.log('[DB] Missing buyingPrice in saleitem. Migrating...');
+      await db.query("ALTER TABLE saleitem ADD COLUMN buyingPrice DECIMAL(15,2) DEFAULT 0.00 AFTER price");
+      console.log('[DB] Migration successful!');
+      
+      // Perform one-time backfill for old records
+      console.log('[DB] Backfilling buyingPrice in saleitem...');
+      const [result] = await db.query(`
+        UPDATE saleitem si
+        JOIN product p ON si.productId = p.id
+        SET si.buyingPrice = p.buyingPrice
+        WHERE (si.buyingPrice = 0 OR si.buyingPrice IS NULL) 
+        AND p.buyingPrice > 0 
+        AND IFNULL(p.type, 'GOOD') != 'SERVICE'
+      `);
+      console.log(`[DB] Backfill complete. Records updated: ${result.affectedRows}`);
+    }
+  } catch (err) {
+    console.error('[DB] Auto-migration/backfill failed:', err.message);
+  }
+})();

@@ -6,9 +6,11 @@ export const redis = {
   set: async (key, val) => {},
   setEx: async (key, seconds, val) => {},
   del: async (key) => {},
+  invalidateStats: async (tenantId) => {},
 };
 
 export const redisKeys = {
   refreshToken: (userId) => `refresh_token:${userId}`,
   mpesaToken: 'mpesa:global_token',
+  providerStats: (tenantId) => `stats:${tenantId}`,
 };
