@@ -1,406 +1,341 @@
 import { db } from '../dbms/mysql.js';
-import { encrypt, decrypt } from '../utils/encryption.js';
-import { uploadFile } from '../utils/storage.js';
 import { ulid } from 'ulid';
+import { uploadFile } from '../utils/storage.js';
 
-const decryptOperationalSettings = (operationalSettings) => {
-  if (!operationalSettings) return operationalSettings;
-  const ops = typeof operationalSettings === 'string' ? JSON.parse(operationalSettings) : { ...operationalSettings };
-
-  const decryptMpesa = (m) => {
-    if (!m) return m;
-    const res = { ...m };
-    if (res.consumerKey) res.consumerKey = decrypt(res.consumerKey);
-    if (res.consumerSecret) res.consumerSecret = decrypt(res.consumerSecret);
-    if (res.passkey) res.passkey = decrypt(res.passkey);
-    return res;
-  };
-
-  const decryptKcb = (k) => {
-    if (!k) return k;
-    const res = { ...k };
-    if (res.consumerKey) res.consumerKey = decrypt(res.consumerKey);
-    if (res.consumerSecret) res.consumerSecret = decrypt(res.consumerSecret);
-    return res;
-  };
-
-  if (ops.mpesa) {
-    if (ops.mpesa.sandbox) ops.mpesa.sandbox = decryptMpesa(ops.mpesa.sandbox);
-    if (ops.mpesa.production) ops.mpesa.production = decryptMpesa(ops.mpesa.production);
-    // Backward compatibility
-    if (ops.mpesa.consumerKey) ops.mpesa.consumerKey = decrypt(ops.mpesa.consumerKey);
-    if (ops.mpesa.consumerSecret) ops.mpesa.consumerSecret = decrypt(ops.mpesa.consumerSecret);
-    if (ops.mpesa.passkey) ops.mpesa.passkey = decrypt(ops.mpesa.passkey);
-  }
-
-  if (ops.kcb) {
-    if (ops.kcb.sandbox) ops.kcb.sandbox = decryptKcb(ops.kcb.sandbox);
-    if (ops.kcb.production) ops.kcb.production = decryptKcb(ops.kcb.production);
-  }
-
-  if (ops.ai) {
-    ops.ai = { ...ops.ai };
-    if (ops.ai.apiKey) ops.ai.apiKey = decrypt(ops.ai.apiKey);
-  }
-  return ops;
-};
-
-const encryptOperationalSettings = (operationalSettings) => {
-  if (!operationalSettings) return operationalSettings;
-  const ops = typeof operationalSettings === 'string' ? JSON.parse(operationalSettings) : { ...operationalSettings };
-
-  const encryptMpesa = (m) => {
-    if (!m) return m;
-    const res = { ...m };
-    if (res.consumerKey && !res.consumerKey.includes(':')) res.consumerKey = encrypt(res.consumerKey);
-    if (res.consumerSecret && !res.consumerSecret.includes(':')) res.consumerSecret = encrypt(res.consumerSecret);
-    if (res.passkey && !res.passkey.includes(':')) res.passkey = encrypt(res.passkey);
-    return res;
-  };
-
-  const encryptKcb = (k) => {
-    if (!k) return k;
-    const res = { ...k };
-    if (res.consumerKey && !res.consumerKey.includes(':')) res.consumerKey = encrypt(res.consumerKey);
-    if (res.consumerSecret && !res.consumerSecret.includes(':')) res.consumerSecret = encrypt(res.consumerSecret);
-    return res;
-  };
-
-  if (ops.mpesa) {
-    if (ops.mpesa.sandbox) ops.mpesa.sandbox = encryptMpesa(ops.mpesa.sandbox);
-    if (ops.mpesa.production) ops.mpesa.production = encryptMpesa(ops.mpesa.production);
-    // Backward compatibility
-    if (ops.mpesa.consumerKey && !ops.mpesa.consumerKey.includes(':')) ops.mpesa.consumerKey = encrypt(ops.mpesa.consumerKey);
-    if (ops.mpesa.consumerSecret && !ops.mpesa.consumerSecret.includes(':')) ops.mpesa.consumerSecret = encrypt(ops.mpesa.consumerSecret);
-    if (ops.mpesa.passkey && !ops.mpesa.passkey.includes(':')) ops.mpesa.passkey = encrypt(ops.mpesa.passkey);
-  }
-
-  if (ops.kcb) {
-    if (ops.kcb.sandbox) ops.kcb.sandbox = encryptKcb(ops.kcb.sandbox);
-    if (ops.kcb.production) ops.kcb.production = encryptKcb(ops.kcb.production);
-  }
-
-  if (ops.ai) {
-    ops.ai = { ...ops.ai };
-    if (ops.ai.apiKey && !ops.ai.apiKey.includes(':')) ops.ai.apiKey = encrypt(ops.ai.apiKey);
-  }
-  return ops;
-};
-
+/**
+ * Get the current provider's profile and shop settings
+ */
 export const getMyProfile = async (req, res) => {
-  const { userId } = req.user;
-  try {
-    const [profiles] = await db.query(`
-      SELECT p.*, u.name as userName, u.email, u.phone as userPhone, u.role, u.photoUrl,
-      t.businessName as tenantName, s.planName as subscriptionPlan, s.status as subscriptionStatus
-      FROM provider p
-      JOIN user u ON p.userId = u.id
-      JOIN tenant t ON p.tenantId = t.id
-      LEFT JOIN subscription s ON t.id = s.tenantId
-      WHERE p.userId = ?
-    `, [userId]);
-
-    if (profiles.length === 0) return res.status(404).json({ success: false, message: 'Profile not found' });
-
-    const profile = profiles[0];
-    if (profile.operationalSettings) {
-      profile.operationalSettings = decryptOperationalSettings(profile.operationalSettings);
-    }
-    
-    return res.json({ success: true, data: profile });
-  } catch (err) {
-    return res.status(500).json({ success: false, message: 'Internal Server Error' });
-  }
-};
-
-export const updateProfile = async (req, res) => {
   const { userId, tenantId } = req.user;
-  const data = req.body;
-
-  if (data.operationalSettings) {
-    data.operationalSettings = encryptOperationalSettings(data.operationalSettings);
-  }
-
-  const connection = await db.getConnection();
   try {
-    await connection.beginTransaction();
+    const [rows] = await db.query(`
+      SELECT 
+        u.id as userId, u.name, u.phone, u.email, u.role, u.photoUrl,
+        p.id as providerId, p.businessName, p.category, p.location,
+        p.notificationSettings, p.operationalSettings
+      FROM user u
+      JOIN provider p ON u.tenantId = p.tenantId
+      WHERE u.id = ? AND u.tenantId = ?
+    `, [userId, tenantId]);
 
-    // User updates
-    let userUpdates = [];
-    let userParams = [];
-    if (data.name !== undefined) { userUpdates.push('name = ?'); userParams.push(data.name); }
-    if (data.phone !== undefined) { userUpdates.push('phone = ?'); userParams.push(data.phone); }
-    
-    if (userUpdates.length > 0) {
-      userUpdates.push('updatedAt = NOW()');
-      await connection.query(`UPDATE user SET ${userUpdates.join(', ')} WHERE id = ?`, [...userParams, userId]);
-    }
+    if (!rows.length) return res.status(404).json({ success: false, message: 'Profile not found' });
 
-    // Provider updates
-    let provUpdates = [];
-    let provParams = [];
-    if (data.businessName !== undefined) { provUpdates.push('businessName = ?'); provParams.push(data.businessName); }
-    if (data.category !== undefined) { provUpdates.push('category = ?'); provParams.push(data.category); }
-    if (data.description !== undefined) { provUpdates.push('description = ?'); provParams.push(data.description); }
-    if (data.location !== undefined) { provUpdates.push('location = ?'); provParams.push(data.location); }
-    if (data.operationalSettings !== undefined) { provUpdates.push('operationalSettings = ?'); provParams.push(JSON.stringify(data.operationalSettings)); }
-
-    if (provUpdates.length > 0) {
-      provUpdates.push('updatedAt = NOW()');
-      await connection.query(`UPDATE provider SET ${provUpdates.join(', ')} WHERE userId = ?`, [...provParams, userId]);
-    }
-
-    await connection.commit();
-    return res.json({ success: true, data: { message: 'Profile updated' } });
+    const p = rows[0];
+    return res.json({
+      success: true,
+      data: {
+        user: { id: p.userId, name: p.name, email: p.email, role: p.role, photoUrl: p.photoUrl },
+        phone: p.phone,
+        businessName: p.businessName,
+        category: p.category,
+        location: p.location,
+        notificationSettings: typeof p.notificationSettings === 'string' ? JSON.parse(p.notificationSettings) : p.notificationSettings,
+        operationalSettings: typeof p.operationalSettings === 'string' ? JSON.parse(p.operationalSettings) : p.operationalSettings
+      }
+    });
   } catch (err) {
-    await connection.rollback();
-    return res.status(500).json({ success: false, message: err.message });
-  } finally {
-    connection.release();
+    console.error('[PROFILE] Error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to fetch profile' });
   }
 };
 
-export const getStats = async (req, res) => {
-  const { tenantId, userId, role } = req.user;
+/**
+ * Update personal and business settings
+ */
+export const updateProfile = async (req, res) => {
+  const { tenantId, userId } = req.user;
+  const { name, phone, businessName, category, location, notificationSettings, operationalSettings } = req.body;
+
   try {
-    // If user is STAFF, we only show stats related to them
-    const isStaff = role === 'STAFF';
-    const saleFilter = isStaff ? 'AND userId = ?' : '';
-    const saleParams = isStaff ? [tenantId, userId] : [tenantId];
+    // 1. Update User Record — only if user fields were actually sent
+    const hasUserFields = name !== undefined || phone !== undefined;
+    if (hasUserFields) {
+      if (!name) {
+        return res.status(400).json({ success: false, message: 'Name is required' });
+      }
+      await db.query(`
+        UPDATE user SET name = ?, phone = ?, updatedAt = NOW() WHERE id = ?
+      `, [name, phone || null, userId]);
+    }
 
-    const [providerRes] = await db.query(`SELECT operationalSettings FROM provider WHERE tenantId = ?`, [tenantId]);
-    const ops = typeof providerRes[0]?.operationalSettings === 'string' 
-      ? JSON.parse(providerRes[0].operationalSettings) 
-      : providerRes[0]?.operationalSettings || {};
-    const threshold = ops.lowStockThreshold || 5;
+    // 2. Update Provider Details — only if provider fields were actually sent
+    const hasProviderFields = businessName !== undefined || category !== undefined ||
+      location !== undefined || notificationSettings !== undefined || operationalSettings !== undefined;
 
-    const [
-      [salesToday],
-      [totalCustomers],
-      [lowStock],
-      [txToday]
-    ] = await Promise.all([
-      db.query(`SELECT SUM(totalAmount) as total FROM sale WHERE tenantId = ? ${saleFilter} AND status = 0 AND createdAt >= CURDATE()`, saleParams),
-      db.query(`
-        SELECT COUNT(DISTINCT u.id) as total 
-        FROM user u 
-        WHERE u.tenantId = ? AND u.role = 'CUSTOMER'
-        ${isStaff ? 'AND EXISTS (SELECT 1 FROM sale s WHERE s.customerId = u.id AND s.userId = ?)' : ''}
-      `, isStaff ? [tenantId, userId] : [tenantId]),
-      db.query(`SELECT COUNT(*) as total FROM product WHERE tenantId = ? AND type != 'SERVICE' AND stockLevel <= ?`, [tenantId, threshold]),
-      db.query(`SELECT COUNT(*) as total FROM sale WHERE tenantId = ? ${saleFilter} AND status = 0 AND createdAt >= CURDATE()`, saleParams)
-    ]);
+    if (hasProviderFields) {
+      // Build a dynamic update to avoid overwriting fields that weren't sent
+      const sets = [];
+      const vals = [];
 
-    // Calculate Estimated Profit (Revenue - COGS)
-    const [profitRes] = await db.query(`
-      SELECT 
-        (SELECT SUM(totalAmount) FROM sale WHERE tenantId = ? ${saleFilter} AND status = 0 AND DATE(createdAt) = CURDATE()) 
-        - IFNULL((SELECT SUM(IFNULL(si.buyingPrice, IF(IFNULL(p.type, 'GOOD') = 'SERVICE', 0, IFNULL(p.buyingPrice, 0))) * si.quantity)
-          FROM sale s
-          JOIN saleitem si ON s.id = si.saleId
-          LEFT JOIN product p ON si.productId = p.id
-          WHERE s.tenantId = ? ${saleFilter} AND s.status = 0 AND DATE(s.createdAt) = CURDATE()), 0) as dailyProfit,
-          
-        (SELECT SUM(totalAmount) FROM sale WHERE tenantId = ? ${saleFilter} AND status = 0) 
-        - IFNULL((SELECT SUM(IFNULL(si.buyingPrice, IF(IFNULL(p.type, 'GOOD') = 'SERVICE', 0, IFNULL(p.buyingPrice, 0))) * si.quantity)
-          FROM sale s
-          JOIN saleitem si ON s.id = si.saleId
-          LEFT JOIN product p ON si.productId = p.id
-          WHERE s.tenantId = ? ${saleFilter} AND s.status = 0), 0) as cumulativeProfit
-    `, [...saleParams, ...saleParams, ...saleParams, ...saleParams]);
+      if (businessName !== undefined) { sets.push('businessName = ?'); vals.push(businessName); }
+      if (category !== undefined)     { sets.push('category = ?');     vals.push(category); }
+      if (location !== undefined)     { sets.push('location = ?');     vals.push(location); }
+      if (notificationSettings !== undefined) {
+        sets.push('notificationSettings = ?');
+        vals.push(JSON.stringify(notificationSettings || {}));
+      }
+      if (operationalSettings !== undefined) {
+        sets.push('operationalSettings = ?');
+        vals.push(JSON.stringify(operationalSettings || {}));
+      }
 
-    const [profitBySourceRes] = await db.query(`
-      SELECT 
-        IFNULL(s.source, 'In-Store') as name,
-        SUM(s.totalAmount) as sales,
-        SUM(s.totalAmount) - IFNULL(SUM(
-          IFNULL(si.buyingPrice, IF(IFNULL(p.type, 'GOOD') = 'SERVICE', 0, IFNULL(p.buyingPrice, 0))) * si.quantity
-        ), 0) as profit
-      FROM sale s
-      LEFT JOIN saleitem si ON si.saleId = s.id
-      LEFT JOIN product p ON si.productId = p.id
-      WHERE s.tenantId = ? ${saleFilter.replace('userId = ?', 's.userId = ?')} AND s.status = 0
-      GROUP BY IFNULL(s.source, 'In-Store')
-      ORDER BY profit DESC
-    `, saleParams);
+      if (sets.length > 0) {
+        sets.push('updatedAt = NOW()');
+        vals.push(tenantId);
+        await db.query(`UPDATE provider SET ${sets.join(', ')} WHERE tenantId = ?`, vals);
+      }
+    }
 
-    // REAL aggregation for chart data (Last 7 Days)
-    const [chartRows] = await db.query(`
-      SELECT 
-        DATE_FORMAT(s.createdAt, '%a') as name,
-        COUNT(DISTINCT s.id) as nothing_just_grouping,
-        (SELECT SUM(s2.totalAmount) FROM sale s2 WHERE DATE(s2.createdAt) = DATE(s.createdAt) AND s2.tenantId = ? ${saleFilter.replace('userId = ?', 's2.userId = ?')} AND s2.status = 0) as sales,
-        (SELECT SUM(s2.totalAmount) FROM sale s2 WHERE DATE(s2.createdAt) = DATE(s.createdAt) AND s2.tenantId = ? ${saleFilter.replace('userId = ?', 's2.userId = ?')} AND s2.status = 0) -
-        IFNULL((
-          SELECT SUM(IFNULL(si.buyingPrice, IF(IFNULL(p.type, 'GOOD') = 'SERVICE', 0, IFNULL(p.buyingPrice, 0))) * si.quantity)
-          FROM sale s3 
-          JOIN saleitem si ON s3.id = si.saleId 
-          LEFT JOIN product p ON si.productId = p.id
-          WHERE DATE(s3.createdAt) = DATE(s.createdAt) AND s3.tenantId = ? ${saleFilter.replace('userId = ?', 's3.userId = ?')} AND s3.status = 0
-        ), 0) as profit
-      FROM sale s
-      WHERE s.tenantId = ? ${saleFilter.replace('userId = ?', 's.userId = ?')} AND s.status = 0
-      AND s.createdAt >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
-      GROUP BY DATE(s.createdAt), name
-      ORDER BY DATE(s.createdAt) ASC
-    `, [...saleParams, ...saleParams, ...saleParams, ...saleParams]);
+    return res.json({ success: true, message: 'Settings saved successfully' });
+  } catch (err) {
+    console.error('[SETTINGS] Update Error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to save settings' });
+  }
+};
 
-    // Generate last 7 days array with 0 values
+/**
+ * Main dashboard statistics for the provider
+ */
+export const getStats = async (req, res) => {
+  const { tenantId } = req.user;
+  
+  try {
+
+    // 1. Daily Sales & Transactions
+    const [[dailyRes]] = await db.query(`
+      SELECT IFNULL(SUM(totalAmount), 0) as sales, COUNT(*) as transactions
+      FROM sale
+      WHERE tenantId = ? AND status = 0 AND createdAt >= CURDATE()
+    `, [tenantId]);
+
+    // 2. New Customers Today
+    const [[customerRes]] = await db.query(`
+      SELECT COUNT(*) as total FROM user WHERE tenantId = ? AND role = 'CUSTOMER' AND createdAt >= CURDATE()
+    `, [tenantId]);
+
+    // 3. Out of Stock Count (based on threshold)
+    const [[provider]] = await db.query(`SELECT operationalSettings FROM provider WHERE tenantId = ?`, [tenantId]);
+    const ops = typeof provider?.operationalSettings === 'string' ? JSON.parse(provider.operationalSettings) : provider?.operationalSettings;
+    const threshold = ops?.lowStockThreshold || 5;
+
+    const [[stockRes]] = await db.query(`
+      SELECT COUNT(*) as total FROM product WHERE tenantId = ? AND stockLevel <= ? AND IFNULL(type, 'GOOD') != 'SERVICE'
+    `, [tenantId, threshold]);
+
+    // 4. Daily Profit (Revenue - Buying Price)
+    let profit = 0;
+    try {
+      const [[profitRes]] = await db.query(`
+        SELECT IFNULL(SUM((si.price - IFNULL(si.buyingPrice, 0)) * si.quantity), 0) as profit
+        FROM sale s
+        JOIN saleitem si ON s.id = si.saleId
+        WHERE s.tenantId = ? AND s.status = 0 AND s.createdAt >= CURDATE()
+      `, [tenantId]);
+      profit = Number(profitRes?.profit || 0);
+    } catch (err) {
+      console.warn('[STATS] buyingPrice missing in saleitem query, join fallback');
+      const [[joinProfitRes]] = await db.query(`
+        SELECT IFNULL(SUM((si.price - IFNULL(p.buyingPrice, 0)) * si.quantity), 0) as profit
+        FROM sale s
+        JOIN saleitem si ON s.id = si.saleId
+        LEFT JOIN product p ON si.productId = p.id
+        WHERE s.tenantId = ? AND s.status = 0 AND s.createdAt >= CURDATE()
+      `, [tenantId]);
+      profit = Number(joinProfitRes?.profit || 0);
+    }
+
+    // 5. Cumulative Profit (All-time)
+    let cumulativeProfit = 0;
+    try {
+      const [[cumulativeProfitRes]] = await db.query(`
+        SELECT IFNULL(SUM((si.price - IFNULL(si.buyingPrice, 0)) * si.quantity), 0) as profit
+        FROM sale s
+        JOIN saleitem si ON s.id = si.saleId
+        WHERE s.tenantId = ? AND s.status = 0
+      `, [tenantId]);
+      cumulativeProfit = Number(cumulativeProfitRes?.profit || 0);
+    } catch (err) {
+      console.warn('[STATS] cumulativeProfit column missing, join fallback');
+      const [[joinProfitRes]] = await db.query(`
+        SELECT IFNULL(SUM((si.price - IFNULL(p.buyingPrice, 0)) * si.quantity), 0) as profit
+        FROM sale s
+        JOIN saleitem si ON s.id = si.saleId
+        LEFT JOIN product p ON si.productId = p.id
+        WHERE s.tenantId = ? AND s.status = 0
+      `, [tenantId]);
+      cumulativeProfit = Number(joinProfitRes?.profit || 0);
+    }
+
+    // 6. Sales Chart (Last 7 Days)
+    let chartRows = [];
+    try {
+      [chartRows] = await db.query(`
+        SELECT DATE(s.createdAt) as date, SUM(s.totalAmount) as sales, SUM((si.price - IFNULL(si.buyingPrice, 0)) * si.quantity) as profit
+        FROM sale s
+        JOIN saleitem si ON s.id = si.saleId
+        WHERE s.tenantId = ? AND s.status = 0 AND s.createdAt >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+        GROUP BY DATE(s.createdAt)
+        ORDER BY date ASC
+      `, [tenantId]);
+    } catch (err) {
+      console.warn('[STATS] chartRows query failed, join fallback');
+      [chartRows] = await db.query(`
+        SELECT DATE(s.createdAt) as date, SUM(s.totalAmount) as sales, SUM((si.price - IFNULL(p.buyingPrice, 0)) * si.quantity) as profit
+        FROM sale s
+        JOIN saleitem si ON s.id = si.saleId
+        LEFT JOIN product p ON si.productId = p.id
+        WHERE s.tenantId = ? AND s.status = 0 AND s.createdAt >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+        GROUP BY DATE(s.createdAt)
+        ORDER BY date ASC
+      `, [tenantId]);
+    }
+
     const salesChart = Array.from({ length: 7 }).map((_, i) => {
       const d = new Date();
       d.setDate(d.getDate() - (6 - i));
-      const name = d.toLocaleDateString('en-US', { weekday: 'short' });
-      const row = chartRows.find(r => r.name === name);
+      const dateStr = d.toISOString().split('T')[0];
+      const row = chartRows.find(r => {
+          const rDate = new Date(r.date);
+          return rDate.toISOString().split('T')[0] === dateStr;
+      });
       return {
-        name,
+        name: d.toLocaleDateString('en-US', { weekday: 'short' }),
         sales: Number(row?.sales || 0),
         profit: Number(row?.profit || 0)
       };
     });
 
+    // 7. Profit By Source (DYANMIC FIX)
+    // We retrieve the configured sources and cross-reference with actual sales
+    const configuredSources = ops?.saleSources || ['In-Store', 'Walk-in'];
+    let sourceRows = [];
+    try {
+      [sourceRows] = await db.query(`
+        SELECT IFNULL(s.source, 'In-Store') as name, SUM(s.totalAmount) as sales, SUM((si.price - IFNULL(si.buyingPrice, 0)) * si.quantity) as profit
+        FROM sale s
+        JOIN saleitem si ON s.id = si.saleId
+        WHERE s.tenantId = ? AND s.status = 0
+        GROUP BY IFNULL(s.source, 'In-Store')
+      `, [tenantId]);
+    } catch (err) {
+      console.warn('[STATS] sourceRows query failed, join fallback');
+      [sourceRows] = await db.query(`
+        SELECT IFNULL(s.source, 'In-Store') as name, SUM(s.totalAmount) as sales, SUM((si.price - IFNULL(p.buyingPrice, 0)) * si.quantity) as profit
+        FROM sale s
+        JOIN saleitem si ON s.id = si.saleId
+        LEFT JOIN product p ON si.productId = p.id
+        WHERE s.tenantId = ? AND s.status = 0
+        GROUP BY IFNULL(s.source, 'In-Store')
+      `, [tenantId]);
+    }
+
+    const profitBySource = configuredSources.map(sourceName => {
+      const row = sourceRows.find(r => r.name.toLowerCase() === sourceName.toLowerCase());
+      return {
+        name: sourceName,
+        sales: Number(row?.sales || 0),
+        profit: Number(row?.profit || 0)
+      };
+    });
+
+    // Also include any sources that were used in sales but aren't in the official "configured" list
+    sourceRows.forEach(row => {
+      const isAlreadyIn = profitBySource.some(p => p.name.toLowerCase() === row.name.toLowerCase());
+      if (!isAlreadyIn) {
+        profitBySource.push({
+          name: row.name,
+          sales: Number(row.sales || 0),
+          profit: Number(row.profit || 0)
+        });
+      }
+    });
+
     return res.json({
       success: true,
-      dailySales: Number(salesToday[0]?.total || 0),
-      dailyTransactions: Number(txToday[0]?.total || 0),
-      newCustomers: Number(totalCustomers[0]?.total || 0),
-      outOfStockCount: Number(lowStock[0]?.total || 0),
-      profit: Number(profitRes[0]?.dailyProfit || 0),
-      cumulativeProfit: Number(profitRes[0]?.cumulativeProfit || 0),
-      profitBySource: profitBySourceRes.map(row => ({
-        name: row.name,
-        sales: Number(row.sales),
-        profit: Number(row.profit)
-      })),
+      dailySales: Number(dailyRes?.sales || 0),
+      dailyTransactions: Number(dailyRes?.transactions || 0),
+      profit: profit, // Frontend expects 'profit' for daily profit
+      cumulativeProfit: cumulativeProfit,
+      newCustomers: Number(customerRes?.total || 0), // Frontend expects 'newCustomers'
+      outOfStockCount: Number(stockRes?.total || 0),
       salesChart,
-      rating: 4.8
+      profitBySource: profitBySource,
+      updatedAt: new Date().toISOString()
     });
   } catch (err) {
-    return res.status(500).json({ success: false, message: 'Failed to fetch stats' });
+    console.error('[STATS] Error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to generate statistics' });
   }
 };
 
+/**
+ * Fetch activity logs for the current tenant
+ */
 export const getActivityLogs = async (req, res) => {
-  const { tenantId, userId, role } = req.user;
-
-  try {
-    // Feature gate: Activity logs only for MAX plan or SUPER_ADMINs
-    if (role !== 'SUPER_ADMIN') {
-      const [subs] = await db.query('SELECT planName, status FROM subscription WHERE tenantId = ? LIMIT 1', [tenantId]);
-      const sub = subs[0];
-      
-      // During trial (status 2), provide MAX-tier access (Activity Logs) regardless of intended plan
-      const plan = (sub?.status === 2) ? 'TRIAL' : (sub?.status === 0 ? sub.planName : 'LITE');
-
-      if (!['MAX', 'TRIAL'].includes(plan)) {
-        const msg = sub?.status === 1 
-          ? 'Your subscription has expired. Please renew to access activity logs.'
-          : 'Activity logs are only available on the Business Pro (MAX) package.';
-        return res.status(403).json({ success: false, message: msg });
-      }
-    }
-
-    const { page = 1, limit = 10 } = req.query;
+    const { tenantId } = req.user;
+    const { page = 1, limit = 20 } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
-    const isStaff = role === 'STAFF';
+    try {
+        const [logs] = await db.query(`
+            SELECT * FROM activitylog WHERE tenantId = ? ORDER BY createdAt DESC LIMIT ? OFFSET ?
+        `, [tenantId, Number(limit), offset]);
+        const [[countRes]] = await db.query(`SELECT COUNT(*) as total FROM activitylog WHERE tenantId = ?`, [tenantId]);
+        
+        return res.json({ 
+            success: true, 
+            data: logs, 
+            pagination: { total: countRes.total, page: Number(page), limit: Number(limit) } 
+        });
+    } catch (err) {
+        return res.status(500).json({ success: false, message: 'Failed to fetch logs' });
+    }
+};
 
-    let whereQuery = 'WHERE l.tenantId = ?';
-    const queryParams = [tenantId];
+/**
+ * Hard reset for workshop data (Deletes sales, stock, expenses)
+ */
+export const clearData = async (req, res) => {
+    const { tenantId } = req.user;
+    const connection = await db.getConnection();
+    try {
+        await connection.beginTransaction();
+        // 1. Delete Items
+        await connection.query(`DELETE FROM saleitem WHERE saleId IN (SELECT id FROM sale WHERE tenantId = ?)`, [tenantId]);
+        // 2. Delete Sales
+        await connection.query(`DELETE FROM sale WHERE tenantId = ?`, [tenantId]);
+        // 3. Delete Products
+        await connection.query(`DELETE FROM product WHERE tenantId = ?`, [tenantId]);
+        // 4. Delete Expenses
+        await connection.query(`DELETE FROM expense WHERE tenantId = ?`, [tenantId]);
+        // 5. Delete Customers (User with role CUSTOMER)
+        await connection.query(`DELETE FROM user WHERE tenantId = ? AND role = 'CUSTOMER'`, [tenantId]);
+        // 6. Delete Logs
+        await connection.query(`DELETE FROM activitylog WHERE tenantId = ?`, [tenantId]);
+        
+        await connection.commit();
+        return res.json({ success: true, message: 'Business data cleared successfully' });
+    } catch (err) {
+        await connection.rollback();
+        return res.status(500).json({ success: false, message: 'Failed to clear data' });
+    } finally {
+        connection.release();
+    }
+};
 
-    if (isStaff) {
-      whereQuery += ' AND l.userId = ?';
-      queryParams.push(userId);
+/**
+ * Upload profile photo to storage
+ */
+export const uploadPhoto = async (req, res) => {
+    const { userId } = req.user;
+    if (!req.files || !req.files.file) {
+        return res.status(400).json({ success: false, message: 'No file uploaded' });
     }
 
-    const [logs] = await db.query(`
-      SELECT l.*, u.name as userName
-      FROM activitylog l
-      LEFT JOIN user u ON l.userId = u.id
-      ${whereQuery}
-      ORDER BY l.createdAt DESC
-      LIMIT ? OFFSET ?
-    `, [...queryParams, Number(limit), offset]);
-
-    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM activitylog l ${whereQuery}`, queryParams);
-    const total = Number(countRes[0].total);
-
-    return res.json({
-      success: true,
-      data: {
-        items: logs,
-        pagination: { total, totalPages: Math.ceil(total / Number(limit)), page: Number(page), limit: Number(limit) }
-      }
-    });
-  } catch (err) {
-    return res.status(500).json({ success: false, message: 'Failed to fetch logs' });
-  }
-};
-
-export const uploadPhoto = async (req, res) => {
-  const { userId } = req.user;
-
-  if (!req.files || !req.files.file) {
-    return res.status(400).json({ success: false, message: 'No file uploaded' });
-  }
-
-  try {
-    const file = req.files.file;
-    const photoUrl = await uploadFile(file, 'profiles');
-
-    // Update database
-    await db.query(`UPDATE user SET photoUrl = ? WHERE id = ?`, [photoUrl, userId]);
-
-    return res.json({ success: true, data: { photoUrl } });
-  } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
-  }
-};
-
-
-export const clearData = async (req, res) => {
-  const { tenantId, userId, role } = req.user;
-  
-  if (role !== 'PROVIDER' && role !== 'SUPER_ADMIN') {
-    return res.status(403).json({ success: false, message: 'Unauthorized: Only business owners can clear data.' });
-  }
-
-  const connection = await db.getConnection();
-  try {
-    await connection.beginTransaction();
-
-    // 1. Delete Sales & Items
-    await connection.query('DELETE FROM saleitem WHERE saleId IN (SELECT id FROM sale WHERE tenantId = ?)', [tenantId]);
-    await connection.query('DELETE FROM sale WHERE tenantId = ?', [tenantId]);
-
-    // 2. Delete Inventory & Products
-    await connection.query('DELETE FROM product WHERE tenantId = ?', [tenantId]);
-
-    // 3. Delete Services
-    await connection.query('DELETE FROM service WHERE tenantId = ?', [tenantId]);
-
-    // 4. Delete Expenses
-    await connection.query('DELETE FROM expense WHERE tenantId = ?', [tenantId]);
-
-    // 5. Delete Activity Logs (except for the clear action itself shortly)
-    await connection.query('DELETE FROM activitylog WHERE tenantId = ?', [tenantId]);
-
-    // 6. Delete Notifications
-    await connection.query('DELETE FROM notification WHERE tenantId = ?', [tenantId]);
-
-    // 7. Delete Customers (related to this tenant)
-    await connection.query("DELETE FROM user WHERE tenantId = ? AND role = 'CUSTOMER'", [tenantId]);
-
-    // Log the clear action
-    await connection.query(`
-      INSERT INTO activitylog (id, tenantId, userId, action, logName, details, ipAddress, createdAt)
-      VALUES (?, ?, ?, 'Workshop cleared', 'Workshop cleared', ?, ?, NOW())
-    `, [ulid(), tenantId, userId, 'The user reset their business data to zero.', req.ip || 'Unknown']);
-
-    await connection.commit();
-    return res.json({ success: true, message: 'All business data cleared successfully.' });
-  } catch (err) {
-    await connection.rollback();
-    return res.status(500).json({ success: false, message: err.message });
-  } finally {
-    connection.release();
-  }
+    try {
+        const url = await uploadFile(req.files.file, 'avatars');
+        await db.query(`UPDATE user SET photoUrl = ?, updatedAt = NOW() WHERE id = ?`, [url, userId]);
+        return res.json({ success: true, data: { url } });
+    } catch (err) {
+        return res.status(500).json({ success: false, message: 'Upload failed' });
+    }
 };

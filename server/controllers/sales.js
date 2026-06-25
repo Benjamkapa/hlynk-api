@@ -102,7 +102,7 @@ export const listSales = async (req, res) => {
     if (req.query.includeStats === 'true') {
       const [statsRes] = await db.query(`
         SELECT 
-          SUM(totalAmount) as totalAmount,
+          IFNULL(SUM(totalAmount), 0) as totalAmount,
           COUNT(*) as transactions
         FROM sale s
         ${whereQuery} AND s.status = 0
@@ -111,7 +111,7 @@ export const listSales = async (req, res) => {
       const [sourceStatsRes] = await db.query(`
         SELECT 
           IFNULL(source, 'In-Store') as source,
-          SUM(totalAmount) as totalAmount,
+          IFNULL(SUM(totalAmount), 0) as totalAmount,
           COUNT(*) as transactions
         FROM sale s
         ${whereQuery} AND s.status = 0
@@ -188,17 +188,34 @@ export const createSale = async (req, res) => {
           }
       }
 
-      await connection.query(
-        `INSERT INTO saleitem (id, saleId, productId, name, quantity, price, buyingPrice) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [ulid(), saleId, item.productId || null, item.name, item.quantity, item.price, finalBuyingPrice]
-      );
+      try {
+        await connection.query(
+          `INSERT INTO saleitem (id, saleId, productId, name, quantity, price, buyingPrice) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [ulid(), saleId, item.productId || null, item.name, item.quantity, item.price, finalBuyingPrice]
+        );
+      } catch (err) {
+        if (err.code === 'ER_BAD_FIELD_ERROR' && err.message.includes('buyingPrice')) {
+          console.warn('[SALES] buyingPrice column missing, recording sale without it');
+          await connection.query(
+            `INSERT INTO saleitem (id, saleId, productId, name, quantity, price) VALUES (?, ?, ?, ?, ?, ?)`,
+            [ulid(), saleId, item.productId || null, item.name, item.quantity, item.price]
+          );
+        } else {
+          throw err;
+        }
+      }
 
       // Update inventory (Physical Goods only)
       if (item.productId) {
         await connection.query(`UPDATE product SET stockLevel = stockLevel - ? WHERE id = ? AND tenantId = ? AND type != 'SERVICE'`, [item.quantity, item.productId, tenantId]);
         
-        // Low Stock Check
-        const [[prod]] = await connection.query(`SELECT p.name, p.stockLevel, pr.operationalSettings FROM product p JOIN provider pr ON p.tenantId = pr.tenantId WHERE p.id = ?`, [item.productId]);
+        // Low Stock Check (Skip for Services)
+        const [[prod]] = await connection.query(`
+          SELECT p.name, p.stockLevel, p.type, pr.operationalSettings 
+          FROM product p 
+          JOIN provider pr ON p.tenantId = pr.tenantId 
+          WHERE p.id = ? AND IFNULL(p.type, 'GOOD') != 'SERVICE'
+        `, [item.productId]);
         if (prod) {
           const ops = typeof prod.operationalSettings === 'string' ? JSON.parse(prod.operationalSettings) : prod.operationalSettings;
           const threshold = ops?.lowStockThreshold || 5;
