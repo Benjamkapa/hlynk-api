@@ -65,12 +65,12 @@ async function runBackup() {
         console.log(`  - Exporting table: ${table}`);
         
         // 1. Drop existing table
-        statements.push(`DROP TABLE IF EXISTS \`${table}\``);
+        statements.push(`DROP TABLE IF EXISTS \`${table}\`;`);
 
         // 2. Create table schema
         const [createRows] = await dbConnection.query(`SHOW CREATE TABLE \`${table}\``);
         const createSql = createRows[0]['Create Table'];
-        statements.push(createSql);
+        statements.push(`${createSql};`);
 
         // 3. Columns checks of non-generated columns
         const [cols] = await dbConnection.query(`SHOW COLUMNS FROM \`${table}\``);
@@ -101,7 +101,7 @@ async function runBackup() {
             }).join(',\n');
 
             const escapedCols = insertableColumns.map(c => `\`${c}\``).join(', ');
-            statements.push(`INSERT INTO \`${table}\` (${escapedCols}) VALUES \n${valuesSql}`);
+            statements.push(`INSERT INTO \`${table}\` (${escapedCols}) VALUES \n${valuesSql};`);
           }
         }
       }
