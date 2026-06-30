@@ -1594,10 +1594,18 @@ export const downloadDatabaseBackup = async (req, res) => {
 
     const sqlContent = statements.join('\n-- STATEMENT_BOUNDARY --\n');
     
+    // Format a human-readable local timestamp: YYYY-MM-DD_HH-MM-SS-AM/PM
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    let hours = d.getHours();
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12;
+    hours = hours ? hours : 12;
+    const timeStampStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(hours)}-${pad(d.getMinutes())}-${pad(d.getSeconds())}-${ampm}`;
+
     // Set headers to download file
-    const stamp = new Date().toISOString().slice(0,10).replace(/-/g, '') + '_' + new Date().toTimeString().slice(0,8).replace(/:/g, '');
     res.setHeader('Content-Type', 'application/sql');
-    res.setHeader('Content-Disposition', `attachment; filename="${dbName}_backup_${stamp}.sql"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${dbName}_live_backup_${timeStampStr}.sql"`);
     return res.send(sqlContent);
 
   } catch (err) {
