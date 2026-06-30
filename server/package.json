@@ -14,6 +14,8 @@
     "db:upgrade": "node scripts/upgrade_db.js",
     "db:debug-kcb": "node scripts/debug_kcb_config.js",
     "-- SYSTEM --": "echo '--- System ---'",
+    "system:backup": "node scripts/system_backup.js",
+    "system:restore": "node scripts/system_restore.js",
     "system:audit": "node scripts/system_audit.js",
     "system:check-route": "node scripts/check_route.js",
     "system:test-api": "node scripts/test_api.js",
