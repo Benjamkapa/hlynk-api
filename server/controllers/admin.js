@@ -1592,7 +1592,7 @@ export const downloadDatabaseBackup = async (req, res) => {
 
     statements.push("SET FOREIGN_KEY_CHECKS = 1;");
 
-    const sqlContent = statements.join('\n-- STATEMENT_BOUNDARY --\n');
+    const sqlContent = statements.join('\n\n');
     
     // Format a human-readable local timestamp: YYYY-MM-DD_HH-MM-SS-AM/PM
     const d = new Date();
