@@ -1547,6 +1547,8 @@ export const downloadDatabaseBackup = async (req, res) => {
     
     const statements = [];
     statements.push("SET FOREIGN_KEY_CHECKS = 0;");
+    statements.push(`CREATE DATABASE IF NOT EXISTS \`${dbName}\`;`);
+    statements.push(`USE \`${dbName}\`;`);
 
     for (const table of tables) {
       // 1. Drop existing table
@@ -1578,7 +1580,11 @@ export const downloadDatabaseBackup = async (req, res) => {
           const chunk = rows.slice(i, i + chunkSize);
           const valuesSql = chunk.map(row => {
             const values = insertableColumns.map(colName => {
-              const val = row[colName];
+              let val = row[colName];
+              // Convert parsed JSON objects back to strings safely
+              if (val !== null && typeof val === 'object' && !(val instanceof Date) && !(val instanceof Buffer)) {
+                val = JSON.stringify(val);
+              }
               return dbConnection.escape(val);
             }).join(', ');
             return `(${values})`;
