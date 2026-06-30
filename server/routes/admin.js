@@ -32,7 +32,8 @@ import {
   listNewPayouts,
   getVaultStats,
   testB2C,
-  extendSubscriptionDays
+  extendSubscriptionDays,
+  downloadDatabaseBackup
 } from '../controllers/admin.js';
 
 import { authenticate, requireAdmin } from '../middleware/auth.js';
@@ -42,6 +43,7 @@ const router = express.Router();
 router.use(authenticate);
 router.use(requireAdmin);
 
+router.get('/backup/db', downloadDatabaseBackup);
 router.get('/stats', getSystemStats);
 router.get('/tenants', listTenants);
 router.put('/tenants/:id/upgrade', upgradePlan);

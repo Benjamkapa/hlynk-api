@@ -1525,3 +1525,85 @@ export const testB2C = async (req, res) => {
     return res.status(500).json({ success: false, message: err.message || 'B2C Test Failed' });
   }
 };
+
+export const downloadDatabaseBackup = async (req, res) => {
+  let dbConnection = null;
+  try {
+    dbConnection = await db.getConnection();
+
+    // Get Database Name
+    const [dbNameRow] = await dbConnection.query('SELECT DATABASE() as dbName');
+    const dbName = dbNameRow[0]?.dbName || 'hlynk';
+
+    // Get all tables
+    const [tablesList] = await dbConnection.query("SHOW FULL TABLES WHERE Table_type = 'BASE TABLE'");
+    const tableKey = tablesList[0] ? Object.keys(tablesList[0])[0] : null;
+    
+    if (!tableKey) {
+      return res.status(404).json({ success: false, message: 'No tables found in database.' });
+    }
+
+    const tables = tablesList.map(t => t[tableKey]);
+    
+    const statements = [];
+    statements.push("SET FOREIGN_KEY_CHECKS = 0;");
+
+    for (const table of tables) {
+      // 1. Drop existing table
+      statements.push(`DROP TABLE IF EXISTS \`${table}\`;`);
+
+      // 2. Create table schema
+      const [createRows] = await dbConnection.query(`SHOW CREATE TABLE \`${table}\``);
+      const createSql = createRows[0]['Create Table'];
+      statements.push(`${createSql};`);
+
+      // 3. Keep only insertable (non-generated) columns
+      const [cols] = await dbConnection.query(`SHOW COLUMNS FROM \`${table}\``);
+      const insertableColumns = cols
+        .filter(col => {
+          const extra = col.Extra.toUpperCase();
+          return !extra.includes('VIRTUAL') && !extra.includes('STORED');
+        })
+        .map(col => col.Field);
+
+      if (insertableColumns.length === 0) continue;
+
+      // 4. Fetch all rows
+      const columnsSelector = insertableColumns.map(c => `\`${c}\``).join(', ');
+      const [rows] = await dbConnection.query(`SELECT ${columnsSelector} FROM \`${table}\``);
+
+      if (rows.length > 0) {
+        const chunkSize = 200;
+        for (let i = 0; i < rows.length; i += chunkSize) {
+          const chunk = rows.slice(i, i + chunkSize);
+          const valuesSql = chunk.map(row => {
+            const values = insertableColumns.map(colName => {
+              const val = row[colName];
+              return dbConnection.escape(val);
+            }).join(', ');
+            return `(${values})`;
+          }).join(',\n');
+
+          const escapedCols = insertableColumns.map(c => `\`${c}\``).join(', ');
+          statements.push(`INSERT INTO \`${table}\` (${escapedCols}) VALUES \n${valuesSql};`);
+        }
+      }
+    }
+
+    statements.push("SET FOREIGN_KEY_CHECKS = 1;");
+
+    const sqlContent = statements.join('\n-- STATEMENT_BOUNDARY --\n');
+    
+    // Set headers to download file
+    const stamp = new Date().toISOString().slice(0,10).replace(/-/g, '') + '_' + new Date().toTimeString().slice(0,8).replace(/:/g, '');
+    res.setHeader('Content-Type', 'application/sql');
+    res.setHeader('Content-Disposition', `attachment; filename="${dbName}_backup_${stamp}.sql"`);
+    return res.send(sqlContent);
+
+  } catch (err) {
+    console.error('❌ LIVE SQL BACKUP API FAILED:', err);
+    return res.status(500).json({ success: false, message: 'Failed to generate backup: ' + err.message });
+  } finally {
+    if (dbConnection) dbConnection.release();
+  }
+};
