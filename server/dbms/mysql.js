@@ -1,5 +1,6 @@
 import mysql from 'mysql2/promise';
-import 'dotenv/config';
+import dotenv from 'dotenv';
+dotenv.config({ quiet: true });
 
 // Database configuration
 // Priority: DATABASE_URL > individual env vars > defaults

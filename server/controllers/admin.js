@@ -1,3 +1,4 @@
+import mysql from 'mysql2/promise';
 import { db } from '../dbms/mysql.js';
 import { minioClient, bucketName } from '../utils/storage.js';
 import { initiateB2C } from '../utils/mpesa.js';
@@ -1621,3 +1622,48 @@ export const downloadDatabaseBackup = async (req, res) => {
     if (dbConnection) dbConnection.release();
   }
 };
+
+export const restoreDatabaseBackup = async (req, res) => {
+  let restoreConn = null;
+  try {
+    if (!req.files || !req.files.sqlFile) {
+      return res.status(400).json({ success: false, message: 'No backup file uploaded (.sql).' });
+    }
+
+    const file = req.files.sqlFile;
+    let sqlString = file.data.toString('utf8');
+    
+    // Remove BOM if present
+    if (sqlString.charCodeAt(0) === 0xFEFF) sqlString = sqlString.slice(1);
+
+    // Instead of string splitting (which breaks on raw payloads with semi-colons/newlines),
+    // we spawn a dedicated raw connection that natively permits multipleStatements
+    restoreConn = await mysql.createConnection({
+      uri: process.env.DATABASE_URL,
+      host: process.env.DB_HOST,
+      user: process.env.DB_USER,
+      password: process.env.DB_PASSWORD,
+      database: process.env.DB_NAME,
+      multipleStatements: true // Critical for running large .sql exports securely
+    });
+
+    // We can confidently execute the entire batch as one transaction sequence natively
+    await restoreConn.query('SET FOREIGN_KEY_CHECKS = 0;\n' + sqlString + '\nSET FOREIGN_KEY_CHECKS = 1;');
+
+    await db.query(`
+      INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
+      VALUES (?, 'SYSTEM', ?, 'System Restored', 'Security', 'Admin executed raw .sql database file restore', NOW())
+    `, [ulid(), req.user.userId]);
+
+    return res.json({ success: true, message: 'Database successfully restored natively from the backup file!' });
+  } catch (err) {
+    console.error('❌ LIVE SQL RESTORE API FAILED:', err);
+    return res.status(500).json({ success: false, message: 'Restore failed: ' + err.message });
+  } finally {
+    if (restoreConn) {
+       await restoreConn.query('SET FOREIGN_KEY_CHECKS = 1;').catch(() => {});
+       await restoreConn.end();
+    }
+  }
+};
+

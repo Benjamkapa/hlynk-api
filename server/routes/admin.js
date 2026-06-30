@@ -33,7 +33,8 @@ import {
   getVaultStats,
   testB2C,
   extendSubscriptionDays,
-  downloadDatabaseBackup
+  downloadDatabaseBackup,
+  restoreDatabaseBackup
 } from '../controllers/admin.js';
 
 import { authenticate, requireAdmin } from '../middleware/auth.js';
@@ -44,6 +45,7 @@ router.use(authenticate);
 router.use(requireAdmin);
 
 router.get('/backup/db', downloadDatabaseBackup);
+router.post('/backup/restore', restoreDatabaseBackup);
 router.get('/stats', getSystemStats);
 router.get('/tenants', listTenants);
 router.put('/tenants/:id/upgrade', upgradePlan);
