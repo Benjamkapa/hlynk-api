@@ -2,16 +2,9 @@ import { db } from '../dbms/mysql.js';
 import { uploadFile } from '../utils/storage.js';
 import { ulid } from 'ulid';
 
-const getStartOfDay = (date) => {
-  const normalized = new Date(date);
-  normalized.setHours(0, 0, 0, 0);
-  return normalized;
-};
-
-const addDays = (date, days) => {
-  const next = new Date(date);
-  next.setDate(next.getDate() + days);
-  return next;
+const getEatDateString = (d = new Date()) => {
+  const eatDate = new Date(d.getTime() + 3 * 60 * 60 * 1000);
+  return eatDate.toISOString().split('T')[0];
 };
 
 export const listProducts = async (req, res) => {
@@ -59,11 +52,11 @@ export const listProducts = async (req, res) => {
       const [lowStockRes] = await db.query(`SELECT COUNT(*) as total FROM product WHERE tenantId = ? AND IFNULL(type, 'GOOD') != 'SERVICE' AND stockLevel <= minLevel`, [tenantId]);
       const [totalValueRes] = await db.query(`SELECT SUM(buyingPrice * stockLevel) as total FROM product WHERE tenantId = ? AND IFNULL(type, 'GOOD') != 'SERVICE'`, [tenantId]);
       
-      const today = getStartOfDay(new Date());
+      const todayStr = getEatDateString();
       const [expiringSoonRes] = await db.query(`
         SELECT COUNT(*) as total FROM product 
         WHERE tenantId = ? AND isPerishable = 1 AND expiryDate >= ? AND expiryDate <= DATE_ADD(?, INTERVAL 28 DAY)
-      `, [tenantId, today, today]);
+      `, [tenantId, todayStr, todayStr]);
 
       response.stats = {
         totalItems: Number(totalItemsRes[0].total),

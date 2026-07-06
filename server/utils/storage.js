@@ -59,7 +59,7 @@ export const initStorage = async () => {
  */
 export const uploadFile = async (file, folder = 'general') => {
     const fileName = `${folder}/${Date.now()}-${file.name.replace(/\s+/g, '_')}`;
-    
+
     await minioClient.putObject(bucketName, fileName, file.data, file.size, {
         'Content-Type': file.mimetype
     });

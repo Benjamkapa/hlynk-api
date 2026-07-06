@@ -87,11 +87,12 @@ export const getSystemStats = async (req, res) => {
     let revenueTrend = trendRows;
     if (revenueTrend.length === 0) {
       if (timeframe === 'HOURLY') {
-        revenueTrend = Array.from({length: 6}).map((_, i) => ({ name: `${(new Date().getHours() - (5-i) + 24) % 24}:00`, value: 0 }));
+        const eatNow = new Date(Date.now() + 3 * 60 * 60 * 1000);
+        revenueTrend = Array.from({length: 6}).map((_, i) => ({ name: `${(eatNow.getUTCHours() - (5-i) + 24) % 24}:00`, value: 0 }));
       } else {
         revenueTrend = Array.from({length: 7}).map((_, i) => {
-           let d = new Date(); d.setDate(d.getDate() - (6-i));
-           return { name: d.toLocaleDateString('en-US', {month:'short', day:'numeric'}), value: 0 };
+           const eatVal = new Date(Date.now() + 3 * 60 * 60 * 1000); let d = new Date(eatVal); d.setUTCDate(d.getUTCDate() - (6-i));
+           return { name: d.toLocaleDateString('en-US', {month:'short', day:'numeric', timeZone: 'UTC'}), value: 0 };
         });
       }
     }
@@ -253,8 +254,9 @@ export const getSystemHealth = async (req, res) => {
     
     // Fallback if no activity in last 12 hours
     if (performanceData.length === 0) {
+       const eatNow = new Date(Date.now() + 3 * 60 * 60 * 1000);
        performanceData = Array.from({length: 6}).map((_, i) => ({
-         time: `${(new Date().getHours() - (5-i) + 24) % 24}:00`,
+         time: `${(eatNow.getUTCHours() - (5-i) + 24) % 24}:00`,
          api: dbLatencyMs + 5,
          load: cpuLoad
        }));

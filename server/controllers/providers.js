@@ -101,16 +101,19 @@ export const getStats = async (req, res) => {
   
   try {
 
-    // 1. Daily Sales & Transactions
+    // 1. Daily Sales & Transactions (using EAT timezone so "today" is Kenya time)
     const [[dailyRes]] = await db.query(`
       SELECT IFNULL(SUM(totalAmount), 0) as sales, COUNT(*) as transactions
       FROM sale
-      WHERE tenantId = ? AND status = 0 AND createdAt >= CURDATE()
+      WHERE tenantId = ? AND status = 0
+        AND DATE(CONVERT_TZ(createdAt, '+00:00', '+03:00')) = CURDATE()
     `, [tenantId]);
 
-    // 2. New Customers Today
+    // 2. New Customers Today (EAT-aware)
     const [[customerRes]] = await db.query(`
-      SELECT COUNT(*) as total FROM user WHERE tenantId = ? AND role = 'CUSTOMER' AND createdAt >= CURDATE()
+      SELECT COUNT(*) as total FROM user
+      WHERE tenantId = ? AND role = 'CUSTOMER'
+        AND DATE(CONVERT_TZ(createdAt, '+00:00', '+03:00')) = CURDATE()
     `, [tenantId]);
 
     // 3. Out of Stock Count (based on threshold)
@@ -122,14 +125,15 @@ export const getStats = async (req, res) => {
       SELECT COUNT(*) as total FROM product WHERE tenantId = ? AND stockLevel <= ? AND IFNULL(type, 'GOOD') != 'SERVICE'
     `, [tenantId, threshold]);
 
-    // 4. Daily Profit (Revenue - Buying Price)
+    // 4. Daily Profit (Revenue - Buying Price, EAT-aware)
     let profit = 0;
     try {
       const [[profitRes]] = await db.query(`
         SELECT IFNULL(SUM((si.price - IFNULL(si.buyingPrice, 0)) * si.quantity), 0) as profit
         FROM sale s
         JOIN saleitem si ON s.id = si.saleId
-        WHERE s.tenantId = ? AND s.status = 0 AND s.createdAt >= CURDATE()
+        WHERE s.tenantId = ? AND s.status = 0
+          AND DATE(CONVERT_TZ(s.createdAt, '+00:00', '+03:00')) = CURDATE()
       `, [tenantId]);
       profit = Number(profitRes?.profit || 0);
     } catch (err) {
@@ -139,7 +143,8 @@ export const getStats = async (req, res) => {
         FROM sale s
         JOIN saleitem si ON s.id = si.saleId
         LEFT JOIN product p ON si.productId = p.id
-        WHERE s.tenantId = ? AND s.status = 0 AND s.createdAt >= CURDATE()
+        WHERE s.tenantId = ? AND s.status = 0
+          AND DATE(CONVERT_TZ(s.createdAt, '+00:00', '+03:00')) = CURDATE()
       `, [tenantId]);
       profit = Number(joinProfitRes?.profit || 0);
     }
@@ -166,40 +171,77 @@ export const getStats = async (req, res) => {
       cumulativeProfit = Number(joinProfitRes?.profit || 0);
     }
 
-    // 6. Sales Chart (Last 7 Days)
+    // 5b. MTD Gross Profit (this calendar month, EAT-aware)
+    let mtdProfit = 0;
+    try {
+      const [[mtdProfitRes]] = await db.query(`
+        SELECT IFNULL(SUM((si.price - IFNULL(si.buyingPrice, 0)) * si.quantity), 0) as profit
+        FROM sale s
+        JOIN saleitem si ON s.id = si.saleId
+        WHERE s.tenantId = ? AND s.status = 0
+          AND DATE(CONVERT_TZ(s.createdAt, '+00:00', '+03:00')) >= DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+03:00'), '%Y-%m-01')
+      `, [tenantId]);
+      mtdProfit = Number(mtdProfitRes?.profit || 0);
+    } catch (err) {
+      console.warn('[STATS] mtdProfit query failed, join fallback');
+      const [[joinRes]] = await db.query(`
+        SELECT IFNULL(SUM((si.price - IFNULL(p.buyingPrice, 0)) * si.quantity), 0) as profit
+        FROM sale s
+        JOIN saleitem si ON s.id = si.saleId
+        LEFT JOIN product p ON si.productId = p.id
+        WHERE s.tenantId = ? AND s.status = 0
+          AND DATE(CONVERT_TZ(s.createdAt, '+00:00', '+03:00')) >= DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+03:00'), '%Y-%m-01')
+      `, [tenantId]);
+      mtdProfit = Number(joinRes?.profit || 0);
+    }
+
+    // 6. Sales Chart (Last 7 Days) — grouped and returned as plain 'YYYY-MM-DD' strings
+    //    Using DATE_FORMAT instead of DATE() prevents mysql2 from creating JS Date objects
+    //    which shift dates by the server's local timezone offset (e.g. EAT midnight → UTC-1day).
     let chartRows = [];
     try {
       [chartRows] = await db.query(`
-        SELECT DATE(s.createdAt) as date, SUM(s.totalAmount) as sales, SUM((si.price - IFNULL(si.buyingPrice, 0)) * si.quantity) as profit
+        SELECT
+          DATE_FORMAT(CONVERT_TZ(s.createdAt, '+00:00', '+03:00'), '%Y-%m-%d') as date,
+          SUM(s.totalAmount) as sales,
+          SUM((si.price - IFNULL(si.buyingPrice, 0)) * si.quantity) as profit
         FROM sale s
         JOIN saleitem si ON s.id = si.saleId
-        WHERE s.tenantId = ? AND s.status = 0 AND s.createdAt >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
-        GROUP BY DATE(s.createdAt)
+        WHERE s.tenantId = ? AND s.status = 0
+          AND DATE(CONVERT_TZ(s.createdAt, '+00:00', '+03:00')) >= CURDATE() - INTERVAL 6 DAY
+        GROUP BY DATE_FORMAT(CONVERT_TZ(s.createdAt, '+00:00', '+03:00'), '%Y-%m-%d')
         ORDER BY date ASC
       `, [tenantId]);
     } catch (err) {
       console.warn('[STATS] chartRows query failed, join fallback');
       [chartRows] = await db.query(`
-        SELECT DATE(s.createdAt) as date, SUM(s.totalAmount) as sales, SUM((si.price - IFNULL(p.buyingPrice, 0)) * si.quantity) as profit
+        SELECT
+          DATE_FORMAT(CONVERT_TZ(s.createdAt, '+00:00', '+03:00'), '%Y-%m-%d') as date,
+          SUM(s.totalAmount) as sales,
+          SUM((si.price - IFNULL(p.buyingPrice, 0)) * si.quantity) as profit
         FROM sale s
         JOIN saleitem si ON s.id = si.saleId
         LEFT JOIN product p ON si.productId = p.id
-        WHERE s.tenantId = ? AND s.status = 0 AND s.createdAt >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
-        GROUP BY DATE(s.createdAt)
+        WHERE s.tenantId = ? AND s.status = 0
+          AND DATE(CONVERT_TZ(s.createdAt, '+00:00', '+03:00')) >= CURDATE() - INTERVAL 6 DAY
+        GROUP BY DATE_FORMAT(CONVERT_TZ(s.createdAt, '+00:00', '+03:00'), '%Y-%m-%d')
         ORDER BY date ASC
       `, [tenantId]);
     }
 
+    // Build the 7-day skeleton in EAT.
+    // DB rows now have date as plain 'YYYY-MM-DD' string (not a Date object),
+    // so comparison is a safe exact string match with no timezone shifting.
+    const eatNow = new Date(Date.now() + 3 * 60 * 60 * 1000); // shift to EAT
     const salesChart = Array.from({ length: 7 }).map((_, i) => {
-      const d = new Date();
-      d.setDate(d.getDate() - (6 - i));
+      const d = new Date(eatNow);
+      d.setUTCDate(d.getUTCDate() - (6 - i));
+      // dateStr as EAT 'YYYY-MM-DD' — ties to UTC representation of the EAT-shifted Date
       const dateStr = d.toISOString().split('T')[0];
-      const row = chartRows.find(r => {
-          const rDate = new Date(r.date);
-          return rDate.toISOString().split('T')[0] === dateStr;
-      });
+      // r.date is always a plain string like '2026-07-06' thanks to DATE_FORMAT in SQL
+      const row = chartRows.find(r => String(r.date) === dateStr);
       return {
-        name: d.toLocaleDateString('en-US', { weekday: 'short' }),
+        name: d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' }),
         sales: Number(row?.sales || 0),
         profit: Number(row?.profit || 0)
       };
@@ -250,13 +292,24 @@ export const getStats = async (req, res) => {
       }
     });
 
+    // 8. MTD Expenses (for net profit calculation)
+    const [[mtdExpenseRes]] = await db.query(`
+      SELECT IFNULL(SUM(amount), 0) as total
+      FROM expense
+      WHERE tenantId = ? AND CONVERT_TZ(date, '+00:00', '+03:00') >= DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+03:00'), '%Y-%m-01')
+    `, [tenantId]);
+    const mtdExpenses = Number(mtdExpenseRes?.total || 0);
+
     return res.json({
       success: true,
       dailySales: Number(dailyRes?.sales || 0),
       dailyTransactions: Number(dailyRes?.transactions || 0),
-      profit: profit, // Frontend expects 'profit' for daily profit
-      cumulativeProfit: cumulativeProfit,
-      newCustomers: Number(customerRes?.total || 0), // Frontend expects 'newCustomers'
+      profit: profit,               // daily gross margin (today)
+      cumulativeProfit: cumulativeProfit, // all-time gross margin
+      mtdProfit,                    // month-to-date gross margin (EAT)
+      mtdExpenses,                  // month-to-date expenses
+      mtdNetProfit: mtdProfit - Number(mtdExpenseRes?.total || 0), // convenience: gross − expenses
+      newCustomers: Number(customerRes?.total || 0),
       outOfStockCount: Number(stockRes?.total || 0),
       salesChart,
       profitBySource: profitBySource,

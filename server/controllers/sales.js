@@ -39,10 +39,9 @@ export const listSales = async (req, res) => {
     }
 
     if (date) {
-      const start = new Date(date);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(date);
-      end.setHours(23, 59, 59, 999);
+      const [y, m, d] = date.split('-').map(Number);
+      const start = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0) - 3 * 60 * 60 * 1000);
+      const end = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999) - 3 * 60 * 60 * 1000);
       whereQuery += ' AND s.createdAt >= ? AND s.createdAt <= ?';
       queryParams.push(start, end);
     }

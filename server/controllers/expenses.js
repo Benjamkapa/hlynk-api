@@ -54,10 +54,11 @@ export const listExpenses = async (req, res) => {
       SELECT SUM(e.amount) as total 
       FROM expense e
       ${whereQuery} 
-      AND e.date >= DATE_FORMAT(NOW() ,'%Y-%m-01')
+      AND CONVERT_TZ(e.date, '+00:00', '+03:00') >= DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+03:00'), '%Y-%m-01')
     `, queryParams);
     
-    const daysSoFar = Math.max(1, new Date().getDate());
+    const eatNow = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    const daysSoFar = Math.max(1, eatNow.getUTCDate());
     const burnRate = Math.round((burnAgg[0]?.total || 0) / daysSoFar);
 
     return res.json({ 
@@ -84,9 +85,23 @@ export const createExpense = async (req, res) => {
   const id = ulid();
 
   try {
+    let expenseDate;
+    if (data.date) {
+      const [y, m, d] = data.date.split('-').map(Number);
+      const now = new Date();
+      const eatHour = (now.getUTCHours() + 3) % 24;
+      const eatMinute = now.getUTCMinutes();
+      const eatSecond = now.getUTCSeconds();
+      const eatMs = now.getUTCMilliseconds();
+      const utcTimestamp = Date.UTC(y, m - 1, d, eatHour, eatMinute, eatSecond, eatMs);
+      expenseDate = new Date(utcTimestamp - 3 * 60 * 60 * 1000);
+    } else {
+      expenseDate = new Date();
+    }
+
     await db.query(
       `INSERT INTO expense (id, tenantId, userId, category, description, amount, date, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
-      [id, tenantId, userId, data.category, data.description, data.amount, data.date ? new Date(data.date) : new Date()]
+      [id, tenantId, userId, data.category, data.description, data.amount, expenseDate]
     );
     return res.json({ success: true, data: { expenseId: id } });
   } catch (err) {
