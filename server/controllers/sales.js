@@ -295,6 +295,82 @@ export const getSaleDetails = async (req, res) => {
   }
 };
 
+export const voidSale = async (req, res) => {
+  const { tenantId, userId, role } = req.user;
+  const { id } = req.params;
+  const { reason } = req.body;
+  const clientIp = req.ip;
+
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    // Fetch the sale
+    const [[sale]] = await connection.query(
+      `SELECT * FROM sale WHERE id = ? AND tenantId = ?`,
+      [id, tenantId]
+    );
+
+    if (!sale) {
+      await connection.rollback();
+      return res.status(404).json({ success: false, message: 'Sale not found' });
+    }
+
+    if (Number(sale.status) === 3) {
+      await connection.rollback();
+      return res.status(400).json({ success: false, message: 'Sale is already voided' });
+    }
+
+    // Staff can only void their own sales
+    if (role === 'STAFF' && sale.userId !== userId) {
+      await connection.rollback();
+      return res.status(403).json({ success: false, message: 'You can only void your own sales' });
+    }
+
+    // Mark sale as cancelled (status = 3)
+    await connection.query(
+      `UPDATE sale SET status = 3, updatedAt = NOW() WHERE id = ? AND tenantId = ?`,
+      [id, tenantId]
+    );
+
+    // Restore stock for physical goods
+    const [items] = await connection.query(`SELECT * FROM saleitem WHERE saleId = ?`, [id]);
+    for (const item of items) {
+      if (item.productId) {
+        await connection.query(
+          `UPDATE product SET stockLevel = stockLevel + ? WHERE id = ? AND tenantId = ? AND type != 'SERVICE'`,
+          [item.quantity, item.productId, tenantId]
+        );
+      }
+    }
+
+    // Activity log
+    const voidReason = reason ? ` Reason: ${reason}` : '';
+    try {
+      await connection.query(
+        `INSERT INTO activitylog (id, tenantId, userId, action, logName, details, ipAddress, actionId, createdAt)
+         VALUES (?, ?, ?, 'Sale voided', 'Sale voided', ?, ?, ?, NOW())`,
+        [
+          ulid(), tenantId, userId || null,
+          `Sale #${id.slice(-6).toUpperCase()} of KES ${sale.totalAmount} voided.${voidReason}`,
+          clientIp,
+          `#sale-${id.slice(-6).toUpperCase()}`
+        ]
+      );
+    } catch (logErr) {
+      console.error('[VOID-ACTIVITY-LOG] Warning:', logErr.message);
+    }
+
+    await connection.commit();
+    return res.json({ success: true, message: 'Sale voided successfully' });
+  } catch (err) {
+    await connection.rollback();
+    return res.status(500).json({ success: false, message: err.message });
+  } finally {
+    connection.release();
+  }
+};
+
 export const vendorMpesaPush = async (req, res) => {
   const { tenantId } = req.user;
   const { phone, amount, reference } = req.body;
