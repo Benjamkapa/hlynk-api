@@ -26,6 +26,7 @@
     "-- SUBSCRIPTIONS --": "echo '--- Subscriptions ---'",
     "sub:tool": "node scripts/sub_tool.js",
     "sub:extend": "node scripts/extend_days.js",
+    "sub:reduce": "node scripts/reduce_days.js",
     "sub:set": "node scripts/set_subscription.js",
     "sub:special": "node scripts/grant_special_access.js",
     "sub:plan": "node scripts/allow_preferred_plan.js",
