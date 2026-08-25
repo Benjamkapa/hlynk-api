@@ -12,15 +12,22 @@ export const getMyProfile = async (req, res) => {
       SELECT 
         u.id as userId, u.name, u.phone, u.email, u.role, u.photoUrl,
         p.id as providerId, p.businessName, p.category, p.location,
-        p.notificationSettings, p.operationalSettings
+        p.notificationSettings, p.operationalSettings,
+        t.activeModules, t.businessType
       FROM user u
       JOIN provider p ON u.tenantId = p.tenantId
+      JOIN tenant t ON u.tenantId = t.id
       WHERE u.id = ? AND u.tenantId = ?
     `, [userId, tenantId]);
 
     if (!rows.length) return res.status(404).json({ success: false, message: 'Profile not found' });
 
     const p = rows[0];
+    let activeModules = [];
+    try {
+      activeModules = typeof p.activeModules === 'string' ? JSON.parse(p.activeModules) : (p.activeModules || []);
+    } catch (_) { activeModules = []; }
+
     return res.json({
       success: true,
       data: {
@@ -29,6 +36,8 @@ export const getMyProfile = async (req, res) => {
         businessName: p.businessName,
         category: p.category,
         location: p.location,
+        activeModules,
+        businessType: p.businessType,
         notificationSettings: typeof p.notificationSettings === 'string' ? JSON.parse(p.notificationSettings) : p.notificationSettings,
         operationalSettings: typeof p.operationalSettings === 'string' ? JSON.parse(p.operationalSettings) : p.operationalSettings
       }
@@ -83,6 +92,32 @@ export const updateProfile = async (req, res) => {
         sets.push('updatedAt = NOW()');
         vals.push(tenantId);
         await db.query(`UPDATE provider SET ${sets.join(', ')} WHERE tenantId = ?`, vals);
+      }
+    }
+
+    // 3. Keep tenant.businessName, businessType and activeModules in sync — /auth/me & frontend reads from tenant table
+    if (businessName !== undefined || category !== undefined || req.body.businessType !== undefined || req.body.activeModules !== undefined) {
+      let bType = req.body.businessType;
+      let modules = req.body.activeModules;
+
+      if (!bType && category) {
+        const lowerCat = category.toLowerCase();
+        if (lowerCat.includes('hotel') || lowerCat.includes('guest house') || lowerCat.includes('bnb') || lowerCat.includes('lodge') || lowerCat.includes('resort')) {
+          bType = 'HOSPITALITY';
+        }
+      }
+
+      const tenantSets = [];
+      const tenantVals = [];
+
+      if (businessName !== undefined) { tenantSets.push('businessName = ?'); tenantVals.push(businessName); }
+      if (bType !== undefined) { tenantSets.push('businessType = ?'); tenantVals.push(bType); }
+      if (modules !== undefined) { tenantSets.push('activeModules = ?'); tenantVals.push(JSON.stringify(modules)); }
+
+      if (tenantSets.length > 0) {
+        tenantSets.push('updatedAt = NOW()');
+        tenantVals.push(tenantId);
+        await db.query(`UPDATE tenant SET ${tenantSets.join(', ')} WHERE id = ?`, tenantVals);
       }
     }
 

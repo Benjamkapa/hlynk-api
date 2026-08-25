@@ -4,15 +4,15 @@ import { ulid } from 'ulid';
 import { createAdminNotification } from './notifications.js';
 
 export const PLAN_PRICES = {
-  LITE: 4450, // Starter
-  PLUS: 9450, // Growth
-  MAX: 16999, // Business Pro
+  LITE: 4450, // Legacy Starter
+  PLUS: 4450, // Starter
+  MAX: 8200, // Business Pro
 };
 
 export const REFERRAL_BONUSES = {
   LITE: 1200,
-  PLUS: 2650,
-  MAX: 4950
+  PLUS: 1200,
+  MAX: 2300
 };
 
 export const getMySubscription = async (req, res) => {

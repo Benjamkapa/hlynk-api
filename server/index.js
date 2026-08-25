@@ -41,6 +41,9 @@ import requestRoutes from "./routes/requests.js";
 import platformRoutes from "./routes/platform.js";
 import etimsRoutes from "./routes/etims.js";
 import notificationRoutes from "./routes/notifications.js";
+import resourceRoutes from "./routes/resources.js";
+import eventRoutes from "./routes/events.js";
+import operationRoutes from "./routes/operations.js";
 import { startSubscriptionDaemon } from "./daemon/subscriptions.js";
 import { startEtimsDaemon } from "./daemon/etims.js";
 import { startPayoutDaemon } from "./daemon/payouts.js";
@@ -102,6 +105,9 @@ app.use("/api/v1/requests", requestRoutes);
 app.use("/api/v1/platform", platformRoutes);
 app.use("/api/v1/etims",    etimsRoutes);
 app.use("/api/v1/notifications", notificationRoutes);
+app.use("/api/v1/resources", resourceRoutes);
+app.use("/api/v1/events", eventRoutes);
+app.use("/api/v1/operations", operationRoutes);
 
 // Secure Storage Proxy (Fixes Mixed Content errors)
 app.get("/api/v1/storage/:bucket/:folder/:file", async (req, res) => {
@@ -196,6 +202,113 @@ const startServer = async () => {
       }
       if (!paymentColNames.includes('meta')) {
         await db.query('ALTER TABLE payment ADD COLUMN meta JSON DEFAULT NULL');
+      }
+
+      // Universal Engine migrations for Tenant, Payment, Expense
+      if (!tenantColNames.includes('businessType')) {
+        await db.query('ALTER TABLE tenant ADD COLUMN businessType VARCHAR(50) DEFAULT "RETAIL"');
+      }
+      if (!tenantColNames.includes('activeModules')) {
+        await db.query('ALTER TABLE tenant ADD COLUMN activeModules JSON DEFAULT NULL');
+      }
+
+      if (!paymentColNames.includes('referenceType')) {
+        await db.query('ALTER TABLE payment ADD COLUMN referenceType VARCHAR(50) DEFAULT "SALE" AFTER status');
+      }
+      if (!paymentColNames.includes('referenceId')) {
+        await db.query('ALTER TABLE payment ADD COLUMN referenceId VARCHAR(50) AFTER referenceType');
+      }
+
+      const [expenseCols] = await db.query('DESCRIBE expense').catch(() => [[]]);
+      const expenseColNames = expenseCols.map(c => c.Field);
+      if (expenseColNames.length && !expenseColNames.includes('resourceId')) {
+        await db.query('ALTER TABLE expense ADD COLUMN resourceId VARCHAR(50) AFTER description');
+      }
+      if (expenseColNames.length && !expenseColNames.includes('eventId')) {
+        await db.query('ALTER TABLE expense ADD COLUMN eventId VARCHAR(50) AFTER resourceId');
+      }
+
+      // Universal Tables: resource, event, operation
+      await db.query(`CREATE TABLE IF NOT EXISTS resource (
+        id VARCHAR(50) PRIMARY KEY,
+        tenantId VARCHAR(50) NOT NULL,
+        type VARCHAR(50) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        code VARCHAR(100),
+        parentId VARCHAR(50),
+        basePrice DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+        status VARCHAR(50) DEFAULT 'AVAILABLE',
+        meta JSON DEFAULT NULL,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (tenantId) REFERENCES tenant(id) ON DELETE CASCADE,
+        INDEX idx_resource_tenant_type (tenantId, type),
+        INDEX idx_resource_status (status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+      await db.query(`CREATE TABLE IF NOT EXISTS event (
+        id VARCHAR(50) PRIMARY KEY,
+        tenantId VARCHAR(50) NOT NULL,
+        resourceId VARCHAR(50) NOT NULL,
+        customerId VARCHAR(50),
+        eventType VARCHAR(50) NOT NULL,
+        status VARCHAR(50) DEFAULT 'CONFIRMED',
+        startTime DATETIME,
+        endTime DATETIME,
+        totalAmount DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+        paidAmount DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+        balance DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+        meta JSON DEFAULT NULL,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (tenantId) REFERENCES tenant(id) ON DELETE CASCADE,
+        FOREIGN KEY (resourceId) REFERENCES resource(id) ON DELETE CASCADE,
+        INDEX idx_event_tenant_type (tenantId, eventType),
+        INDEX idx_event_dates (startTime, endTime),
+        INDEX idx_event_status (status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+      await db.query(`CREATE TABLE IF NOT EXISTS operation (
+        id VARCHAR(50) PRIMARY KEY,
+        tenantId VARCHAR(50) NOT NULL,
+        resourceId VARCHAR(50) NOT NULL,
+        opType VARCHAR(50) NOT NULL,
+        status VARCHAR(50) DEFAULT 'PENDING',
+        assignedToUserId VARCHAR(50),
+        estimatedCost DECIMAL(15, 2) DEFAULT 0.00,
+        actualCost DECIMAL(15, 2) DEFAULT 0.00,
+        expenseId VARCHAR(50),
+        meta JSON DEFAULT NULL,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (tenantId) REFERENCES tenant(id) ON DELETE CASCADE,
+        FOREIGN KEY (resourceId) REFERENCES resource(id) ON DELETE CASCADE,
+        INDEX idx_op_tenant_type (tenantId, opType)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+      // Remove UNIQUE restriction on user.phone & provider.phone to allow multiple signups with the same phone number
+      try {
+        const [indexes] = await db.query("SHOW INDEX FROM user WHERE Column_name = 'phone' AND Non_unique = 0");
+        for (const idx of indexes) {
+          if (idx.Key_name !== 'PRIMARY') {
+            await db.query(`ALTER TABLE user DROP INDEX \`${idx.Key_name}\``);
+            console.log(`✅ Removed unique index '${idx.Key_name}' on user(phone)`);
+          }
+        }
+      } catch (e) {
+        // Ignore if index does not exist or fails
+      }
+
+      try {
+        const [provIndexes] = await db.query("SHOW INDEX FROM provider WHERE Column_name = 'phone' AND Non_unique = 0");
+        for (const idx of provIndexes) {
+          if (idx.Key_name !== 'PRIMARY') {
+            await db.query(`ALTER TABLE provider DROP INDEX \`${idx.Key_name}\``);
+            console.log(`✅ Removed unique index '${idx.Key_name}' on provider(phone)`);
+          }
+        }
+      } catch (e) {
+        // Ignore if index does not exist or fails
       }
 
       // Payout table

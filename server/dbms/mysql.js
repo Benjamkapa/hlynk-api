@@ -37,7 +37,7 @@ export const db = {
 };
 
 // Automatic migrations
-(async () => {
+setTimeout(async () => {
   try {
     const [cols] = await db.query("SHOW COLUMNS FROM saleitem");
     if (!cols.some(c => c.Field === 'buyingPrice')) {
@@ -58,6 +58,8 @@ export const db = {
       console.log(`[DB] Backfill complete. Records updated: ${result.affectedRows}`);
     }
   } catch (err) {
-    console.error('[DB] Auto-migration/backfill failed:', err.message);
+    if (!err.message?.includes('ETIMEDOUT')) {
+      console.error('[DB] Auto-migration/backfill notice:', err.message);
+    }
   }
-})();
+}, 1000);

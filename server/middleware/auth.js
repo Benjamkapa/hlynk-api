@@ -56,6 +56,8 @@ export const authenticate = async (req, res, next) => {
   }
 };
 
+export const verifyToken = authenticate;
+
 /**
  * Role-based authorization helpers
  */

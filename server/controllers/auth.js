@@ -91,7 +91,7 @@ export const googleAuth = async (req, res) => {
     const email = payload.email;
 
     const [userRows] = await db.query(`
-      SELECT u.*, t.isActive as tenantIsActive, t.slug as tenantSlug, t.businessName, t.referralCode,
+      SELECT u.*, t.isActive as tenantIsActive, t.slug as tenantSlug, t.businessName, t.businessType, t.activeModules, t.referralCode,
              s.planName, s.status, s.trialEndDate, s.endDate
       FROM user u
       JOIN tenant t ON u.tenantId = t.id
@@ -192,7 +192,7 @@ export const googleAuth = async (req, res) => {
             accessToken, 
             refreshToken, 
             referralApplied,
-            user: { ...newUser[0], subscription: { planName: requestedPlan, status: subStatus } } 
+            user: { ...newUser[0], activeModules: ['POS'], subscription: { planName: requestedPlan, status: subStatus } } 
           } 
         });
       } catch (err) {
@@ -205,6 +205,14 @@ export const googleAuth = async (req, res) => {
 
     if (user.isActive === 0 || !user.tenantIsActive) return res.status(403).json({ success: false, message: 'Account inactive' });
 
+    let activeModules = [];
+    try {
+      activeModules = typeof user.activeModules === 'string' ? JSON.parse(user.activeModules) : (user.activeModules || []);
+    } catch (_) { activeModules = []; }
+    if (!Array.isArray(activeModules) || activeModules.length === 0) {
+      activeModules = ['POS'];
+    }
+
     const { accessToken, refreshToken } = await issueTokens(user, res, userAgent, ipAddress);
     return res.json({ 
       success: true, 
@@ -213,6 +221,7 @@ export const googleAuth = async (req, res) => {
         refreshToken,         // still in body for backwards-compat during transition
         user: {
           ...user,
+          activeModules,
           subscription: {
             planName: user.planName,
             status: user.status,
@@ -245,11 +254,13 @@ export const me = async (req, res) => {
     const [rows] = await db.query(`
       SELECT 
         u.id, u.name, u.phone, u.email, u.role, u.photoUrl, u.permissions,
-        t.id as tenantId, t.slug as tenantSlug, t.businessName, t.referralCode,
+        t.id as tenantId, t.slug as tenantSlug, t.businessName, t.businessType, t.activeModules, t.referralCode,
+        p.category,
         s.planName, s.status, s.trialEndDate, s.endDate,
         (SELECT COUNT(*) FROM payment WHERE tenantId = t.id AND isRented = 1 LIMIT 1) as isRented
       FROM user u
       JOIN tenant t ON u.tenantId = t.id
+      LEFT JOIN provider p ON p.tenantId = t.id
       LEFT JOIN subscription s ON s.tenantId = t.id
       WHERE u.id = ?
     `, [userId]);
@@ -273,10 +284,20 @@ export const me = async (req, res) => {
        user.photoUrl = req.user.picture;
     }
 
+    let activeModules = [];
+    try {
+      activeModules = typeof user.activeModules === 'string' ? JSON.parse(user.activeModules) : (user.activeModules || []);
+    } catch (_) { activeModules = []; }
+
+    if (!Array.isArray(activeModules) || activeModules.length === 0) {
+      activeModules = ['POS'];
+    }
+
     return res.json({
       success: true,
       data: {
         ...user,
+        activeModules,
         subscription: {
           planName: user.planName,
           status: user.status,
