@@ -68,7 +68,7 @@ startPayoutDaemon();
 // Middleware
 app.use(cors({
   origin: true,           // reflects the request origin (safe because we authenticate via JWT, not cookies alone)
-  credentials: true,      // allow Set-Cookie headers to be sent/received
+  credentials: true,      // allow Set-Cookie headers to be sent or received
 }));
 
 app.use(cookieParser());
