@@ -345,6 +345,28 @@ const startServer = async () => {
         updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (tenantId) REFERENCES tenant(id) ON DELETE CASCADE
       )`);
+
+      // Request / Incoming Public Orders Table
+      await db.query(`CREATE TABLE IF NOT EXISTS request (
+        id VARCHAR(50) PRIMARY KEY,
+        tenantId VARCHAR(50) NOT NULL,
+        customerId VARCHAR(50),
+        providerId VARCHAR(50),
+        serviceId VARCHAR(50),
+        customerName VARCHAR(255) NOT NULL,
+        customerPhone VARCHAR(50) NOT NULL,
+        message TEXT,
+        status VARCHAR(50) DEFAULT 'PENDING',
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (tenantId) REFERENCES tenant(id) ON DELETE CASCADE,
+        INDEX idx_req_tenant (tenantId),
+        INDEX idx_req_status (status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+      await db.query("ALTER TABLE request MODIFY customerId VARCHAR(50) NULL DEFAULT NULL;").catch(() => {});
+      await db.query("ALTER TABLE request MODIFY providerId VARCHAR(50) NULL DEFAULT NULL;").catch(() => {});
+      await db.query("ALTER TABLE request MODIFY serviceId VARCHAR(50) NULL DEFAULT NULL;").catch(() => {});
     } catch (e) {
       console.warn("⚠️ Migration Warning:", e.message);
     }

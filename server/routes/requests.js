@@ -9,5 +9,6 @@ router.use(authenticate);
 router.get('/', getProviderRequests);
 router.post('/', createRequest);
 router.patch('/:id/status', updateRequestStatus);
+router.put('/:id/status', updateRequestStatus);
 
 export default router;
