@@ -22,7 +22,7 @@ export async function fixResourceImages() {
     // 2. Fetch resources with base64 data in meta
     const [rows] = await db.query("SELECT id, meta FROM resource WHERE meta LIKE '%data:image/%'");
     if (rows.length === 0) {
-      console.log('✅ No resource rows with base64 images found.');
+      // console.log('✅ No resource rows with base64 images found.');
       return;
     }
 

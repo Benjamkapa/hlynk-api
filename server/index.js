@@ -44,6 +44,7 @@ import notificationRoutes from "./routes/notifications.js";
 import resourceRoutes from "./routes/resources.js";
 import eventRoutes from "./routes/events.js";
 import operationRoutes from "./routes/operations.js";
+import publicRoutes from "./routes/public.js";
 import { startSubscriptionDaemon } from "./daemon/subscriptions.js";
 import { startEtimsDaemon } from "./daemon/etims.js";
 import { startPayoutDaemon } from "./daemon/payouts.js";
@@ -109,6 +110,7 @@ app.use("/api/v1/notifications", notificationRoutes);
 app.use("/api/v1/resources", resourceRoutes);
 app.use("/api/v1/events", eventRoutes);
 app.use("/api/v1/operations", operationRoutes);
+app.use("/api/v1/public", publicRoutes);
 
 // Secure Storage Proxy (Fixes Mixed Content errors)
 app.get("/api/v1/storage/:bucket/:folder/:file", async (req, res) => {
@@ -211,6 +213,21 @@ const startServer = async () => {
       }
       if (!tenantColNames.includes('activeModules')) {
         await db.query('ALTER TABLE tenant ADD COLUMN activeModules JSON DEFAULT NULL');
+      }
+
+      // Auto-assign slugs to any existing tenants missing a slug
+      const [tenantsWithoutSlug] = await db.query("SELECT id, businessName FROM tenant WHERE slug IS NULL OR slug = ''");
+      for (const t of tenantsWithoutSlug) {
+        const baseSlug = (t.businessName || 'stay').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'stay';
+        let newSlug = baseSlug;
+        let [existing] = await db.query("SELECT id FROM tenant WHERE slug = ? AND id != ?", [newSlug, t.id]);
+        let counter = 1;
+        while (existing.length > 0) {
+          newSlug = `${baseSlug}-${counter++}`;
+          [existing] = await db.query("SELECT id FROM tenant WHERE slug = ? AND id != ?", [newSlug, t.id]);
+        }
+        await db.query("UPDATE tenant SET slug = ? WHERE id = ?", [newSlug, t.id]);
+        console.log(`✅ Assigned slug '${newSlug}' to tenant '${t.businessName}'`);
       }
 
       if (!paymentColNames.includes('referenceType')) {

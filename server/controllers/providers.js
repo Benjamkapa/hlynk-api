@@ -2,6 +2,21 @@ import { db } from '../dbms/mysql.js';
 import { ulid } from 'ulid';
 import { uploadFile } from '../utils/storage.js';
 
+const slugify = (name) => (name || 'stay').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+async function ensureTenantSlug(tenantId, businessName) {
+  let base = slugify(businessName) || 'stay';
+  let slug = base;
+  let [rows] = await db.query(`SELECT id FROM tenant WHERE slug = ? AND id != ?`, [slug, tenantId]);
+  let i = 1;
+  while (rows.length > 0) {
+    slug = `${base}-${i++}`;
+    [rows] = await db.query(`SELECT id FROM tenant WHERE slug = ? AND id != ?`, [slug, tenantId]);
+  }
+  await db.query(`UPDATE tenant SET slug = ? WHERE id = ?`, [slug, tenantId]);
+  return slug;
+}
+
 /**
  * Get the current provider's profile and shop settings
  */
@@ -13,7 +28,7 @@ export const getMyProfile = async (req, res) => {
         u.id as userId, u.name, u.phone, u.email, u.role, u.photoUrl,
         p.id as providerId, p.businessName, p.category, p.location,
         p.notificationSettings, p.operationalSettings,
-        t.activeModules, t.businessType
+        t.activeModules, t.businessType, t.slug
       FROM user u
       JOIN provider p ON u.tenantId = p.tenantId
       JOIN tenant t ON u.tenantId = t.id
@@ -28,6 +43,11 @@ export const getMyProfile = async (req, res) => {
       activeModules = typeof p.activeModules === 'string' ? JSON.parse(p.activeModules) : (p.activeModules || []);
     } catch (_) { activeModules = []; }
 
+    let currentSlug = p.slug;
+    if (!currentSlug || !currentSlug.trim()) {
+      currentSlug = await ensureTenantSlug(tenantId, p.businessName || 'stay');
+    }
+
     return res.json({
       success: true,
       data: {
@@ -36,6 +56,7 @@ export const getMyProfile = async (req, res) => {
         businessName: p.businessName,
         category: p.category,
         location: p.location,
+        slug: currentSlug,
         activeModules,
         businessType: p.businessType,
         notificationSettings: typeof p.notificationSettings === 'string' ? JSON.parse(p.notificationSettings) : p.notificationSettings,
