@@ -49,6 +49,7 @@ import { startEtimsDaemon } from "./daemon/etims.js";
 import { startPayoutDaemon } from "./daemon/payouts.js";
 import { db } from "./dbms/mysql.js";
 import { initStorage, minioClient } from "./utils/storage.js";
+import { fixResourceImages } from "./scripts/fix_resource_images.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const params = JSON.parse(fs.readFileSync(path.join(__dirname, "configs/params.json"), "utf8"));
@@ -243,6 +244,7 @@ const startServer = async () => {
         updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (tenantId) REFERENCES tenant(id) ON DELETE CASCADE,
         INDEX idx_resource_tenant_type (tenantId, type),
+        INDEX idx_resource_tenant_title (tenantId, title),
         INDEX idx_resource_status (status)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
 
@@ -465,8 +467,9 @@ const startServer = async () => {
       console.warn('⚠️ Migration Warning:', e.message);
     }
 
-    // 3. Initialize Local Storage
+    // 3. Initialize Local Storage & Fix Resource Images
     await initStorage();
+    await fixResourceImages();
 
     // 4. Start Listener
     app.listen(PORT, () => {

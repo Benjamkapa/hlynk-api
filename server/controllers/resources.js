@@ -1,5 +1,49 @@
 import { db } from "../dbms/mysql.js";
 import { v4 as uuidv4 } from "uuid";
+import { uploadFile } from "../utils/storage.js";
+
+const convertBase64 = async (str) => {
+  if (typeof str !== 'string' || !str.startsWith('data:image/')) return str;
+  const match = str.match(/^data:(image\/\w+);base64,(.+)$/);
+  if (!match) return str;
+
+  const mimetype = match[1];
+  const ext = mimetype.split('/')[1] === 'jpeg' ? 'jpg' : mimetype.split('/')[1];
+  const buffer = Buffer.from(match[2], 'base64');
+  const fakeFile = {
+    name: `res_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${ext}`,
+    data: buffer,
+    size: buffer.length,
+    mimetype
+  };
+
+  try {
+    return await uploadFile(fakeFile, 'resources');
+  } catch (err) {
+    console.error('Failed to auto-upload base64 image in resource controller:', err.message);
+    return str;
+  }
+};
+
+const processBase64InMeta = async (metaObj) => {
+  if (!metaObj || typeof metaObj !== 'object') return metaObj;
+  const copy = { ...metaObj };
+  if (copy.imageUrl && typeof copy.imageUrl === 'string' && copy.imageUrl.startsWith('data:image/')) {
+    copy.imageUrl = await convertBase64(copy.imageUrl);
+  }
+  if (Array.isArray(copy.images)) {
+    const newImages = [];
+    for (const img of copy.images) {
+      if (typeof img === 'string' && img.startsWith('data:image/')) {
+        newImages.push(await convertBase64(img));
+      } else {
+        newImages.push(img);
+      }
+    }
+    copy.images = newImages;
+  }
+  return copy;
+};
 
 // Get all resources for provider/tenant (filtered by type/status optional)
 export const getResources = async (req, res) => {
@@ -79,7 +123,10 @@ export const createResource = async (req, res) => {
 
     const id = `res_${uuidv4().replace(/-/g, '').slice(0, 16)}`;
     const resourceStatus = status || 'AVAILABLE';
-    const jsonMeta = meta ? JSON.stringify(meta) : null;
+    
+    // Auto-process base64 images if present in meta
+    const processedMeta = meta ? await processBase64InMeta(meta) : null;
+    const jsonMeta = processedMeta ? JSON.stringify(processedMeta) : null;
 
     await db.query(
       `INSERT INTO resource (id, tenantId, type, title, code, parentId, basePrice, status, meta)
@@ -134,7 +181,10 @@ export const updateResource = async (req, res) => {
     if (meta !== undefined && typeof meta === 'object' && meta !== null) {
       currentMetaObj = { ...currentMetaObj, ...meta };
     }
-    const finalMetaJson = JSON.stringify(currentMetaObj);
+
+    // Auto-process base64 images in meta
+    const processedMeta = await processBase64InMeta(currentMetaObj);
+    const finalMetaJson = JSON.stringify(processedMeta);
 
     await db.query(
       `UPDATE resource 
@@ -154,6 +204,21 @@ export const updateResource = async (req, res) => {
     });
   } catch (error) {
     console.error("Error updating resource:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Upload photo endpoint for resource
+export const uploadResourceImage = async (req, res) => {
+  try {
+    if (!req.files || (!req.files.file && !req.files.photo)) {
+      return res.status(400).json({ success: false, message: 'No file uploaded' });
+    }
+    const file = req.files.file || req.files.photo;
+    const url = await uploadFile(file, 'resources');
+    res.status(200).json({ success: true, data: { url } });
+  } catch (error) {
+    console.error("Error uploading resource image:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
