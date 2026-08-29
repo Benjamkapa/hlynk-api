@@ -33,7 +33,7 @@ async function grantAccess() {
     endDate.setDate(endDate.getDate() + days);
 
     console.log(`\n🚀 Granting access to ${businessName}...`);
-    console.log(`-------------------------------------------`);
+    console.log(`------------------------------------------`);
     console.log(`Plan:    ${planName}`);
     console.log(`Period:  ${days} days`);
     console.log(`Expiry:  ${endDate.toLocaleString()}`);
