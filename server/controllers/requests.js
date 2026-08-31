@@ -62,3 +62,31 @@ export const updateRequestStatus = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Status update failed' });
   }
 };
+
+export const deleteRequest = async (req, res) => {
+  const { tenantId } = req.user;
+  const { id } = req.params;
+
+  try {
+    await db.query(`DELETE FROM request WHERE id = ? AND tenantId = ?`, [id, tenantId]);
+    return res.json({ success: true, message: 'Order request deleted' });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to delete order request' });
+  }
+};
+
+export const clearRequests = async (req, res) => {
+  const { tenantId } = req.user;
+  const { status = 'ALL' } = req.body || {};
+
+  try {
+    if (status === 'COMPLETED') {
+      await db.query(`DELETE FROM request WHERE tenantId = ? AND status IN ('COMPLETED', 'CANCELLED', 'CONTACTED')`, [tenantId]);
+    } else {
+      await db.query(`DELETE FROM request WHERE tenantId = ?`, [tenantId]);
+    }
+    return res.json({ success: true, message: 'Client order requests cleared successfully' });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to clear order requests' });
+  }
+};
