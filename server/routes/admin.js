@@ -34,7 +34,9 @@ import {
   testB2C,
   extendSubscriptionDays,
   downloadDatabaseBackup,
-  restoreDatabaseBackup
+  restoreDatabaseBackup,
+  clearTableData,
+  deleteRecord
 } from '../controllers/admin.js';
 
 import { authenticate, requireAdmin } from '../middleware/auth.js';
@@ -44,6 +46,8 @@ const router = express.Router();
 router.use(authenticate);
 router.use(requireAdmin);
 
+router.post('/data/clear-table', clearTableData);
+router.post('/data/delete-record', deleteRecord);
 router.get('/backup/db', downloadDatabaseBackup);
 router.post('/backup/restore', restoreDatabaseBackup);
 router.get('/stats', getSystemStats);

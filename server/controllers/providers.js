@@ -432,6 +432,54 @@ export const clearData = async (req, res) => {
 };
 
 /**
+ * Completely delete provider profile, all staff users, all business data and facility tenant
+ */
+export const deleteProfileAndFacility = async (req, res) => {
+  const { tenantId } = req.user;
+  const connection = await db.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    // 1. Delete sale items
+    await connection.query(`DELETE FROM saleitem WHERE saleId IN (SELECT id FROM sale WHERE tenantId = ?)`, [tenantId]);
+    // 2. Delete sales
+    await connection.query(`DELETE FROM sale WHERE tenantId = ?`, [tenantId]);
+    // 3. Delete products
+    await connection.query(`DELETE FROM product WHERE tenantId = ?`, [tenantId]);
+    // 4. Delete expenses
+    await connection.query(`DELETE FROM expense WHERE tenantId = ?`, [tenantId]);
+    // 5. Delete payouts
+    await connection.query(`DELETE FROM payout WHERE tenantId = ?`, [tenantId]);
+    // 6. Delete payments
+    await connection.query(`DELETE FROM payment WHERE tenantId = ?`, [tenantId]);
+    // 7. Delete requests
+    await connection.query(`DELETE FROM request WHERE tenantId = ?`, [tenantId]);
+    // 8. Delete subscriptions
+    await connection.query(`DELETE FROM subscription WHERE tenantId = ?`, [tenantId]);
+    // 9. Delete activity logs
+    await connection.query(`DELETE FROM activitylog WHERE tenantId = ?`, [tenantId]);
+    // 10. Delete notifications
+    await connection.query(`DELETE FROM notification WHERE tenantId = ?`, [tenantId]);
+    // 11. Delete provider profile
+    await connection.query(`DELETE FROM provider WHERE tenantId = ?`, [tenantId]);
+    // 12. Delete all users belonging to tenant (staff + provider)
+    await connection.query(`DELETE FROM user WHERE tenantId = ?`, [tenantId]);
+    // 13. Delete tenant/facility record
+    await connection.query(`DELETE FROM tenant WHERE id = ?`, [tenantId]);
+
+    await connection.commit();
+    return res.json({ success: true, message: 'Your profile, business data, and facility have been permanently deleted.' });
+  } catch (err) {
+    await connection.rollback();
+    console.error('Delete Profile & Facility Error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to delete profile and facility: ' + err.message });
+  } finally {
+    connection.release();
+  }
+};
+
+/**
  * Upload profile photo to storage
  */
 export const uploadPhoto = async (req, res) => {

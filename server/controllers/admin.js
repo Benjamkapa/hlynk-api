@@ -1669,3 +1669,59 @@ export const restoreDatabaseBackup = async (req, res) => {
   }
 };
 
+export const clearTableData = async (req, res) => {
+  const { table, tenantId } = req.body;
+  const adminId = req.user.userId;
+
+  const allowedTables = ['payment', 'activitylog', 'mpesalog', 'notification', 'sale', 'expense', 'product', 'customer', 'request', 'payout'];
+  if (!allowedTables.includes(table)) {
+    return res.status(400).json({ success: false, message: 'Invalid or protected table.' });
+  }
+
+  try {
+    let affectedRows = 0;
+    if (tenantId) {
+      const [resDel] = await db.query(`DELETE FROM ${table} WHERE tenantId = ?`, [tenantId]);
+      affectedRows = resDel.affectedRows;
+    } else {
+      const [resDel] = await db.query(`DELETE FROM ${table}`);
+      affectedRows = resDel.affectedRows;
+    }
+
+    await db.query(`
+      INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt)
+      VALUES (?, 'SYSTEM', ?, 'Table Purged', 'Maintenance', ?, NOW())
+    `, [ulid(), adminId, `Super Admin purged ${table} table (${affectedRows} rows deleted${tenantId ? ` for tenant ${tenantId}` : ''})`]);
+
+    return res.json({ success: true, message: `Successfully cleared ${affectedRows} records from ${table}.` });
+  } catch (err) {
+    console.error('Clear Table Error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to clear table data: ' + err.message });
+  }
+};
+
+export const deleteRecord = async (req, res) => {
+  const { table, id } = req.body;
+  const adminId = req.user.userId;
+
+  const allowedTables = ['payment', 'activitylog', 'mpesalog', 'notification', 'sale', 'expense', 'product', 'customer', 'request', 'payout', 'user', 'tenant'];
+  if (!allowedTables.includes(table)) {
+    return res.status(400).json({ success: false, message: 'Invalid table for record deletion.' });
+  }
+
+  try {
+    const [result] = await db.query(`DELETE FROM ${table} WHERE id = ?`, [id]);
+    
+    await db.query(`
+      INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt)
+      VALUES (?, 'SYSTEM', ?, 'Record Deleted', 'Maintenance', ?, NOW())
+    `, [ulid(), adminId, `Super Admin deleted record #${id} from ${table}`]);
+
+    return res.json({ success: true, message: `Record deleted successfully from ${table}.` });
+  } catch (err) {
+    console.error('Delete Record Error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to delete record: ' + err.message });
+  }
+};
+
+
