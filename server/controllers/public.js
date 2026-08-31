@@ -127,6 +127,7 @@ export const getPublicStayListing = async (req, res) => {
 /**
  * Public Order Submission Endpoint — no auth required.
  * Allows clients to submit an order or booking inquiry.
+ * Also records as a pending sale for revenue/profit tracking.
  */
 export const submitPublicOrder = async (req, res) => {
   const { slug, customerName, customerPhone, customerEmail, deliveryAddress, notes, items } = req.body;
@@ -139,7 +140,6 @@ export const submitPublicOrder = async (req, res) => {
   }
 
   try {
-    // 1. Find tenant by slug
     const [tenantRows] = await db.query(
       `SELECT id, businessName FROM tenant WHERE slug = ? AND (isActive = 1 OR isActive IS NULL) LIMIT 1`,
       [slug]
@@ -151,7 +151,6 @@ export const submitPublicOrder = async (req, res) => {
     const tenantId = tenantRows[0].id;
     const orderId = ulid();
 
-    // Calculate total amount
     const totalAmount = items.reduce((acc, item) => acc + (Number(item.price || 0) * (Number(item.quantity || 1))), 0);
 
     const messageData = JSON.stringify({
@@ -170,17 +169,46 @@ export const submitPublicOrder = async (req, res) => {
       source: 'PUBLIC_LINK'
     });
 
+    // 1. Insert into request table (order queue / notification)
     await db.query(
       `INSERT INTO request (id, tenantId, customerId, customerName, customerPhone, message, status, createdAt, updatedAt)
        VALUES (?, ?, NULL, ?, ?, ?, 'PENDING', NOW(), NOW())`,
       [orderId, tenantId, customerName.trim(), customerPhone.trim(), messageData]
     );
 
-    // Send instant In-App & OS Push notification to the tenant / shop owner
+    // 2. Record as a pending sale so it flows into revenue reports
+    try {
+      const saleId = ulid();
+      await db.query(
+        `INSERT INTO sale (id, tenantId, userId, customerId, customerName, totalAmount, paymentMethod, status, source, createdAt, updatedAt)
+         VALUES (?, ?, NULL, NULL, ?, ?, 'PENDING_ONLINE', 1, 'Online Store', NOW(), NOW())`,
+        [saleId, tenantId, customerName.trim(), totalAmount]
+      );
+
+      for (const item of items) {
+        try {
+          await db.query(
+            `INSERT INTO saleitem (id, saleId, productId, name, quantity, price, buyingPrice) VALUES (?, ?, ?, ?, ?, ?, 0)`,
+            [ulid(), saleId, item.id || null, item.name || item.title || 'Item', Number(item.quantity || 1), Number(item.price || 0)]
+          );
+        } catch (itemErr) {
+          if (itemErr.code === 'ER_BAD_FIELD_ERROR') {
+            await db.query(
+              `INSERT INTO saleitem (id, saleId, productId, name, quantity, price) VALUES (?, ?, ?, ?, ?, ?)`,
+              [ulid(), saleId, item.id || null, item.name || item.title || 'Item', Number(item.quantity || 1), Number(item.price || 0)]
+            );
+          }
+        }
+      }
+    } catch (saleErr) {
+      console.error('[PUBLIC ORDER] Sale recording skipped:', saleErr.message);
+    }
+
+    // 3. Send notification to tenant
     await createNotification({
       tenantId,
       title: `📦 New Order from ${customerName.trim()}`,
-      message: `Client ${customerName.trim()} (${customerPhone.trim()}) ordered ${items.length} item(s) total KES ${totalAmount.toLocaleString()}`,
+      message: `Client ${customerName.trim()} (${customerPhone.trim()}) ordered ${items.length} item(s) — total KES ${totalAmount.toLocaleString()}`,
       type: "order",
       data: { url: "/dashboard/products" }
     });
@@ -195,3 +223,5 @@ export const submitPublicOrder = async (req, res) => {
     return res.status(500).json({ success: false, message: "Failed to submit order" });
   }
 };
+
+

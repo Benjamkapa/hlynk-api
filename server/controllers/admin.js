@@ -32,13 +32,13 @@ export const getSystemStats = async (req, res) => {
     const [ytdVolumeRes] = await db.query(`SELECT SUM(totalAmount) as total FROM sale WHERE status = 0 AND YEAR(createdAt) = YEAR(NOW())`);
     
     // NEW: Payouts for Rented Paybills (Status 0 = Success, payoutStatus 0 = Unpaid)
-    const [pendingPayouts] = await db.query(`SELECT SUM(amount) as total FROM payment WHERE isRented = 1 AND status = 0 AND payoutStatus = 0`);
+    const [pendingPayouts] = await db.query(`SELECT SUM(amount) as total FROM payout WHERE status = 'PENDING'`);
     
     const [newProvidersToday] = await db.query(`SELECT COUNT(*) as total FROM tenant WHERE DATE(createdAt) = CURDATE()`);
     const [expiringSoonRes] = await db.query(`SELECT COUNT(*) as total FROM subscription WHERE status = 0 AND endDate BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 7 DAY)`);
     
     // Check if any payout is "old" (more than 7 days)
-    const [overduePayouts] = await db.query(`SELECT COUNT(*) as cnt FROM payment WHERE isRented = 1 AND status = 0 AND payoutStatus = 0 AND createdAt <= DATE_SUB(NOW(), INTERVAL 7 DAY)`);
+    const [overduePayouts] = await db.query(`SELECT COUNT(*) as cnt FROM payout WHERE status = 'PENDING' AND createdAt <= DATE_SUB(NOW(), INTERVAL 7 DAY)`);
     
     // NEW: Security markers for Forensic Audit
     const [failedLogins] = await db.query(`SELECT COUNT(*) as total FROM activitylog WHERE action LIKE '%Failed%' OR action LIKE '%Unauthorized%'`);
