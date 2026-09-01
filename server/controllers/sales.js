@@ -4,7 +4,7 @@ import { initiateStkPush } from '../utils/mpesa.js';
 import { initiateKcbStkPush } from '../utils/kcb.js';
 import { decrypt } from '../utils/encryption.js';
 import { pushSaleToEtims } from './etims.js';
-import { sendPushToTenant } from './notifications.js';
+import { sendPushToTenant, createAdminNotification } from './notifications.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -258,6 +258,18 @@ export const createSale = async (req, res) => {
     }
 
     await connection.commit();
+
+    // ─── Real-Time Admin Web Push Notification ───
+    if (status === 0 || status === undefined || status === null) {
+      const cName = customerName || 'Walk-in Client';
+      createAdminNotification({
+        title: `💳 Client Purchase: KES ${Number(totalAmount).toLocaleString()}`,
+        message: `${cName} purchased ${items.length} item(s) via ${paymentMethod || 'CASH'} (${source || 'Store'}).`,
+        type: 'sale',
+        relatedTenantId: tenantId,
+        data: { url: '/admin/financials' }
+      }).catch(aErr => console.error('[ADMIN-SALE-PUSH] Skipped:', aErr.message));
+    }
 
     // ─── eTIMS Auto-Push (fire-and-forget, never blocks the sale) ───
     // Only push immediately for completed sales (status=0 = paid).

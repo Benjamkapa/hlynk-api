@@ -1,6 +1,6 @@
 import { db } from "../dbms/mysql.js";
 import { ulid } from "ulid";
-import { createNotification } from "./notifications.js";
+import { createNotification, createAdminNotification } from "./notifications.js";
 
 /**
  * Public endpoint — no auth required.
@@ -11,12 +11,14 @@ export const getPublicStayListing = async (req, res) => {
   const { slug } = req.params;
 
   try {
-    // 1. Find tenant by slug
+    // 1. Find tenant by slug along with subscription details
     const [tenantRows] = await db.query(
       `SELECT t.id, t.businessName, t.slug, t.businessType,
-              p.category, p.location, p.phone as providerPhone, p.businessName as providerName
+              p.category, p.location, p.phone as providerPhone, p.businessName as providerName,
+              s.planName, s.status as subStatus, s.trialEndDate, s.endDate
        FROM tenant t
        LEFT JOIN provider p ON p.tenantId = t.id
+       LEFT JOIN subscription s ON s.tenantId = t.id
        WHERE t.slug = ? AND (t.isActive = 1 OR t.isActive IS NULL)
        LIMIT 1`,
       [slug]
@@ -27,6 +29,21 @@ export const getPublicStayListing = async (req, res) => {
     }
 
     const tenant = tenantRows[0];
+
+    // Check subscription plan & trial status
+    const isTrial = Number(tenant.subStatus) === 2 || tenant.subStatus === 'TRIAL' || (tenant.trialEndDate && new Date(tenant.trialEndDate) >= new Date());
+    const isBusinessPro = (Number(tenant.subStatus) === 0 || tenant.subStatus === 'ACTIVE') && tenant.planName === 'MAX';
+
+    // Public Stay Booking (/stay/:slug) is exclusively available for Business Pro (MAX) subscribers or active Trial period.
+    const isStayRoute = req.originalUrl?.includes('/stay/') || req.path?.includes('/stay/');
+    if (isStayRoute && !isTrial && !isBusinessPro) {
+      return res.status(403).json({
+        success: false,
+        isLocked: true,
+        message: "Public Stay Booking page (/stay) is exclusively available on the Business Pro (MAX) plan or during an active trial period."
+      });
+    }
+
     const tenantId = tenant.id;
 
     // 2. Fetch available rooms/units (status = AVAILABLE only)
@@ -212,6 +229,15 @@ export const submitPublicOrder = async (req, res) => {
       type: "order",
       data: { url: "/dashboard/products" }
     });
+
+    // 4. Send Web Push + In-App notification to Super Admin
+    createAdminNotification({
+      title: `🛒 Client Purchase: KES ${totalAmount.toLocaleString()}`,
+      message: `${customerName.trim()} (${customerPhone.trim()}) bought ${items.length} item(s) from vendor '${tenantRows[0].businessName}'.`,
+      type: 'order',
+      relatedTenantId: tenantId,
+      data: { url: '/admin/businesses' }
+    }).catch(adminErr => console.error('[PUBLIC ORDER] Admin notification skipped:', adminErr.message));
 
     return res.status(201).json({
       success: true,
