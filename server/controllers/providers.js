@@ -1,6 +1,7 @@
 import { db } from '../dbms/mysql.js';
 import { ulid } from 'ulid';
 import { uploadFile } from '../utils/storage.js';
+import { createAdminNotification } from './notifications.js';
 
 const slugify = (name) => (name || 'stay').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
@@ -436,6 +437,15 @@ export const clearData = async (req, res) => {
  */
 export const deleteProfileAndFacility = async (req, res) => {
   const { tenantId } = req.user;
+  let bName = 'A business';
+
+  try {
+    const [tRows] = await db.query(`SELECT businessName FROM tenant WHERE id = ?`, [tenantId]);
+    if (tRows.length > 0) {
+      bName = tRows[0].businessName || bName;
+    }
+  } catch (err) {}
+
   const connection = await db.getConnection();
 
   try {
@@ -469,6 +479,17 @@ export const deleteProfileAndFacility = async (req, res) => {
     await connection.query(`DELETE FROM tenant WHERE id = ?`, [tenantId]);
 
     await connection.commit();
+
+    try {
+      await createAdminNotification({
+        title: 'Business Account Deleted',
+        message: `${bName} has closed and deleted their account permanently.`,
+        type: 'danger'
+      });
+    } catch (e) {
+      console.error('Failed to notify admin of deletion', e);
+    }
+
     return res.json({ success: true, message: 'Your profile, business data, and facility have been permanently deleted.' });
   } catch (err) {
     await connection.rollback();

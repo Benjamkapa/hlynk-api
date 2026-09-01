@@ -1,6 +1,10 @@
 import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
-dotenv.config({ quiet: true });
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(__dirname, '../../.env'), quiet: true });
 
 // Database configuration
 // Priority: DATABASE_URL > individual env vars > defaults
@@ -26,6 +30,19 @@ const dbConfig = connectionString ? {
 };
 
 export const pool = mysql.createPool(dbConfig);
+
+// Auto-run schema migrations safely
+(async () => {
+    try {
+        await pool.query('ALTER TABLE notification ADD COLUMN relatedTenantId VARCHAR(36) NULL;');
+        console.log('[DB] Added relatedTenantId to notification table.');
+    } catch (e) {
+        // Ignore if column already exists
+        if (e.code !== 'ER_DUP_FIELDNAME') {
+            console.error('[DB] Auto-migration warning:', e.message);
+        }
+    }
+})();
 
 export const db = {
   query: async (sql, params) => {

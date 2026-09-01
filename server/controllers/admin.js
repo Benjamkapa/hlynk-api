@@ -202,7 +202,8 @@ export const listTenants = async (req, res) => {
 
   try {
     const [tenants] = await db.query(`
-      SELECT t.*, s.planName, s.status as subscriptionStatus, (SELECT id FROM user WHERE tenantId = t.id AND role = 'PROVIDER' LIMIT 1) as primaryUserId
+      SELECT t.*, s.planName, s.status as subscriptionStatus, (SELECT id FROM user WHERE tenantId = t.id AND role = 'PROVIDER' LIMIT 1) as primaryUserId,
+      (SELECT referralCode FROM tenant WHERE id = (SELECT tenantId FROM user WHERE id = t.referredById LIMIT 1)) as appliedReferralCode
       FROM tenant t
       LEFT JOIN subscription s ON t.id = s.tenantId
       ORDER BY t.createdAt DESC
@@ -795,9 +796,28 @@ export const deleteTenant = async (req, res) => {
 };
 
 export const updateTenant = async (req, res) => {
-  const { businessName, slug } = req.body;
+  const { businessName, slug, appliedReferralCode } = req.body;
   try {
-    await db.query(`UPDATE tenant SET businessName = ?, slug = ?, updatedAt = NOW() WHERE id = ?`, [businessName, slug, req.params.id]);
+    let referredByIdUpdate = '';
+    const queryParams = [businessName, slug];
+
+    if (appliedReferralCode !== undefined) {
+      if (!appliedReferralCode) {
+        referredByIdUpdate = `, referredById = NULL`;
+      } else {
+        const [refRows] = await db.query(`SELECT ownerId FROM (SELECT u.id as ownerId, t.referralCode FROM user u JOIN tenant t ON u.tenantId = t.id WHERE u.role = 'PROVIDER') as refs WHERE referralCode = ? LIMIT 1`, [appliedReferralCode.trim().toUpperCase()]);
+        if (refRows.length > 0) {
+          referredByIdUpdate = `, referredById = ?`;
+          queryParams.push(refRows[0].ownerId);
+        } else {
+          return res.status(400).json({ success: false, message: 'Invalid referral code provided' });
+        }
+      }
+    }
+    
+    queryParams.push(req.params.id);
+
+    await db.query(`UPDATE tenant SET businessName = ?, slug = ?, updatedAt = NOW()${referredByIdUpdate} WHERE id = ?`, queryParams);
     await db.query(`UPDATE provider SET businessName = ?, updatedAt = NOW() WHERE tenantId = ?`, [businessName, req.params.id]);
     // Log Action
     await db.query(`

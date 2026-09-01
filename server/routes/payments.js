@@ -189,7 +189,8 @@ router.post('/kcb/callback', express.json(), async (req, res) => {
           createAdminNotification({
             title: `⚠️ KCB Payment ${stateLabel}`,
             message: `${payment.id} failed for ${initLog?.tenantName || 'Unknown'}. Reason: ${responseDescription}`,
-            type: 'warning'
+            type: 'warning',
+            relatedTenantId: initLog?.tenantId || payment.tenantId || sale.tenantId || null
           });
         }
       }
@@ -418,7 +419,8 @@ router.post('/mpesa/callback', express.json(), validateMpesaIP, async (req, res)
             createAdminNotification({
               title: '⚠️ M-Pesa Payment Failed',
               message: `Payment for ${initLog?.tenantName || 'Unknown'} failed. Reason: ${ResultDesc}`,
-              type: 'warning'
+              type: 'warning',
+              relatedTenantId: initLog?.tenantId || payment.tenantId || null
             });
           }
         } else {

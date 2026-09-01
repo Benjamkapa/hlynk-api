@@ -216,7 +216,7 @@ export const createNotification = async ({ tenantId, title, message, type = 'inf
 /**
  * Utility to notify ALL Super Admins (DB + Push)
  */
-export const createAdminNotification = async ({ title, message, type = 'system', data = {} }) => {
+export const createAdminNotification = async ({ title, message, type = 'system', data = {}, relatedTenantId = null }) => {
   try {
     // 1. Get all admin IDs
     const [admins] = await db.query("SELECT id, tenantId FROM user WHERE role = 'SUPER_ADMIN'");
@@ -226,9 +226,9 @@ export const createAdminNotification = async ({ title, message, type = 'system',
     // 2. Insert DB notifications for each admin
     await Promise.all(admins.map(admin => 
       db.query(`
-        INSERT INTO notification (id, tenantId, title, message, type, status, createdAt) 
-        VALUES (?, ?, ?, ?, ?, 0, NOW())
-      `, [ulid(), admin.tenantId, title, message, type])
+        INSERT INTO notification (id, tenantId, title, message, type, status, createdAt, relatedTenantId) 
+        VALUES (?, ?, ?, ?, ?, 0, NOW(), ?)
+      `, [ulid(), admin.tenantId, title, message, type, relatedTenantId || null])
     ));
 
     // 3. Send OS-level push notifications to all admins
