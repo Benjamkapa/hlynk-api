@@ -208,7 +208,7 @@ export const submitPublicOrder = async (req, res) => {
     await createNotification({
       tenantId,
       title: `📦 New Order from ${customerName.trim()}`,
-      message: `Client ${customerName.trim()} (${customerPhone.trim()}) ordered ${items.length} item(s) — total KES ${totalAmount.toLocaleString()}`,
+      message: `${customerName.trim()} (${customerPhone.trim()}) ordered ${items.length} item(s) — total KES ${totalAmount.toLocaleString()}`,
       type: "order",
       data: { url: "/dashboard/products" }
     });
