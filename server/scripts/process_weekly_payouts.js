@@ -41,7 +41,7 @@ async function processWeeklyPayouts() {
           groups[p.tenantId] = {
             tenantId: p.tenantId,
             payoutMethod: p.payoutMethod || 'MPESA',
-            payoutAccount: p.payoutAccount || p.phone, // fallback to last used phone
+            payoutAccount: p.payoutAccount || p.phone, // fallback to last used phone number
             trialEndDate: p.trialEndDate ? new Date(p.trialEndDate) : null,
             items: [],
             totalGross: 0,
