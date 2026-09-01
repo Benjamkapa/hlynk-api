@@ -482,9 +482,10 @@ export const deleteProfileAndFacility = async (req, res) => {
 
     try {
       await createAdminNotification({
-        title: 'Business Account Deleted',
-        message: `${bName} has closed and deleted their account permanently.`,
-        type: 'danger'
+        title: '🔴 Business Account Closed',
+        message: `Vendor '${bName}' has closed and deleted their account permanently.`,
+        type: 'danger',
+        data: { url: '/admin/tenants' }
       });
     } catch (e) {
       console.error('Failed to notify admin of deletion', e);

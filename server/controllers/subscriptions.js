@@ -497,7 +497,7 @@ export const getMyPayouts = async (req, res) => {
 };
 
 export const getMyReferrals = async (req, res) => {
-  const { userId } = req.user;
+  const { userId, tenantId } = req.user;
   try {
     const [rows] = await db.query(`
       SELECT 
@@ -517,13 +517,13 @@ export const getMyReferrals = async (req, res) => {
             )
           )
           FROM payout p
-          WHERE p.refereeId = ? AND p.tenantId = t.id
+          WHERE (p.refereeId = ? OR p.refereeId IN (SELECT id FROM user WHERE tenantId = ?) OR p.refereeId = ?) AND p.tenantId = t.id
         ) as payouts
       FROM tenant t
       LEFT JOIN subscription s ON s.tenantId = t.id
-      WHERE t.referredById = ?
+      WHERE t.referredById = ? OR t.referredById IN (SELECT id FROM user WHERE tenantId = ?) OR t.referredById = ?
       ORDER BY t.createdAt DESC
-    `, [userId, userId]);
+    `, [userId, tenantId, tenantId, userId, tenantId, tenantId]);
 
     // Format the output
     const formatted = rows.map(r => ({

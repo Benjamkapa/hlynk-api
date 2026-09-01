@@ -155,10 +155,13 @@ export const googleAuth = async (req, res) => {
         let referralApplied = false;
 
         if (registration.referralCode) {
-          const [refRows] = await connection.query(`SELECT ownerId FROM (SELECT u.id as ownerId, t.referralCode FROM user u JOIN tenant t ON u.tenantId = t.id WHERE u.role = 'PROVIDER') as refs WHERE referralCode = ? LIMIT 1`, [registration.referralCode.trim().toUpperCase()]);
+          const cleanCode = registration.referralCode.trim().toUpperCase();
+          const [refRows] = await connection.query(
+            `SELECT u.id as ownerId FROM tenant t JOIN user u ON u.tenantId = t.id WHERE t.referralCode = ? ORDER BY u.createdAt ASC LIMIT 1`, 
+            [cleanCode]
+          );
           if (refRows.length > 0) {
             referredById = refRows[0].ownerId;
-            // You can optionally give extra trial days for referrals here if desired
             trialDays = 14; 
             referralApplied = true;
           }

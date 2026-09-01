@@ -19,11 +19,8 @@ const originalError = console.error;
 console.log = (msg, ...args) => originalLog(...formatLog(msg, ...args));
 console.error = (msg, ...args) => originalError(...formatLog(msg, ...args));
 
-// Suppress redundant env injection logs during init
-// const tempLog = console.log;
-// console.log = () => {};
-// dotenv.config();
-// console.log = tempLog;
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(__dirname, ".env") });
 
 // Route imports
 import authRoutes from "./routes/auth.js";
@@ -52,7 +49,6 @@ import { db } from "./dbms/mysql.js";
 import { initStorage, minioClient } from "./utils/storage.js";
 import { fixResourceImages } from "./scripts/fix_resource_images.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const params = JSON.parse(fs.readFileSync(path.join(__dirname, "configs/params.json"), "utf8"));
 
 const app = express();

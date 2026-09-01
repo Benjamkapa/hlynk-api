@@ -202,8 +202,11 @@ export const listTenants = async (req, res) => {
 
   try {
     const [tenants] = await db.query(`
-      SELECT t.*, s.planName, s.status as subscriptionStatus, (SELECT id FROM user WHERE tenantId = t.id AND role = 'PROVIDER' LIMIT 1) as primaryUserId,
-      (SELECT referralCode FROM tenant WHERE id = (SELECT tenantId FROM user WHERE id = t.referredById LIMIT 1)) as appliedReferralCode
+      SELECT t.*, s.planName, s.status as subscriptionStatus, (SELECT id FROM user WHERE tenantId = t.id ORDER BY createdAt ASC LIMIT 1) as primaryUserId,
+      COALESCE(
+        (SELECT referralCode FROM tenant WHERE id = (SELECT tenantId FROM user WHERE id = t.referredById LIMIT 1)),
+        (SELECT referralCode FROM tenant WHERE id = t.referredById)
+      ) as appliedReferralCode
       FROM tenant t
       LEFT JOIN subscription s ON t.id = s.tenantId
       ORDER BY t.createdAt DESC
@@ -782,12 +785,24 @@ export const extendSubscriptionDays = async (req, res) => {
 
 export const deleteTenant = async (req, res) => {
   try {
+    const [tRows] = await db.query(`SELECT businessName FROM tenant WHERE id = ?`, [req.params.id]);
+    const bName = tRows[0]?.businessName || 'Business';
+
     await db.query(`DELETE FROM tenant WHERE id = ?`, [req.params.id]);
     // Log Action
     await db.query(`
       INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
       VALUES (?, ?, ?, 'Tenant Deleted', 'Danger', ?, NOW())
     `, [ulid(), req.params.id, req.user.userId, 'Tenant deleted permanently by Admin']);
+
+    try {
+      await createAdminNotification({
+        title: '🔴 Business Account Deleted',
+        message: `'${bName}' was permanently removed by Admin.`,
+        type: 'danger',
+        data: { url: '/admin/tenants' }
+      });
+    } catch (e) {}
 
     return res.json({ success: true, message: 'Tenant deleted' });
   } catch (err) {
@@ -805,12 +820,16 @@ export const updateTenant = async (req, res) => {
       if (!appliedReferralCode) {
         referredByIdUpdate = `, referredById = NULL`;
       } else {
-        const [refRows] = await db.query(`SELECT ownerId FROM (SELECT u.id as ownerId, t.referralCode FROM user u JOIN tenant t ON u.tenantId = t.id WHERE u.role = 'PROVIDER') as refs WHERE referralCode = ? LIMIT 1`, [appliedReferralCode.trim().toUpperCase()]);
+        const cleanCode = appliedReferralCode.trim().toUpperCase();
+        const [refRows] = await db.query(
+          `SELECT u.id as ownerId FROM tenant t JOIN user u ON u.tenantId = t.id WHERE t.referralCode = ? ORDER BY u.createdAt ASC LIMIT 1`, 
+          [cleanCode]
+        );
         if (refRows.length > 0) {
           referredByIdUpdate = `, referredById = ?`;
           queryParams.push(refRows[0].ownerId);
         } else {
-          return res.status(400).json({ success: false, message: 'Invalid referral code provided' });
+          return res.status(400).json({ success: false, message: `Invalid referral code '${cleanCode}' provided` });
         }
       }
     }
