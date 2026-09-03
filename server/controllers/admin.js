@@ -538,16 +538,27 @@ export const getUsers = async (req, res) => {
 
 export const deleteUser = async (req, res) => {
   try {
-    const [u] = await db.query(`SELECT role FROM user WHERE id = ?`, [req.params.id]);
+    const [u] = await db.query(`SELECT name, email, role FROM user WHERE id = ?`, [req.params.id]);
     if (u.length > 0 && u[0].role === 'SUPER_ADMIN') {
       return res.status(403).json({ success: false, message: 'Cannot delete Super Admin' });
     }
+    const userName = u[0]?.name || u[0]?.email || 'User';
     await db.query(`DELETE FROM user WHERE id = ?`, [req.params.id]);
+
     // Log Action
     await db.query(`
       INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
       VALUES (?, 'SYSTEM', ?, 'User Deleted', 'Danger', ?, NOW())
     `, [ulid(), req.user.userId, `Deleted user ID: ${req.params.id}`]);
+
+    try {
+      await createAdminNotification({
+        title: '🔴 User Account Deleted',
+        message: `User '${userName}' was permanently removed by Admin.`,
+        type: 'danger',
+        data: { url: '/admin/user-operations' }
+      });
+    } catch (e) { }
 
     return res.json({ success: true, message: 'User deleted' });
   } catch (err) {

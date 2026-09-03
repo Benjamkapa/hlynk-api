@@ -25,7 +25,7 @@ setupWebPush();
 export const subscribe = async (req, res) => {
     try {
         const { subscription } = req.body;
-        const userId = req.user.id;
+        const userId = req.user.userId || req.user.id;
         const tenantId = req.user.tenantId;
 
         // Check if subscription already exists for this endpoint
@@ -65,7 +65,7 @@ export const unsubscribe = async (req, res) => {
 
 export const sendTestNotification = async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user.userId || req.user.id;
         const [subs] = await db.query('SELECT * FROM push_subscriptions WHERE userId = ?', [userId]);
 
         if (subs.length === 0) {
@@ -151,10 +151,11 @@ export const sendPushToAdmins = async (message) => {
     try {
         // Find subscriptions belonging to users with SUPER_ADMIN role
         const [subs] = await db.query(`
-            SELECT ps.* 
+            SELECT DISTINCT ps.* 
             FROM push_subscriptions ps
-            JOIN user u ON ps.userId = u.id
+            LEFT JOIN user u ON ps.userId = u.id
             WHERE u.role = 'SUPER_ADMIN'
+               OR ps.tenantId IN (SELECT tenantId FROM user WHERE role = 'SUPER_ADMIN')
         `);
         
         if (subs.length === 0) return;
