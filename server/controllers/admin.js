@@ -16,35 +16,35 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const params = JSON.parse(fs.readFileSync(path.join(__dirname, '../configs/params.json'), 'utf8'));
 const JWT_SECRET = params.jwt_secret || 'default_secret';
 const REFRESH_SECRET = (params.refresh_secret || JWT_SECRET) + '_refresh';
-const JWT_EXPIRES_IN = '15m'; 
+const JWT_EXPIRES_IN = '15m';
 const IS_PROD = params.env !== 'LOCAL';
 export const getSystemStats = async (req, res) => {
   try {
     const [providersCount] = await db.query(`SELECT COUNT(*) as total FROM user WHERE role = 'PROVIDER'`);
     const [payingProviders] = await db.query(`SELECT COUNT(*) as total FROM subscription WHERE status = 0`);
     const [totalRevenue] = await db.query(`SELECT SUM(amount) as total FROM payment WHERE status = 0`);
-    
+
     // Add global platform volume
     const [platformVolume] = await db.query(`SELECT SUM(totalAmount) as total FROM sale WHERE status = 0`);
     const [mpesaCollections] = await db.query(`SELECT SUM(totalAmount) as total FROM sale WHERE paymentMethod = 'MPESA' AND status = 0`);
-    
+
     // New exact data fetches for Financials Page
     const [ytdVolumeRes] = await db.query(`SELECT SUM(totalAmount) as total FROM sale WHERE status = 0 AND YEAR(createdAt) = YEAR(NOW())`);
-    
+
     // NEW: Payouts for Rented Paybills (Status 0 = Success, payoutStatus 0 = Unpaid)
     const [pendingPayouts] = await db.query(`SELECT SUM(amount) as total FROM payout WHERE status = 'PENDING'`);
-    
+
     const [newProvidersToday] = await db.query(`SELECT COUNT(*) as total FROM tenant WHERE DATE(createdAt) = CURDATE()`);
     const [expiringSoonRes] = await db.query(`SELECT COUNT(*) as total FROM subscription WHERE status = 0 AND endDate BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 7 DAY)`);
-    
+
     // Check if any payout is "old" (more than 7 days)
     const [overduePayouts] = await db.query(`SELECT COUNT(*) as cnt FROM payout WHERE status = 'PENDING' AND createdAt <= DATE_SUB(NOW(), INTERVAL 7 DAY)`);
-    
+
     // NEW: Security markers for Forensic Audit
     const [failedLogins] = await db.query(`SELECT COUNT(*) as total FROM activitylog WHERE action LIKE '%Failed%' OR action LIKE '%Unauthorized%'`);
     const [securityAlerts] = await db.query(`SELECT COUNT(*) as total FROM activitylog WHERE logName = 'Security' OR logName = 'SafeGuard'`);
     const activeProtocolsCount = 12; // Static or derived from system settings
-    
+
     const activeAlerts = [];
     if (Number(pendingPayouts[0].total || 0) > 1000) {
       activeAlerts.push({
@@ -82,17 +82,17 @@ export const getSystemStats = async (req, res) => {
       `;
     }
     const [trendRows] = await db.query(trendsQuery);
-    
+
     // Ensure the graph is never blank plain, give it zero fallback values if completely empty
     let revenueTrend = trendRows;
     if (revenueTrend.length === 0) {
       if (timeframe === 'HOURLY') {
         const eatNow = new Date(Date.now() + 3 * 60 * 60 * 1000);
-        revenueTrend = Array.from({length: 6}).map((_, i) => ({ name: `${(eatNow.getUTCHours() - (5-i) + 24) % 24}:00`, value: 0 }));
+        revenueTrend = Array.from({ length: 6 }).map((_, i) => ({ name: `${(eatNow.getUTCHours() - (5 - i) + 24) % 24}:00`, value: 0 }));
       } else {
-        revenueTrend = Array.from({length: 7}).map((_, i) => {
-           const eatVal = new Date(Date.now() + 3 * 60 * 60 * 1000); let d = new Date(eatVal); d.setUTCDate(d.getUTCDate() - (6-i));
-           return { name: d.toLocaleDateString('en-US', {month:'short', day:'numeric', timeZone: 'UTC'}), value: 0 };
+        revenueTrend = Array.from({ length: 7 }).map((_, i) => {
+          const eatVal = new Date(Date.now() + 3 * 60 * 60 * 1000); let d = new Date(eatVal); d.setUTCDate(d.getUTCDate() - (6 - i));
+          return { name: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }), value: 0 };
         });
       }
     }
@@ -110,8 +110,8 @@ export const getSystemStats = async (req, res) => {
 
     let weeklyGrowth = weeklyGrowthRes;
     if (weeklyGrowth.length === 0) {
-      weeklyGrowth = Array.from({length: 8}).map((_, i) => ({
-        name: `W${i+1}`,
+      weeklyGrowth = Array.from({ length: 8 }).map((_, i) => ({
+        name: `W${i + 1}`,
         value: 0
       }));
     }
@@ -153,7 +153,7 @@ export const getSystemStats = async (req, res) => {
         AND photoUrl NOT LIKE '%ui-avatars%'
       ORDER BY createdAt DESC LIMIT 5
     `);
-    
+
     // Only return users who actually have REAL images
     const activeAvatars = recentUsers.map(u => ({
       name: u.name,
@@ -216,11 +216,11 @@ export const listTenants = async (req, res) => {
     const [countRes] = await db.query(`SELECT COUNT(*) as total FROM tenant`);
     const total = Number(countRes[0].total);
 
-    return res.json({ 
-      success: true, 
+    return res.json({
+      success: true,
       data: {
-        tenants, 
-        pagination: { total, pages: Math.ceil(total / Number(limit)), page: Number(page), limit: Number(limit) } 
+        tenants,
+        pagination: { total, pages: Math.ceil(total / Number(limit)), page: Number(page), limit: Number(limit) }
       }
     });
   } catch (err) {
@@ -238,7 +238,7 @@ export const getSystemHealth = async (req, res) => {
     const cpus = os.cpus();
     const cpuLoad = Math.round((os.loadavg()[0] / cpus.length) * 100);
     const memoryUsage = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
-    
+
     // For historical performance, since we don't store OS metrics in DB, 
     // let's query the ActivityLog to get actual system usage load over the last 12 hours
     const [loadHistory] = await db.query(`
@@ -248,30 +248,30 @@ export const getSystemHealth = async (req, res) => {
       GROUP BY HOUR(createdAt)
       ORDER BY createdAt ASC
     `);
-    
+
     // Map the actual DB activity to our performance chart
     let performanceData = loadHistory.map(row => ({
       time: row.time,
       api: Math.max(10, dbLatencyMs + Math.floor(Math.random() * 5)), // Simulate API latency correlated to DB
       load: Math.min(100, Math.round((row.api_calls / 10) * 100)) // Normalize load based on activity volume (approx 10 calls per hr as baseline)
     }));
-    
+
     // Fallback if no activity in last 12 hours
     if (performanceData.length === 0) {
-       const eatNow = new Date(Date.now() + 3 * 60 * 60 * 1000);
-       performanceData = Array.from({length: 6}).map((_, i) => ({
-         time: `${(eatNow.getUTCHours() - (5-i) + 24) % 24}:00`,
-         api: dbLatencyMs + 5,
-         load: cpuLoad
-       }));
+      const eatNow = new Date(Date.now() + 3 * 60 * 60 * 1000);
+      performanceData = Array.from({ length: 6 }).map((_, i) => ({
+        time: `${(eatNow.getUTCHours() - (5 - i) + 24) % 24}:00`,
+        api: dbLatencyMs + 5,
+        load: cpuLoad
+      }));
     }
 
     const nodes = [
-      { 
-        name: os.hostname(), 
-        region: 'primary-server', 
-        status: dbLatencyMs < 200 ? 'Healthy' : 'Degraded', 
-        load: `${cpuLoad}%` 
+      {
+        name: os.hostname(),
+        region: 'primary-server',
+        status: dbLatencyMs < 200 ? 'Healthy' : 'Degraded',
+        load: `${cpuLoad}%`
       }
     ];
 
@@ -353,8 +353,8 @@ export const getSubscriptions = async (req, res) => {
   const { search = '', status = '', planName = '', page = 1, limit = 10 } = req.query;
   const offset = (Number(page) - 1) * Number(limit);
 
-    try {
-      let query = `
+  try {
+    let query = `
         SELECT 
           s.*, 
           ANY_VALUE(t.businessName) as businessName, 
@@ -373,14 +373,14 @@ export const getSubscriptions = async (req, res) => {
       query += ` AND (t.businessName LIKE ? OR t.slug LIKE ?)`;
       queryParams.push(`%${search}%`, `%${search}%`);
     }
-    
+
     // Admin uses 'status' text, convert to our db codes
     if (status) {
       let statusCode;
       if (status === 'ACTIVE') statusCode = 0;
       else if (status === 'INACTIVE' || status === 'EXPIRED') statusCode = 1;
       else if (status === 'TRIAL') statusCode = 2;
-      
+
       if (statusCode !== undefined) {
         query += ` AND s.status = ?`;
         queryParams.push(statusCode);
@@ -416,9 +416,9 @@ export const getSubscriptions = async (req, res) => {
     `;
     const countParams = [];
     if (search) { countQuery += ` AND (t.businessName LIKE ? OR t.slug LIKE ?)`; countParams.push(`%${search}%`, `%${search}%`); }
-    if (status) { 
+    if (status) {
       let statusCode = status === 'ACTIVE' ? 0 : status === 'TRIAL' ? 2 : 1;
-      countQuery += ` AND s.status = ?`; countParams.push(statusCode); 
+      countQuery += ` AND s.status = ?`; countParams.push(statusCode);
     }
     if (planName) { countQuery += ` AND s.planName = ?`; countParams.push(planName); }
 
@@ -454,7 +454,7 @@ export const impersonateUser = async (req, res) => {
 
     const sessionId = ulid();
     const payload = { userId: targetUser.id, tenantId: targetUser.tenantId, role: targetUser.role, sessionId };
-    
+
     const accessToken = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
     const refreshToken = jwt.sign(payload, REFRESH_SECRET, { expiresIn: '30d' });
 
@@ -569,7 +569,7 @@ export const getSessions = async (req, res) => {
       LIMIT 100
     `);
 
-    
+
     // Group by userId manually to ensure we keep the MOST recent session object properly
     const latestSessionsMap = new Map();
     sessions.forEach(s => {
@@ -590,10 +590,10 @@ export const getSessions = async (req, res) => {
         });
       }
     });
-    
+
     const formattedSessions = Array.from(latestSessionsMap.values());
     // console.log(`📡 SESSIONS_FETCHED: Found ${sessions.length} total, ${formattedSessions.length} unique active users.`);
-    
+
     return res.json({ success: true, data: formattedSessions });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to fetch sessions' });
@@ -802,7 +802,7 @@ export const deleteTenant = async (req, res) => {
         type: 'danger',
         data: { url: '/admin/tenants' }
       });
-    } catch (e) {}
+    } catch (e) { }
 
     return res.json({ success: true, message: 'Tenant deleted' });
   } catch (err) {
@@ -822,7 +822,7 @@ export const updateTenant = async (req, res) => {
       } else {
         const cleanCode = appliedReferralCode.trim().toUpperCase();
         const [refRows] = await db.query(
-          `SELECT u.id as ownerId FROM tenant t JOIN user u ON u.tenantId = t.id WHERE t.referralCode = ? ORDER BY u.createdAt ASC LIMIT 1`, 
+          `SELECT u.id as ownerId FROM tenant t JOIN user u ON u.tenantId = t.id WHERE t.referralCode = ? ORDER BY u.createdAt ASC LIMIT 1`,
           [cleanCode]
         );
         if (refRows.length > 0) {
@@ -833,7 +833,7 @@ export const updateTenant = async (req, res) => {
         }
       }
     }
-    
+
     queryParams.push(req.params.id);
 
     await db.query(`UPDATE tenant SET businessName = ?, slug = ?, updatedAt = NOW()${referredByIdUpdate} WHERE id = ?`, queryParams);
@@ -961,7 +961,7 @@ export const getSettings = async (req, res) => {
 export const updateSettings = async (req, res) => {
   try {
     let settings = req.body;
-    
+
     // Handle both legacy array format [{key, value}] and modern flat object format
     if (Array.isArray(settings)) {
       const flat = {};
@@ -970,19 +970,19 @@ export const updateSettings = async (req, res) => {
       });
       settings = flat;
     } else if (settings.settings && Array.isArray(settings.settings)) {
-       // Handle { settings: [...] } wrapper
-       const flat = {};
-       settings.settings.forEach(item => {
-         if (item.key) flat[item.key] = item.value;
-       });
-       settings = flat;
+      // Handle { settings: [...] } wrapper
+      const flat = {};
+      settings.settings.forEach(item => {
+        if (item.key) flat[item.key] = item.value;
+      });
+      settings = flat;
     }
 
     // Sanitize: only allow valid columns to avoid "Unknown column '0'" error
     const validKeys = [
-      'maintenanceMode', 
-      'allowNewProviders', 
-      'platformFeePercentage', 
+      'maintenanceMode',
+      'allowNewProviders',
+      'platformFeePercentage',
       'supportEmail'
     ];
     const sanitized = {};
@@ -998,7 +998,7 @@ export const updateSettings = async (req, res) => {
     });
 
     if (Object.keys(sanitized).length === 0) {
-       return res.status(400).json({ success: false, message: 'No valid setting fields provided' });
+      return res.status(400).json({ success: false, message: 'No valid setting fields provided' });
     }
 
     // Auto-create table if missing
@@ -1019,7 +1019,7 @@ export const updateSettings = async (req, res) => {
     } else {
       await db.query(`INSERT INTO systemsettings SET ?`, [sanitized]);
     }
-    
+
     return res.json({ success: true, message: 'Settings updated successfully' });
   } catch (err) {
     console.error('SETTING_UPDATE_ERR:', err);
@@ -1038,7 +1038,7 @@ export const runReportQuery = async (req, res) => {
   try {
     const allowedTables = ['user', 'tenant', 'sale', 'subscription', 'payment', 'activitylog', 'notification', 'customer', 'product'];
     if (!allowedTables.includes(table)) return res.status(400).json({ success: false, message: 'Invalid table' });
-    
+
     const validColumns = columns.filter(c => /^[a-zA-Z0-9_]+$/.test(c));
     if (validColumns.length === 0) return res.status(400).json({ success: false, message: 'Invalid columns' });
 
@@ -1124,7 +1124,7 @@ export const getTransactionDetails = async (req, res) => {
     if (payments.length === 0) return res.status(404).json({ success: false, message: 'Transaction not found' });
 
     const payment = payments[0];
-    
+
     // Fetch related Mpesa logs if it's an MPESA transaction
     if (payment.mpesaRequestId) {
       const [logs] = await db.query(`
@@ -1165,7 +1165,7 @@ export const listPlatformReviews = async (req, res) => {
 
     const [reviews] = await db.query(q, params);
     const [countRes] = await db.query(`SELECT COUNT(*) as total FROM platformreview WHERE 1=1 ${status !== undefined && status !== '' ? 'AND status = ?' : ''}`, status !== undefined && status !== '' ? [Number(status)] : []);
-    
+
     return res.json({
       success: true,
       data: {
@@ -1212,7 +1212,7 @@ async function uniqueSlug(base) {
 export const registerTenant = async (req, res) => {
   const { businessName, ownerName, phone, email, category, planName = 'LITE' } = req.body;
   const connection = await db.getConnection();
-  
+
   try {
     // 0. Check if phone already exists
     const [existing] = await connection.query(`SELECT id FROM user WHERE phone = ? LIMIT 1`, [phone]);
@@ -1251,7 +1251,7 @@ export const registerTenant = async (req, res) => {
     const requestedPlan = 'MAX';
     const subStatus = 2; // 2 = TRIAL
     const trialEndQuery = 'DATE_ADD(NOW(), INTERVAL 14 DAY)';
-    
+
     await connection.query(
       `INSERT INTO subscription (id, tenantId, planName, status, trialEndDate, createdAt, updatedAt) 
        VALUES (?, ?, ?, ?, ${trialEndQuery}, NOW(), NOW())`,
@@ -1329,7 +1329,7 @@ export const getPayouts = async (req, res) => {
       const g = acc[p.tenantId];
       const trialEnd = p.trialEndDate ? new Date(p.trialEndDate) : null;
       const rate = (trialEnd && new Date(p.createdAt) <= trialEnd) ? 0 : PLATFORM_SHARE_RATE;
-      
+
       const amount = Number(p.amount);
       g.totalGross += amount;
       g.platformShare += amount * rate;
@@ -1346,8 +1346,8 @@ export const getPayouts = async (req, res) => {
     const totalPendingPayouts = payoutRecords.reduce((sum, p) => sum + Number(p.amount), 0);
     const totalAccruedNet = pendingAccrued.reduce((sum, g) => sum + g.netSettlement, 0);
 
-    return res.json({ 
-      success: true, 
+    return res.json({
+      success: true,
       data: {
         payouts: payoutRecords, // Actual records ready for B2C
         accrued: pendingAccrued, // Accumulating for next week
@@ -1356,7 +1356,7 @@ export const getPayouts = async (req, res) => {
           totalAccrued: totalAccruedNet,
           shareRate: PLATFORM_SHARE_RATE
         }
-      } 
+      }
     });
   } catch (err) {
     console.error('[ADMIN-PAYOUTS] Error:', err);
@@ -1388,7 +1388,7 @@ export const markPayoutPaid = async (req, res) => {
           WHERE p.id = ?
           GROUP BY p.id
         `, [payoutId]);
-        
+
         if (pRows.length === 0) throw new Error('Payout record not found');
         const payout = pRows[0];
         payoutAmount = payout.amount;
@@ -1427,7 +1427,7 @@ export const markPayoutPaid = async (req, res) => {
              )
            )
         `, [tenantId]);
-        
+
         await connection.query(`
           INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
           VALUES (?, ?, ?, 'Payout Processed', 'Financial', ?, NOW())
@@ -1468,7 +1468,7 @@ export const updateTenantPayoutAccount = async (req, res) => {
 
   try {
     await db.query(`UPDATE tenant SET payoutMethod = ?, payoutAccount = ?, updatedAt = NOW() WHERE id = ?`, [payoutMethod, payoutAccount, id]);
-    
+
     await db.query(`
       INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
       VALUES (?, ?, ?, 'Payout Info Updated', 'Management', ?, NOW())
@@ -1488,7 +1488,7 @@ export const listNewPayouts = async (req, res) => {
       JOIN tenant t ON p.tenantId = t.id
       ORDER BY p.createdAt DESC
     `);
-    
+
     return res.json({ success: true, data: rows });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to list payout records' });
@@ -1499,7 +1499,7 @@ export const getVaultStats = async (req, res) => {
   try {
     // 1. Total Collections (Money in the paybill from success payments)
     const [collections] = await db.query(`SELECT SUM(amount) as total FROM payment WHERE status = 0`);
-    
+
     // 2. Pending Liabilities
     const [pendingPayouts] = await db.query(`
       SELECT 
@@ -1546,7 +1546,7 @@ export const testB2C = async (req, res) => {
       tenantId: null,
       payoutId: null
     });
-    
+
     // Log the test action
     await db.query(`
       INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
@@ -1580,13 +1580,13 @@ export const downloadDatabaseBackup = async (req, res) => {
     // Get all tables
     const [tablesList] = await dbConnection.query("SHOW FULL TABLES WHERE Table_type = 'BASE TABLE'");
     const tableKey = tablesList[0] ? Object.keys(tablesList[0])[0] : null;
-    
+
     if (!tableKey) {
       return res.status(404).json({ success: false, message: 'No tables found in database.' });
     }
 
     const tables = tablesList.map(t => t[tableKey]);
-    
+
     const statements = [];
     statements.push("SET FOREIGN_KEY_CHECKS = 0;");
     statements.push(`CREATE DATABASE IF NOT EXISTS \`${dbName}\`;`);
@@ -1641,7 +1641,7 @@ export const downloadDatabaseBackup = async (req, res) => {
     statements.push("SET FOREIGN_KEY_CHECKS = 1;");
 
     const sqlContent = statements.join('\n\n');
-    
+
     // Format a human-readable local timestamp: YYYY-MM-DD_HH-MM-SS-AM/PM
     const d = new Date();
     const pad = (n) => String(n).padStart(2, '0');
@@ -1673,7 +1673,7 @@ export const restoreDatabaseBackup = async (req, res) => {
 
     const file = req.files.sqlFile;
     let sqlString = file.data.toString('utf8');
-    
+
     // Remove BOM if present
     if (sqlString.charCodeAt(0) === 0xFEFF) sqlString = sqlString.slice(1);
 
@@ -1702,8 +1702,8 @@ export const restoreDatabaseBackup = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Restore failed: ' + err.message });
   } finally {
     if (restoreConn) {
-       await restoreConn.query('SET FOREIGN_KEY_CHECKS = 1;').catch(() => {});
-       await restoreConn.end();
+      await restoreConn.query('SET FOREIGN_KEY_CHECKS = 1;').catch(() => { });
+      await restoreConn.end();
     }
   }
 };
@@ -1750,7 +1750,7 @@ export const deleteRecord = async (req, res) => {
 
   try {
     const [result] = await db.query(`DELETE FROM ${table} WHERE id = ?`, [id]);
-    
+
     await db.query(`
       INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt)
       VALUES (?, 'SYSTEM', ?, 'Record Deleted', 'Maintenance', ?, NOW())

@@ -34,13 +34,15 @@ export const getPublicStayListing = async (req, res) => {
     const isTrial = Number(tenant.subStatus) === 2 || tenant.subStatus === 'TRIAL' || (tenant.trialEndDate && new Date(tenant.trialEndDate) >= new Date());
     const isBusinessPro = (Number(tenant.subStatus) === 0 || tenant.subStatus === 'ACTIVE') && tenant.planName === 'MAX';
 
-    // Public Stay Booking (/stay/:slug) is exclusively available for Business Pro (MAX) subscribers or active Trial period.
-    const isStayRoute = req.originalUrl?.includes('/stay/') || req.path?.includes('/stay/');
-    if (isStayRoute && !isTrial && !isBusinessPro) {
+    // Public Stay Booking (/stay/:slug) and Public Store / Shop Page (/store/:slug, /shop/:slug) are exclusively available for Business Pro subscribers or active Trial period.
+    const isPublicRoute = req.originalUrl?.includes('/stay/') || req.path?.includes('/stay/') ||
+                          req.originalUrl?.includes('/shop/') || req.path?.includes('/shop/') ||
+                          req.originalUrl?.includes('/store/') || req.path?.includes('/store/');
+    if (isPublicRoute && !isTrial && !isBusinessPro) {
       return res.status(403).json({
         success: false,
         isLocked: true,
-        message: "Public Stay Booking page (/stay) is exclusively available on the Business Pro (MAX) plan or during an active trial period."
+        message: "Public Store/Shop and Stay Booking pages are exclusively available on the Business Pro plan or during an active trial period."
       });
     }
 
@@ -158,14 +160,30 @@ export const submitPublicOrder = async (req, res) => {
 
   try {
     const [tenantRows] = await db.query(
-      `SELECT id, businessName FROM tenant WHERE slug = ? AND (isActive = 1 OR isActive IS NULL) LIMIT 1`,
+      `SELECT t.id, t.businessName, s.planName, s.status as subStatus, s.trialEndDate
+       FROM tenant t
+       LEFT JOIN subscription s ON s.tenantId = t.id
+       WHERE t.slug = ? AND (t.isActive = 1 OR t.isActive IS NULL)
+       LIMIT 1`,
       [slug]
     );
     if (!tenantRows.length) {
       return res.status(404).json({ success: false, message: "Business not found" });
     }
 
-    const tenantId = tenantRows[0].id;
+    const tenant = tenantRows[0];
+    const isTrial = Number(tenant.subStatus) === 2 || tenant.subStatus === 'TRIAL' || (tenant.trialEndDate && new Date(tenant.trialEndDate) >= new Date());
+    const isBusinessPro = (Number(tenant.subStatus) === 0 || tenant.subStatus === 'ACTIVE') && tenant.planName === 'MAX';
+
+    if (!isTrial && !isBusinessPro) {
+      return res.status(403).json({
+        success: false,
+        isLocked: true,
+        message: "Public Store and Stay ordering is exclusively available for Business Pro plan subscribers or during an active trial period."
+      });
+    }
+
+    const tenantId = tenant.id;
     const orderId = ulid();
 
     const totalAmount = items.reduce((acc, item) => acc + (Number(item.price || 0) * (Number(item.quantity || 1))), 0);

@@ -90,24 +90,24 @@ export const initiateRenewal = async (req, res) => {
 
     const [subs] = await db.query(`SELECT * FROM subscription WHERE tenantId = ? LIMIT 1`, [tenantId]);
     if (subs.length === 0) return res.status(404).json({ success: false, message: 'Subscription not found' });
-    
+
     const sub = subs[0];
     const baseAmount = PLAN_PRICES[sub.planName];
-    
+
     // Calculate final amount and days
     let finalAmount = baseAmount * months;
     let daysToReward = months * 28; // Default 28 days per month
 
     if (months === 6) {
-        daysToReward = 180;
-        finalAmount = Math.round(finalAmount * 0.95); // 5% discount
+      daysToReward = 180;
+      finalAmount = Math.round(finalAmount * 0.95); // 5% discount
     } else if (months === 12) {
-        daysToReward = 365;
-        finalAmount = Math.round(finalAmount * 0.85); // 15% discount
+      daysToReward = 365;
+      finalAmount = Math.round(finalAmount * 0.85); // 15% discount
     }
 
     const reference = `SUB-REN-${tenantId.slice(-6).toUpperCase()}-${Date.now().toString().slice(-4)}`;
-    
+
     const paymentId = ulid();
     await db.query(`
       INSERT INTO payment (id, tenantId, amount, phone, plan, status, reference, transactionType, createdAt, meta) 
@@ -118,8 +118,8 @@ export const initiateRenewal = async (req, res) => {
     const tenantName = tenants[0]?.businessName || 'Tenant';
 
     const result = await initiateStkPush(
-      { phone, amount: finalAmount, reference }, 
-      null, 
+      { phone, amount: finalAmount, reference },
+      null,
       {
         customerName: req.user.name,
         initiatorName: req.user.name,
@@ -152,17 +152,17 @@ export const changePlan = async (req, res) => {
     }
 
     const baseAmount = PLAN_PRICES[newPlan];
-    
+
     // Calculate final amount and days
     let finalAmount = baseAmount * months;
     let daysToReward = months * 28;
 
     if (months === 6) {
-        daysToReward = 180;
-        finalAmount = Math.round(finalAmount * 0.95); // 5% discount
+      daysToReward = 180;
+      finalAmount = Math.round(finalAmount * 0.95); // 5% discount
     } else if (months === 12) {
-        daysToReward = 365;
-        finalAmount = Math.round(finalAmount * 0.85); // 15% discount
+      daysToReward = 365;
+      finalAmount = Math.round(finalAmount * 0.85); // 15% discount
     }
 
     const reference = `SUB-UPG-${tenantId.slice(-6).toUpperCase()}-${Date.now().toString().slice(-4)}`;
@@ -178,7 +178,7 @@ export const changePlan = async (req, res) => {
 
     const result = await initiateStkPush(
       { phone, amount: finalAmount, reference },
-      null, 
+      null,
       {
         customerName: req.user.name,
         initiatorName: req.user.name,
@@ -211,10 +211,10 @@ export const handlePaymentCallback = async (reference, transactionId, success, m
       await connection.query(`UPDATE payment SET status = 0, mpesaReceipt = ?, message = ? WHERE id = ?`, [transactionId, message || 'Success', payment.id]);
 
       const [subs] = await connection.query(`SELECT * FROM subscription WHERE tenantId = ? LIMIT 1 FOR UPDATE`, [payment.tenantId]);
-      
+
       if (subs.length > 0) {
         const sub = subs[0];
-        
+
         // Parse custom reward days from meta
         let daysToReward = 28;
         let monthsLabel = 'another 28 days';
@@ -235,7 +235,7 @@ export const handlePaymentCallback = async (reference, transactionId, success, m
         const notificationTitle = isNewPlan ? 'Plan Activated!' : 'Subscription Renewed!';
         const getPlanName = (p) => p === 'MAX' ? 'Business Pro' : p === 'PLUS' ? 'Growth' : 'Starter';
         const displayPlanName = getPlanName(payment.plan);
-        const notificationMsg = isNewPlan 
+        const notificationMsg = isNewPlan
           ? `Your switch to the ${displayPlanName} plan was successful. ${daysToReward} service days added.`
           : `Your ${displayPlanName} subscription has been extended for ${monthsLabel}.`;
 
@@ -280,10 +280,10 @@ export const handlePaymentCallback = async (reference, transactionId, success, m
 
         if (referredById && REFERRAL_BONUSES[payment.plan]) {
           const bonusAmount = REFERRAL_BONUSES[payment.plan];
-          
+
           // Check if this is a renewal (already has an endDate)
           const isRenewal = sub.endDate && new Date(sub.endDate) > new Date(sub.createdAt);
-          
+
           let shouldPayBonus = true;
           if (isRenewal) {
             // Season Rule: If renewal, check if they referred at least 1 new vendor in the last 180 days
@@ -303,11 +303,11 @@ export const handlePaymentCallback = async (reference, transactionId, success, m
               INSERT INTO payout (id, tenantId, amount, status, type, refereeId, sourceId, message, createdAt)
               VALUES (?, ?, ?, 'PENDING', 'REFERRAL', ?, ?, ?, NOW())
             `, [
-              payoutId, 
-              payment.tenantId, 
-              bonusAmount, 
-              referredById, 
-              payment.id, 
+              payoutId,
+              payment.tenantId,
+              bonusAmount,
+              referredById,
+              payment.id,
               `Referral bonus for ${displayPlanName} (${payment.tenantId})`
             ]);
             console.log(`[REFERRAL] Payout ${payoutId} logged for ${referredById} (Amount: ${bonusAmount})`);
@@ -335,7 +335,7 @@ export const verifyPayment = async (req, res) => {
   try {
     const [payments] = await db.query(`SELECT * FROM payment WHERE id = ? AND tenantId = ? LIMIT 1`, [paymentId, tenantId]);
     if (payments.length === 0) return res.status(404).json({ success: false, message: 'Payment not found' });
-    
+
     const payment = payments[0];
     if (payment.status !== 2) return res.json({ success: true, data: payment });
 
@@ -345,7 +345,7 @@ export const verifyPayment = async (req, res) => {
     const result = await queryStkPush(checkoutRequestId);
     const message = result.ResultDesc || (result.ResultCode == '0' ? 'Success' : 'Failed');
     const code = String(result.ResultCode);
-    
+
     if (code === '0') {
       await handlePaymentCallback(payment.reference, checkoutRequestId, true, message);
       return res.json({ success: true, data: { status: 0, message, result } });
@@ -355,7 +355,7 @@ export const verifyPayment = async (req, res) => {
       await db.query(`UPDATE payment SET status = ?, message = ? WHERE id = ?`, [status, message, payment.id]);
       return res.json({ success: true, data: { status, message, result } });
     }
-    
+
     return res.json({ success: true, data: payment });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
@@ -395,12 +395,12 @@ export const submitManualPayment = async (req, res) => {
       type: 'warning'
     });
 
-    return res.json({ 
-      success: true, 
-      data: { 
-        paymentId, 
-        message: 'Transaction code submitted! Our team will verify and activate your plan shortly.' 
-      } 
+    return res.json({
+      success: true,
+      data: {
+        paymentId,
+        message: 'Transaction code submitted! Our team will verify and activate your plan shortly.'
+      }
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to submit manual payment' });

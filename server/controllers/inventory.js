@@ -90,7 +90,7 @@ export const createProduct = async (req, res) => {
     const [productCountRes] = await db.query(`SELECT COUNT(*) as total FROM product WHERE tenantId = ?`, [tenantId]);
     const currentCount = Number(productCountRes[0]?.total || 0);
 
-    const limits = { 'LITE': 15, 'PLUS': 100, 'MAX': 999999, 'TRIAL': 999999 };
+    const limits = { 'LITE': 15, 'PLUS': 60, 'MAX': 999999, 'TRIAL': 999999 };
     const limit = limits[plan] || 15;
 
     if (currentCount >= limit) {
