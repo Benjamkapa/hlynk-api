@@ -1774,4 +1774,68 @@ export const deleteRecord = async (req, res) => {
   }
 };
 
+export const getSystemNotifications = async (req, res) => {
+  const { search = '', page = 1, limit = 10 } = req.query;
+  const offset = (Number(page) - 1) * Number(limit);
+  const adminTenantId = req.user.tenantId;
 
+  try {
+    let query = `
+      SELECT n.*, 
+             t.businessName as shopName, 
+             u.name as shopOwnerName
+      FROM notification n
+      LEFT JOIN tenant t ON n.relatedTenantId = t.id
+      LEFT JOIN user u ON u.tenantId = t.id AND u.role = 'PROVIDER'
+      WHERE n.tenantId = ?
+    `;
+    const queryParams = [adminTenantId];
+
+    if (search) {
+      query += ` AND (n.title LIKE ? OR n.message LIKE ? OR t.businessName LIKE ? OR u.name LIKE ?)`;
+      queryParams.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+    }
+
+    query += ` GROUP BY n.id ORDER BY n.createdAt DESC LIMIT ? OFFSET ?`;
+    queryParams.push(Number(limit), offset);
+
+    const [items] = await db.query(query, queryParams);
+
+    let countQuery = `
+      SELECT COUNT(DISTINCT n.id) as total 
+      FROM notification n
+      LEFT JOIN tenant t ON n.relatedTenantId = t.id
+      LEFT JOIN user u ON u.tenantId = t.id AND u.role = 'PROVIDER'
+      WHERE n.tenantId = ?
+    `;
+    const countParams = [adminTenantId];
+
+    if (search) {
+      countQuery += ` AND (n.title LIKE ? OR n.message LIKE ? OR t.businessName LIKE ? OR u.name LIKE ?)`;
+      countParams.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+    }
+
+    const [countRes] = await db.query(countQuery, countParams);
+    const total = countRes[0].total;
+
+    return res.json({
+      success: true,
+      data: {
+        items,
+        pagination: { total, pages: Math.ceil(total / Number(limit)), page: Number(page), limit: Number(limit) }
+      }
+    });
+  } catch (err) {
+    console.error('getSystemNotifications Error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to fetch notifications' });
+  }
+};
+
+export const deleteSystemNotification = async (req, res) => {
+  try {
+    await db.query('DELETE FROM notification WHERE id = ? AND tenantId = ?', [req.params.id, req.user.tenantId]);
+    return res.json({ success: true, message: 'Notification deleted' });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to delete notification' });
+  }
+};

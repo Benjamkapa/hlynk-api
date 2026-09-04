@@ -36,7 +36,9 @@ import {
   downloadDatabaseBackup,
   restoreDatabaseBackup,
   clearTableData,
-  deleteRecord
+  deleteRecord,
+  getSystemNotifications,
+  deleteSystemNotification
 } from '../controllers/admin.js';
 
 import { authenticate, requireAdmin } from '../middleware/auth.js';
@@ -90,5 +92,8 @@ router.put('/sessions/:id/terminate', terminateSession);
 
 router.get('/reviews', listPlatformReviews);
 router.patch('/reviews/:id', updatePlatformReviewStatus);
+
+router.get('/notifications', getSystemNotifications);
+router.delete('/notifications/:id', deleteSystemNotification);
 
 export default router;

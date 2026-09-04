@@ -1,13 +1,8 @@
 import { db } from './dbms/mysql.js';
 
-(async () => {
-    try {
-        const [rows] = await db.query('DESCRIBE sale');
-        console.log("SCHEMA:");
-        console.log(rows.map(r => r.Field));
-        process.exit(0);
-    } catch(err) {
-        console.error(err);
-        process.exit(1);
-    }
-})();
+async function run() {
+    const [rows] = await db.query('SHOW CREATE TABLE notification');
+    console.log(rows[0]['Create Table']);
+    process.exit(0);
+}
+run();

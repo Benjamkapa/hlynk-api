@@ -95,5 +95,19 @@ export const startSubscriptionDaemon = () => {
     }
   });
 
-  console.log('👿 [Daemon] Subscription monitor just started.');
+  // Run every 2 months on the 1st
+  cron.schedule('0 0 1 */2 *', async () => {
+    console.log('[Daemon] Running bi-monthly notification cleanup...');
+    try {
+      const [result] = await db.query(`
+        DELETE FROM notification 
+        WHERE createdAt < NOW() - INTERVAL 1 MONTH
+      `);
+      console.log(`[Daemon] Deleted ${result.affectedRows} old notifications.`);
+    } catch (err) {
+      console.error('[Daemon] Error cleaning up notifications:', err);
+    }
+  });
+
+  console.log('👿 [Daemon] Subscription & Notification monitor just started.');
 };
