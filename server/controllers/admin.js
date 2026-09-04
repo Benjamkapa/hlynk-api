@@ -1782,8 +1782,8 @@ export const getSystemNotifications = async (req, res) => {
   try {
     let query = `
       SELECT n.*, 
-             t.businessName as shopName, 
-             u.name as shopOwnerName
+             ANY_VALUE(t.businessName) as shopName, 
+             ANY_VALUE(u.name) as shopOwnerName
       FROM notification n
       LEFT JOIN tenant t ON n.relatedTenantId = t.id
       LEFT JOIN user u ON u.tenantId = t.id AND u.role = 'PROVIDER'
