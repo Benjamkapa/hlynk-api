@@ -1,6 +1,8 @@
 import { db } from "../dbms/mysql.js";
 import { ulid } from "ulid";
 import { createNotification, createAdminNotification } from "./notifications.js";
+import { initiateStkPush } from "../utils/mpesa.js";
+import { decrypt } from "../utils/encryption.js";
 
 /**
  * Public endpoint — no auth required.
@@ -36,8 +38,8 @@ export const getPublicStayListing = async (req, res) => {
 
     // Public Stay Booking (/stay/:slug) and Public Store / Shop Page (/store/:slug, /shop/:slug) are exclusively available for Business Pro subscribers or active Trial period.
     const isPublicRoute = req.originalUrl?.includes('/stay/') || req.path?.includes('/stay/') ||
-                          req.originalUrl?.includes('/shop/') || req.path?.includes('/shop/') ||
-                          req.originalUrl?.includes('/store/') || req.path?.includes('/store/');
+      req.originalUrl?.includes('/shop/') || req.path?.includes('/shop/') ||
+      req.originalUrl?.includes('/store/') || req.path?.includes('/store/');
     if (isPublicRoute && !isTrial && !isBusinessPro) {
       return res.status(403).json({
         success: false,
@@ -122,6 +124,23 @@ export const getPublicStayListing = async (req, res) => {
       ...formattedResourceProds
     ];
 
+    // Determine if M-Pesa payment gateway is configured specifically by this merchant
+    let hasMpesaGateway = false;
+    if (tenant.operationalSettings) {
+      try {
+        const ops = typeof tenant.operationalSettings === "string"
+          ? JSON.parse(tenant.operationalSettings)
+          : tenant.operationalSettings;
+        const env = ops.mpesa?.env || "sandbox";
+        const mpesa = ops.mpesa?.[env];
+        if (mpesa && mpesa.consumerKey && mpesa.consumerKey.trim() !== "") {
+          hasMpesaGateway = true;
+        }
+      } catch (e) {
+        hasMpesaGateway = false;
+      }
+    }
+
     return res.json({
       success: true,
       data: {
@@ -132,6 +151,7 @@ export const getPublicStayListing = async (req, res) => {
         phone: tenant.providerPhone,
         slug: tenant.slug,
         businessType: tenant.businessType,
+        hasMpesaGateway: Boolean(hasMpesaGateway),
         properties: formattedProperties,
         rooms: formattedRooms,
         products: allProductsAndServices,
@@ -143,13 +163,102 @@ export const getPublicStayListing = async (req, res) => {
   }
 };
 
+
+/**
+ * Public STK Push Trigger — no auth required.
+ * Allows storefront end-customers to trigger an M-Pesa STK Push prompt to their phone.
+ */
+export const publicMpesaStkPush = async (req, res) => {
+  const { slug, phone, amount, customerName } = req.body;
+
+  if (!slug || !phone || !amount) {
+    return res.status(400).json({ success: false, message: "Missing required details (slug, phone, or amount)" });
+  }
+
+  try {
+    const [tenantRows] = await db.query(
+      `SELECT t.id, t.businessName, p.operationalSettings
+       FROM tenant t
+       LEFT JOIN provider p ON p.tenantId = t.id
+       WHERE t.slug = ? AND (t.isActive = 1 OR t.isActive IS NULL)
+       LIMIT 1`,
+      [slug]
+    );
+
+    if (!tenantRows.length) {
+      return res.status(404).json({ success: false, message: "Business not found" });
+    }
+
+    const tenant = tenantRows[0];
+    const tenantId = tenant.id;
+
+    // Check custom M-Pesa credentials configured by tenant
+    let customCredentials = null;
+    if (tenant.operationalSettings) {
+      const ops = typeof tenant.operationalSettings === "string"
+        ? JSON.parse(tenant.operationalSettings)
+        : tenant.operationalSettings;
+
+      const env = ops.mpesa?.env || 'sandbox';
+      const mpesa = ops.mpesa?.[env];
+
+      if (mpesa && mpesa.consumerKey && mpesa.consumerKey.trim() !== '') {
+        customCredentials = { ...mpesa, env };
+        if (customCredentials.consumerKey?.includes(':')) {
+          customCredentials.consumerKey = decrypt(customCredentials.consumerKey);
+        }
+        if (customCredentials.consumerSecret?.includes(':')) {
+          customCredentials.consumerSecret = decrypt(customCredentials.consumerSecret);
+        }
+        if (customCredentials.passkey?.includes(':')) {
+          customCredentials.passkey = decrypt(customCredentials.passkey);
+        }
+      }
+    }
+
+    if (!customCredentials || !customCredentials.consumerKey) {
+      return res.status(400).json({
+        success: false,
+        message: "M-Pesa payment gateway has not been configured by this shop owner."
+      });
+    }
+
+    const result = await initiateStkPush(
+      { phone, amount, reference: `ORDER-${ulid().slice(-6)}` },
+      customCredentials,
+      {
+        customerName: customerName || 'Public Customer',
+        initiatorName: customerName || 'Store Front',
+        tenantName: tenant.businessName,
+        tenantId,
+        isRented: false
+      }
+    );
+
+    return res.json({ success: true, data: result });
+  } catch (err) {
+    console.error("[PUBLIC MPESA PUSH] Error:", err);
+    return res.status(500).json({ success: false, message: err.message || "Failed to initiate M-Pesa push prompt" });
+  }
+};
+
 /**
  * Public Order Submission Endpoint — no auth required.
  * Allows clients to submit an order or booking inquiry.
  * Also records as a pending sale for revenue/profit tracking.
  */
 export const submitPublicOrder = async (req, res) => {
-  const { slug, customerName, customerPhone, customerEmail, deliveryAddress, notes, items } = req.body;
+  const {
+    slug,
+    customerName,
+    customerPhone,
+    customerEmail,
+    deliveryAddress,
+    notes,
+    items,
+    paymentOption = "PAY_ON_DELIVERY",
+    checkoutRequestId
+  } = req.body;
 
   if (!slug || !customerName || !customerPhone || !items || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({
@@ -201,6 +310,9 @@ export const submitPublicOrder = async (req, res) => {
       deliveryAddress: deliveryAddress || null,
       notes: notes || null,
       customerEmail: customerEmail || null,
+      paymentOption,
+      paymentMethod: paymentOption === 'PAY_UPFRONT' ? 'ONLINE_MPESA' : 'CASH_ON_DELIVERY',
+      checkoutRequestId: checkoutRequestId || null,
       source: 'PUBLIC_LINK'
     });
 
@@ -214,10 +326,13 @@ export const submitPublicOrder = async (req, res) => {
     // 2. Record as a pending sale so it flows into revenue reports
     try {
       const saleId = ulid();
+      const dbPaymentMethod = paymentOption === 'PAY_UPFRONT' ? 'ONLINE_MPESA' : 'CASH_ON_DELIVERY';
+      const saleStatus = paymentOption === 'PAY_UPFRONT' ? 2 : 1; // 2 = Pending payment, 1 = Pending fulfillment
+
       await db.query(
-        `INSERT INTO sale (id, tenantId, userId, customerId, customerName, totalAmount, paymentMethod, status, source, createdAt, updatedAt)
-         VALUES (?, ?, NULL, NULL, ?, ?, 'PENDING_ONLINE', 1, 'Online Store', NOW(), NOW())`,
-        [saleId, tenantId, customerName.trim(), totalAmount]
+        `INSERT INTO sale (id, tenantId, userId, customerId, customerName, totalAmount, paymentMethod, status, mpesaRequestId, source, createdAt, updatedAt)
+         VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?, 'Online Store', NOW(), NOW())`,
+        [saleId, tenantId, customerName.trim(), totalAmount, dbPaymentMethod, saleStatus, checkoutRequestId || null]
       );
 
       for (const item of items) {
@@ -239,19 +354,21 @@ export const submitPublicOrder = async (req, res) => {
       console.error('[PUBLIC ORDER] Sale recording skipped:', saleErr.message);
     }
 
+    const payLabel = paymentOption === 'PAY_UPFRONT' ? 'Paid Upfront (M-Pesa STK)' : 'Pay on Delivery / Arrival';
+
     // 3. Send notification to tenant
     await createNotification({
       tenantId,
-      title: `📦 New Order from ${customerName.trim()}`,
-      message: `${customerName.trim()} (${customerPhone.trim()}) ordered ${items.length} item(s) — total KES ${totalAmount.toLocaleString()}`,
+      title: `📦 New Order (${payLabel}) from ${customerName.trim()}`,
+      message: `${customerName.trim()} (${customerPhone.trim()}) ordered ${items.length} item(s) — total KES ${totalAmount.toLocaleString()} [${payLabel}]`,
       type: "order",
       data: { url: "/dashboard/products" }
     });
 
     // 4. Send Web Push + In-App notification to Super Admin
     createAdminNotification({
-      title: `🛒 Client Purchase: KES ${totalAmount.toLocaleString()}`,
-      message: `${customerName.trim()} (${customerPhone.trim()}) bought ${items.length} item(s) from vendor '${tenantRows[0].businessName}'.`,
+      title: `🛒 Client Purchase: KES ${totalAmount.toLocaleString()} (${paymentOption === 'PAY_UPFRONT' ? 'Upfront STK' : 'Pay on Delivery'})`,
+      message: `${customerName.trim()} (${customerPhone.trim()}) bought ${items.length} item(s) from vendor '${tenantRows[0].businessName}'. Payment: ${payLabel}.`,
       type: 'order',
       relatedTenantId: tenantId,
       data: { url: '/admin/businesses' }
@@ -260,7 +377,7 @@ export const submitPublicOrder = async (req, res) => {
     return res.status(201).json({
       success: true,
       message: "Order placed successfully! The business owner will contact you shortly.",
-      data: { orderId, totalAmount }
+      data: { orderId, totalAmount, paymentOption }
     });
   } catch (err) {
     console.error("[PUBLIC ORDER] Error:", err);
