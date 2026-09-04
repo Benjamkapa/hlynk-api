@@ -16,7 +16,7 @@ export const getPublicStayListing = async (req, res) => {
     // 1. Find tenant by slug along with subscription details
     const [tenantRows] = await db.query(
       `SELECT t.id, t.businessName, t.slug, t.businessType,
-              p.category, p.location, p.phone as providerPhone, p.businessName as providerName,
+              p.category, p.location, p.phone as providerPhone, p.businessName as providerName, p.operationalSettings,
               s.planName, s.status as subStatus, s.trialEndDate, s.endDate
        FROM tenant t
        LEFT JOIN provider p ON p.tenantId = t.id
@@ -132,7 +132,7 @@ export const getPublicStayListing = async (req, res) => {
           ? JSON.parse(tenant.operationalSettings)
           : tenant.operationalSettings;
         const env = ops.mpesa?.env || "sandbox";
-        const mpesa = ops.mpesa?.[env];
+        const mpesa = ops.mpesa?.[env] || ops.mpesa?.production || ops.mpesa?.sandbox;
         if (mpesa && mpesa.consumerKey && mpesa.consumerKey.trim() !== "") {
           hasMpesaGateway = true;
         }

@@ -124,6 +124,9 @@ export const updateProduct = async (req, res) => {
   const data = req.body;
 
   try {
+    const [existing] = await db.query(`SELECT imageUrl FROM product WHERE id = ? AND tenantId = ?`, [id, tenantId]);
+    const oldImageUrl = existing[0]?.imageUrl;
+
     let updateQuery = 'UPDATE product SET updatedAt = NOW()';
     const updateParams = [];
 
@@ -135,6 +138,14 @@ export const updateProduct = async (req, res) => {
     if (data.type) { updateQuery += ', type = ?'; updateParams.push(data.type); }
     if (data.isPerishable !== undefined) { updateQuery += ', isPerishable = ?'; updateParams.push(data.isPerishable ? 1 : 0); }
     if (data.expiryDate !== undefined) { updateQuery += ', expiryDate = ?'; updateParams.push(data.expiryDate || null); }
+    if (data.description !== undefined) { updateQuery += ', description = ?'; updateParams.push(data.description || null); }
+    if (data.imageUrl !== undefined) {
+      updateQuery += ', imageUrl = ?';
+      updateParams.push(data.imageUrl || null);
+      if (oldImageUrl && oldImageUrl !== data.imageUrl) {
+        await deleteFile(oldImageUrl);
+      }
+    }
 
     updateQuery += ' WHERE id = ? AND tenantId = ?';
     updateParams.push(id, tenantId);
@@ -150,7 +161,14 @@ export const deleteProduct = async (req, res) => {
   const { tenantId } = req.user;
   const { id } = req.params;
   try {
+    const [existing] = await db.query(`SELECT imageUrl FROM product WHERE id = ? AND tenantId = ?`, [id, tenantId]);
+    const oldImageUrl = existing[0]?.imageUrl;
+
     await db.query(`DELETE FROM product WHERE id = ? AND tenantId = ?`, [id, tenantId]);
+
+    if (oldImageUrl) {
+      await deleteFile(oldImageUrl);
+    }
     return res.json({ success: true, data: { message: 'Product deleted' } });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Delete failed' });
@@ -166,11 +184,19 @@ export const uploadProductImage = async (req, res) => {
   }
 
   try {
+    const [existing] = await db.query(`SELECT imageUrl FROM product WHERE id = ? AND tenantId = ?`, [id, tenantId]);
+    const oldImageUrl = existing[0]?.imageUrl;
+
     const file = req.files.file;
     const imageUrl = await uploadFile(file, 'products');
 
     // Update database
     await db.query(`UPDATE product SET imageUrl = ? WHERE id = ? AND tenantId = ?`, [imageUrl, id, tenantId]);
+
+    // Delete old file from storage if exists
+    if (oldImageUrl && oldImageUrl !== imageUrl) {
+      await deleteFile(oldImageUrl);
+    }
 
     return res.json({ success: true, data: { imageUrl } });
   } catch (err) {
