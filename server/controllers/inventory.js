@@ -1,5 +1,5 @@
 import { db } from '../dbms/mysql.js';
-import { uploadFile } from '../utils/storage.js';
+import { uploadFile, deleteFile } from '../utils/storage.js';
 import { ulid } from 'ulid';
 
 const getEatDateString = (d = new Date()) => {
