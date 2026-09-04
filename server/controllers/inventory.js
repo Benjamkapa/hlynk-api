@@ -48,8 +48,15 @@ export const listProducts = async (req, res) => {
 
     // Only calculate expensive stats if specifically requested (e.g. for dashboard/management, not for POS search)
     if (req.query.includeStats === 'true') {
+      const [[provider]] = await db.query(`SELECT operationalSettings FROM provider WHERE tenantId = ?`, [tenantId]);
+      let ops = {};
+      try {
+        ops = typeof provider?.operationalSettings === 'string' ? JSON.parse(provider.operationalSettings || '{}') : (provider?.operationalSettings || {});
+      } catch (_) {}
+      const globalThreshold = Number(ops?.lowStockThreshold) || 5;
+
       const [totalItemsRes] = await db.query(`SELECT COUNT(*) as total FROM product WHERE tenantId = ? AND IFNULL(type, 'GOOD') != 'SERVICE'`, [tenantId]);
-      const [lowStockRes] = await db.query(`SELECT COUNT(*) as total FROM product WHERE tenantId = ? AND IFNULL(type, 'GOOD') != 'SERVICE' AND stockLevel <= minLevel`, [tenantId]);
+      const [lowStockRes] = await db.query(`SELECT COUNT(*) as total FROM product WHERE tenantId = ? AND IFNULL(type, 'GOOD') != 'SERVICE' AND stockLevel <= IFNULL(minLevel, ?)`, [tenantId, globalThreshold]);
       const [totalValueRes] = await db.query(`SELECT SUM(buyingPrice * stockLevel) as total FROM product WHERE tenantId = ? AND IFNULL(type, 'GOOD') != 'SERVICE'`, [tenantId]);
       
       const todayStr = getEatDateString();
@@ -133,6 +140,7 @@ export const updateProduct = async (req, res) => {
     if (data.name) { updateQuery += ', name = ?'; updateParams.push(data.name); }
     if (data.price !== undefined) { updateQuery += ', price = ?'; updateParams.push(Number(data.price)); }
     if (data.stock !== undefined) { updateQuery += ', stockLevel = ?'; updateParams.push(parseInt(data.stock)); }
+    if (data.minLevel !== undefined) { updateQuery += ', minLevel = ?'; updateParams.push(parseInt(data.minLevel) || 0); }
     if (data.category) { updateQuery += ', category = ?'; updateParams.push(data.category); }
     if (data.buyingPrice !== undefined) { updateQuery += ', buyingPrice = ?'; updateParams.push(data.type === 'SERVICE' ? 0 : Number(data.buyingPrice)); }
     if (data.type) { updateQuery += ', type = ?'; updateParams.push(data.type); }
