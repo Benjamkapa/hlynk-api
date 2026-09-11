@@ -316,23 +316,59 @@ export const submitPublicOrder = async (req, res) => {
       source: 'PUBLIC_LINK'
     });
 
+    // 0. Auto-create or resolve customer record in `user` table so they appear in Customer management
+    let customerId = null;
+    if (customerPhone) {
+      const trimmedPhone = customerPhone.trim();
+      const trimmedName = customerName.trim();
+      const trimmedEmail = customerEmail ? customerEmail.trim() : null;
+
+      try {
+        const [existing] = await db.query(
+          `SELECT id, name FROM user WHERE phone = ? AND tenantId = ? LIMIT 1`,
+          [trimmedPhone, tenantId]
+        );
+
+        if (existing.length > 0) {
+          customerId = existing[0].id;
+        } else {
+          const [globalExisting] = await db.query(
+            `SELECT id, name FROM user WHERE phone = ? LIMIT 1`,
+            [trimmedPhone]
+          );
+          if (globalExisting.length > 0) {
+            customerId = globalExisting[0].id;
+          } else {
+            customerId = ulid();
+            await db.query(
+              `INSERT INTO user (id, tenantId, name, phone, email, role, passwordHash, phoneVerified, isActive, createdAt, updatedAt) 
+               VALUES (?, ?, ?, ?, ?, 'CUSTOMER', '', 0, 1, NOW(), NOW())`,
+              [customerId, tenantId, trimmedName, trimmedPhone, trimmedEmail]
+            );
+          }
+        }
+      } catch (custErr) {
+        console.error('[PUBLIC ORDER] Customer resolution warning:', custErr.message);
+      }
+    }
+
     // 1. Insert into request table (order queue / notification)
     await db.query(
       `INSERT INTO request (id, tenantId, customerId, customerName, customerPhone, message, status, createdAt, updatedAt)
-       VALUES (?, ?, NULL, ?, ?, ?, 'PENDING', NOW(), NOW())`,
-      [orderId, tenantId, customerName.trim(), customerPhone.trim(), messageData]
+       VALUES (?, ?, ?, ?, ?, ?, 'PENDING', NOW(), NOW())`,
+      [orderId, tenantId, customerId, customerName.trim(), customerPhone.trim(), messageData]
     );
 
-    // 2. Record as a pending sale so it flows into revenue reports
+    // 2. Record as a sale so it flows into revenue reports and customer transaction history
     try {
       const saleId = ulid();
       const dbPaymentMethod = paymentOption === 'PAY_UPFRONT' ? 'ONLINE_MPESA' : 'CASH_ON_DELIVERY';
-      const saleStatus = paymentOption === 'PAY_UPFRONT' ? 2 : 1; // 2 = Pending payment, 1 = Pending fulfillment
+      const saleStatus = paymentOption === 'PAY_UPFRONT' ? 2 : 1; // 2 = Pending Payment (M-Pesa STK), 1 = Pay on Delivery
 
       await db.query(
         `INSERT INTO sale (id, tenantId, userId, customerId, customerName, totalAmount, paymentMethod, status, mpesaRequestId, source, createdAt, updatedAt)
-         VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?, 'Online Store', NOW(), NOW())`,
-        [saleId, tenantId, customerName.trim(), totalAmount, dbPaymentMethod, saleStatus, checkoutRequestId || null]
+         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'Online Store', NOW(), NOW())`,
+        [saleId, tenantId, customerId, customerName.trim(), totalAmount, dbPaymentMethod, saleStatus, checkoutRequestId || null]
       );
 
       for (const item of items) {
