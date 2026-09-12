@@ -226,7 +226,7 @@ export async function initiateB2C(b2cParams) {
     Amount: Math.round(b2cParams.amount),
     PartyA: BUSINESS_SHORT_CODE,
     PartyB: phone,
-    Remarks: b2cParams.remarks || 'Hlynk Payout',
+    Remarks: b2cParams.remarks || 'hlynk Payout',
     QueueTimeOutURL: `${BACKEND_URL}/api/v1/payments/mpesa/b2c/timeout`,
     ResultURL: `${BACKEND_URL}/api/v1/payments/mpesa/b2c/result`,
     Occasion: b2cParams.occasion || 'Withdrawal'
@@ -255,7 +255,7 @@ export async function initiateB2C(b2cParams) {
       Math.round(b2cParams.amount),
       b2cParams.payoutId || null,
       b2cParams.tenantId || null,
-      b2cParams.remarks || 'Hlynk Payout',
+      b2cParams.remarks || 'hlynk Payout',
       JSON.stringify(body),
       JSON.stringify(res.data)
     ]);
@@ -273,7 +273,7 @@ export async function initiateB2C(b2cParams) {
     `, [
       logId, phone, Math.round(b2cParams.amount),
       b2cParams.payoutId || null, b2cParams.tenantId || null,
-      b2cParams.remarks || 'Hlynk Payout', msg, JSON.stringify(body)
+      b2cParams.remarks || 'hlynk Payout', msg, JSON.stringify(body)
     ]);
 
     throw new Error(msg);

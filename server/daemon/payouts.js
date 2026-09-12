@@ -161,7 +161,7 @@ async function processPendingPayouts() {
         phone,
         payoutId: payout.id,
         tenantId: payout.tenantId,
-        remarks: `Hlynk ${payout.type} Payout - ${payout.businessName || payout.tenantId}`
+        remarks: `hlynk ${payout.type} Payout - ${payout.businessName || payout.tenantId}`
       });
 
       console.log(`[Payout Daemon] B2C initiated for ${payout.id} | ConvID: ${result.ConversationID} | Desc: ${result.ResponseDescription}`);

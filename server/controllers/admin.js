@@ -1414,7 +1414,7 @@ export const markPayoutPaid = async (req, res) => {
             phone: payoutPhone,
             payoutId: payoutId,
             tenantId: tenantId,
-            remarks: `Hlynk ${payoutType} Payout`
+            remarks: `hlynk ${payoutType} Payout`
           });
           console.log(`[B2C-INITIATED] Payout ${payoutId} for ${payoutPhone}: ${result.ResponseDescription}`);
           // Mark as PROCESSING — the B2C callback will finalize to PAID or FAILED
@@ -1553,7 +1553,7 @@ export const testB2C = async (req, res) => {
     const result = await initiateB2C({
       amount: Number(amount),
       phone,
-      remarks: remarks || 'Hlynk Diagnostic Test',
+      remarks: remarks || 'hlynk Diagnostic Test',
       tenantId: null,
       payoutId: null
     });

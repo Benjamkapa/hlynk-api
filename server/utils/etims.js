@@ -246,7 +246,7 @@ export async function submitInvoice(credentials, sale, invoiceNumber) {
     totAmt:      totalAmount,
 
     // Remark
-    remark:    `Hlynk Sale #${String(sale.id).slice(-8).toUpperCase()}`,
+    remark:    `hlynk Sale #${String(sale.id).slice(-8).toUpperCase()}`,
 
     // Line items
     salesTrnsItems,

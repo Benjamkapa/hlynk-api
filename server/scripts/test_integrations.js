@@ -141,7 +141,7 @@ async function testKcb() {
       {
         customerName:  'Test Customer',
         initiatorName: 'Admin Test',
-        tenantName:    'Hlynk Test',
+        tenantName:    'hlynk Test',
         tenantId:      'TEST_TENANT',
       }
     );
@@ -186,7 +186,7 @@ async function printChecklist() {
 // Run
 // ─────────────────────────────────────────────────────────
 async function run() {
-  console.log('\n🔬 Hlynk Integration Test Suite');
+  console.log('\n🔬 hlynk Integration Test Suite');
   console.log('   eTIMS (KRA Sandbox) + KCB Buni (Sandbox)');
   console.log('   ' + new Date().toLocaleString());
 
