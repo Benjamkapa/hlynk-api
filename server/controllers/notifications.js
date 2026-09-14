@@ -13,10 +13,14 @@ dotenv.config({ path: path.join(__dirname, '../.env'), quiet: true });
 const setupWebPush = () => {
     const publicKey = process.env.VAPID_PUBLIC_KEY;
     const privateKey = process.env.VAPID_PRIVATE_KEY;
-    const email = 'mailto:support@hlynk.co.ke'; // Should be in env or config
+    const email = process.env.VAPID_EMAIL || 'mailto:support@hlynk.co.ke';
 
     if (publicKey && privateKey) {
-        webPush.setVapidDetails(email, publicKey, privateKey);
+        try {
+            webPush.setVapidDetails(email, publicKey, privateKey);
+        } catch (err) {
+            console.warn('⚠️ WebPush VAPID key initialization failed:', err.message);
+        }
     }
 };
 

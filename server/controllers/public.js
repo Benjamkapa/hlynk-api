@@ -1,7 +1,7 @@
 import { db } from "../dbms/mysql.js";
 import { ulid } from "ulid";
 import { createNotification, createAdminNotification } from "./notifications.js";
-import { initiateStkPush } from "../utils/mpesa.js";
+import { initiateStkPush, queryStkPush } from "../utils/mpesa.js";
 import { decrypt } from "../utils/encryption.js";
 
 /**
@@ -192,53 +192,79 @@ export const publicMpesaStkPush = async (req, res) => {
     const tenant = tenantRows[0];
     const tenantId = tenant.id;
 
-    // Check custom M-Pesa credentials configured by tenant
+    // ── Read & decrypt tenant's M-Pesa credentials ──
     let customCredentials = null;
+    let isRented = false;
     if (tenant.operationalSettings) {
-      const ops = typeof tenant.operationalSettings === "string"
-        ? JSON.parse(tenant.operationalSettings)
-        : tenant.operationalSettings;
+      try {
+        const ops = typeof tenant.operationalSettings === "string"
+          ? JSON.parse(tenant.operationalSettings)
+          : tenant.operationalSettings;
 
-      const env = ops.mpesa?.env || 'sandbox';
-      const mpesa = ops.mpesa?.[env];
+        const env = ops.mpesa?.env || 'sandbox';
+        const mpesa = ops.mpesa?.[env];
 
-      if (mpesa && mpesa.consumerKey && mpesa.consumerKey.trim() !== '') {
-        customCredentials = { ...mpesa, env };
-        if (customCredentials.consumerKey?.includes(':')) {
-          customCredentials.consumerKey = decrypt(customCredentials.consumerKey);
+        if (mpesa && mpesa.consumerKey && mpesa.consumerKey.trim() !== '') {
+          customCredentials = { ...mpesa, env };
+          if (customCredentials.consumerKey?.includes(':')) {
+            try { customCredentials.consumerKey = decrypt(customCredentials.consumerKey); } catch (_) { }
+          }
+          if (customCredentials.consumerSecret?.includes(':')) {
+            try { customCredentials.consumerSecret = decrypt(customCredentials.consumerSecret); } catch (_) { }
+          }
+          if (customCredentials.passkey?.includes(':')) {
+            try { customCredentials.passkey = decrypt(customCredentials.passkey); } catch (_) { }
+          }
         }
-        if (customCredentials.consumerSecret?.includes(':')) {
-          customCredentials.consumerSecret = decrypt(customCredentials.consumerSecret);
-        }
-        if (customCredentials.passkey?.includes(':')) {
-          customCredentials.passkey = decrypt(customCredentials.passkey);
-        }
+      } catch (opsErr) {
+        console.warn('[PUBLIC MPESA PUSH] Operational settings parse warning:', opsErr.message);
       }
     }
 
-    if (!customCredentials || !customCredentials.consumerKey) {
-      return res.status(400).json({
-        success: false,
-        message: "M-Pesa payment gateway has not been configured by this shop owner."
-      });
+    if (!customCredentials || !customCredentials.consumerKey || !customCredentials.consumerSecret) {
+      customCredentials = null;
+      isRented = true;
     }
+
+    // Use provided reference (saleId from frontend) so the Safaricom callback can reconcile
+    const reference = req.body.reference || req.body.saleId || `PUB-${ulid().slice(-8)}`;
 
     const result = await initiateStkPush(
-      { phone, amount, reference: `ORDER-${ulid().slice(-6)}` },
+      { phone, amount, reference },
       customCredentials,
       {
-        customerName: customerName || 'Public Customer',
-        initiatorName: customerName || 'Store Front',
+        customerName: customerName || 'Store Customer',
+        initiatorName: customerName || 'Store Customer',
         tenantName: tenant.businessName,
         tenantId,
-        isRented: false
+        isRented
       }
     );
+
+    // CRITICAL: Link CheckoutRequestID back to sale, payment & request records (same as vendorMpesaPush)
+    const saleId = req.body.saleId || req.body.reference || null;
+    if (saleId && result.CheckoutRequestID) {
+      try {
+        await db.query(`UPDATE sale SET mpesaRequestId = ? WHERE id = ? AND tenantId = ?`, [result.CheckoutRequestID, saleId, tenantId]);
+        await db.query(`UPDATE payment SET mpesaRequestId = ? WHERE reference = ? AND tenantId = ?`, [result.CheckoutRequestID, saleId, tenantId]);
+        const [reqs] = await db.query(`SELECT id, message FROM request WHERE (message LIKE ? OR id = ?) AND tenantId = ? LIMIT 1`, [`%${saleId}%`, saleId, tenantId]);
+        if (reqs.length > 0) {
+          try {
+            const parsed = JSON.parse(reqs[0].message);
+            parsed.checkoutRequestId = result.CheckoutRequestID;
+            await db.query(`UPDATE request SET message = ? WHERE id = ?`, [JSON.stringify(parsed), reqs[0].id]);
+          } catch (_) {}
+        }
+        // console.log(`[PUBLIC-STK-LINK] Linked CheckoutRequestID ${result.CheckoutRequestID} to Sale ${saleId}`);
+      } catch (linkErr) {
+        // console.error('[PUBLIC-STK-LINK] Failed to link CheckoutRequestID:', linkErr.message);
+      }
+    }
 
     return res.json({ success: true, data: result });
   } catch (err) {
     console.error("[PUBLIC MPESA PUSH] Error:", err);
-    return res.status(500).json({ success: false, message: err.message || "Failed to initiate M-Pesa push prompt" });
+    return res.status(400).json({ success: false, message: err.message || "Failed to initiate M-Pesa push prompt" });
   }
 };
 
@@ -294,11 +320,13 @@ export const submitPublicOrder = async (req, res) => {
 
     const tenantId = tenant.id;
     const orderId = ulid();
+    const saleId = ulid();
 
     const totalAmount = items.reduce((acc, item) => acc + (Number(item.price || 0) * (Number(item.quantity || 1))), 0);
 
     const messageData = JSON.stringify({
       orderId,
+      saleId,
       items: items.map(i => ({
         id: i.id,
         name: i.name || i.title,
@@ -360,14 +388,13 @@ export const submitPublicOrder = async (req, res) => {
     );
 
     // 2. Record as a sale so it flows into revenue reports and customer transaction history
-    try {
-      const saleId = ulid();
-      const dbPaymentMethod = paymentOption === 'PAY_UPFRONT' ? 'ONLINE_MPESA' : 'CASH_ON_DELIVERY';
-      const saleStatus = paymentOption === 'PAY_UPFRONT' ? 2 : 1; // 2 = Pending Payment (M-Pesa STK), 1 = Pay on Delivery
+    const dbPaymentMethod = paymentOption === 'PAY_UPFRONT' ? 'ONLINE_MPESA' : 'CASH_ON_DELIVERY';
+    const saleStatus = paymentOption === 'PAY_UPFRONT' ? 2 : 1; // 2 = Pending Payment (M-Pesa STK), 1 = Pay on Delivery
 
+    try {
       await db.query(
         `INSERT INTO sale (id, tenantId, userId, customerId, customerName, totalAmount, paymentMethod, status, mpesaRequestId, source, createdAt, updatedAt)
-         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'Online Store', NOW(), NOW())`,
+           VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'Online Store', NOW(), NOW())`,
         [saleId, tenantId, customerId, customerName.trim(), totalAmount, dbPaymentMethod, saleStatus, checkoutRequestId || null]
       );
 
@@ -386,38 +413,130 @@ export const submitPublicOrder = async (req, res) => {
           }
         }
       }
+
+      // Record in Master Payment Table (matching createSale pattern in sales.js)
+      if (paymentOption === 'PAY_UPFRONT' || checkoutRequestId) {
+        try {
+          let isRented = 0;
+          if (checkoutRequestId) {
+            const [log] = await db.query(`SELECT isRented FROM mpesalog WHERE checkoutRequestId = ? LIMIT 1`, [checkoutRequestId]);
+            if (log.length > 0) isRented = log[0].isRented;
+          }
+
+          await db.query(`
+              INSERT INTO payment (id, tenantId, amount, status, reference, mpesaRequestId, transactionType, isRented, createdAt)
+              VALUES (?, ?, ?, ?, ?, ?, 'SALE', ?, NOW())
+            `, [ulid(), tenantId, totalAmount, saleStatus, saleId, checkoutRequestId || null, isRented]);
+        } catch (payErr) {
+          console.error('[PUBLIC ORDER] Master payment link warning:', payErr.message);
+        }
+      }
     } catch (saleErr) {
       console.error('[PUBLIC ORDER] Sale recording skipped:', saleErr.message);
     }
 
-    const payLabel = paymentOption === 'PAY_UPFRONT' ? 'Paid Upfront (M-Pesa STK)' : 'Pay on Delivery / Arrival';
+    // 3. Send notification to tenant & Super Admin ONLY IF Pay on Delivery
+    // For Pay Upfront (M-Pesa STK), notification is deferred until STK push callback completes (Success, Cancelled, or Failed)
+    if (paymentOption !== 'PAY_UPFRONT') {
+      const payLabel = 'Pay on Delivery / Arrival';
 
-    // 3. Send notification to tenant
-    await createNotification({
-      tenantId,
-      title: `📦 New Order (${payLabel}) from ${customerName.trim()}`,
-      message: `${customerName.trim()} (${customerPhone.trim()}) ordered ${items.length} item(s) — total KES ${totalAmount.toLocaleString()} [${payLabel}]`,
-      type: "order",
-      data: { url: "/dashboard/products" }
-    });
+      await createNotification({
+        tenantId,
+        title: `📦 New Order (${payLabel}) from ${customerName.trim()}`,
+        message: `${customerName.trim()} (${customerPhone.trim()}) ordered ${items.length} item(s) — total KES ${totalAmount.toLocaleString()} [${payLabel}]`,
+        type: "order",
+        data: { url: "/dashboard/products" }
+      });
 
-    // 4. Send Web Push + In-App notification to Super Admin
-    createAdminNotification({
-      title: `🛒 Client Purchase: KES ${totalAmount.toLocaleString()} (${paymentOption === 'PAY_UPFRONT' ? 'Upfront STK' : 'Pay on Delivery'})`,
-      message: `${customerName.trim()} (${customerPhone.trim()}) bought ${items.length} item(s) from vendor '${tenantRows[0].businessName}'. Payment: ${payLabel}.`,
-      type: 'order',
-      relatedTenantId: tenantId,
-      data: { url: '/admin/businesses' }
-    }).catch(adminErr => console.error('[PUBLIC ORDER] Admin notification skipped:', adminErr.message));
+      createAdminNotification({
+        title: `🛒 Client Purchase: KES ${totalAmount.toLocaleString()} (Pay on Delivery)`,
+        message: `${customerName.trim()} (${customerPhone.trim()}) bought ${items.length} item(s) from vendor '${tenantRows[0].businessName}'. Payment: ${payLabel}.`,
+        type: 'order',
+        relatedTenantId: tenantId,
+        data: { url: '/admin/businesses' }
+      }).catch(adminErr => console.error('[PUBLIC ORDER] Admin notification skipped:', adminErr.message));
+    }
 
     return res.status(201).json({
       success: true,
       message: "Order placed successfully! The business owner will contact you shortly.",
-      data: { orderId, totalAmount, paymentOption }
+      data: { orderId, saleId, totalAmount, paymentOption, checkoutRequestId }
     });
   } catch (err) {
     console.error("[PUBLIC ORDER] Error:", err);
     return res.status(500).json({ success: false, message: "Failed to submit order" });
+  }
+};
+
+/**
+ * Public Order Status Check — no auth required.
+ * Allows public storefronts (StayPage / StorePage) to poll real-time status of an order/sale.
+ */
+export const getPublicOrderStatus = async (req, res) => {
+  const { saleId } = req.params;
+  try {
+    const [sales] = await db.query(
+      `SELECT id, status, mpesaReceipt, paymentMethod, totalAmount, createdAt, mpesaRequestId FROM sale WHERE id = ? OR mpesaRequestId = ? LIMIT 1`,
+      [saleId, saleId]
+    );
+    if (!sales.length) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+    const sale = sales[0];
+    let status = sale.status;
+    let mpesaReceipt = sale.mpesaReceipt;
+
+    // Active STK Push status check: If status is still PENDING_STK (2) and checkoutRequestId exists
+    if (status === 2 && sale.mpesaRequestId) {
+      try {
+        const queryRes = await queryStkPush(sale.mpesaRequestId);
+        if (queryRes && queryRes.ResultCode !== undefined) {
+          const resultCode = String(queryRes.ResultCode);
+          const resultDesc = String(queryRes.ResultDesc || '');
+
+          if (resultCode === '0') {
+            // Explicit Success: Customer entered correct PIN
+            status = 0; // PAID
+            mpesaReceipt = queryRes.MpesaReceiptNumber || sale.mpesaRequestId;
+            await db.query(`UPDATE sale SET status = 0, mpesaReceipt = ?, updatedAt = NOW() WHERE id = ?`, [mpesaReceipt, sale.id]);
+            await db.query(`UPDATE payment SET status = 0, mpesaReceipt = ?, updatedAt = NOW() WHERE reference = ? OR mpesaRequestId = ?`, [mpesaReceipt, sale.id, sale.mpesaRequestId]);
+            await db.query(`UPDATE request SET status = 'CONFIRMED', updatedAt = NOW() WHERE message LIKE ? OR id = ?`, [`%${sale.id}%`, sale.id]);
+          } else if (resultCode === '1032' || resultDesc.toLowerCase().includes('cancel')) {
+            // Explicit User Cancellation on phone
+            status = 3; // CANCELLED
+            await db.query(`UPDATE sale SET status = 3, updatedAt = NOW() WHERE id = ?`, [sale.id]);
+            await db.query(`UPDATE payment SET status = 3, updatedAt = NOW() WHERE reference = ? OR mpesaRequestId = ?`, [sale.id, sale.mpesaRequestId]);
+            await db.query(`UPDATE request SET status = 'CANCELLED', updatedAt = NOW() WHERE message LIKE ? OR id = ?`, [`%${sale.id}%`, sale.id]);
+          } else if (resultCode === '2001' || resultDesc.toLowerCase().includes('wrong pin') || resultDesc.toLowerCase().includes('invalid pin')) {
+            // Explicit Invalid PIN error
+            status = 4; // FAILED
+            await db.query(`UPDATE sale SET status = 4, updatedAt = NOW() WHERE id = ?`, [sale.id]);
+            await db.query(`UPDATE payment SET status = 4, updatedAt = NOW() WHERE reference = ? OR mpesaRequestId = ?`, [sale.id, sale.mpesaRequestId]);
+            await db.query(`UPDATE request SET status = 'FAILED', updatedAt = NOW() WHERE message LIKE ? OR id = ?`, [`%${sale.id}%`, sale.id]);
+          }
+          // Note: "The transaction is being processed", code 500.001.1001, 1037 (Timeout), 1, etc.
+          // are IN-PROGRESS states — keep status as 2 (PENDING_STK) so polling continues!
+        }
+      } catch (qErr) {
+        // Query in-progress / API error — keep status as 2 (PENDING_STK) and do not fail prematurely
+        console.log('[PUBLIC ORDER STATUS] STK in-progress check:', qErr.message);
+      }
+    }
+
+    const statusMap = { 0: 'PAID', 1: 'PENDING_DELIVERY', 2: 'PENDING_STK', 3: 'CANCELLED', 4: 'FAILED' };
+    return res.json({
+      success: true,
+      data: {
+        id: sale.id,
+        status: status,
+        statusLabel: statusMap[status] || 'UNKNOWN',
+        mpesaReceipt: mpesaReceipt,
+        paymentMethod: sale.paymentMethod,
+        totalAmount: sale.totalAmount
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 

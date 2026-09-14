@@ -16,9 +16,11 @@ export const getProviderRequests = async (req, res) => {
     }
 
     const [requests] = await db.query(`
-      SELECT r.*, s.name as serviceName, s.price as servicePrice
+      SELECT r.*, s.name as serviceName, s.price as servicePrice,
+             sl.status as saleStatus, sl.mpesaReceipt, sl.paymentMethod as salePaymentMethod, sl.id as saleId
       FROM request r
       LEFT JOIN service s ON r.serviceId = s.id
+      LEFT JOIN sale sl ON sl.id = JSON_UNQUOTE(JSON_EXTRACT(r.message, '$.saleId')) OR (sl.mpesaRequestId IS NOT NULL AND sl.mpesaRequestId = JSON_UNQUOTE(JSON_EXTRACT(r.message, '$.checkoutRequestId')))
       ${whereQuery}
       ORDER BY r.createdAt DESC
       LIMIT ? OFFSET ?
@@ -29,6 +31,7 @@ export const getProviderRequests = async (req, res) => {
 
     return res.json({ success: true, requests, total, page: Number(page), limit: Number(limit) });
   } catch (err) {
+    console.error('getProviderRequests Error:', err);
     return res.status(500).json({ success: false, message: 'Failed to fetch requests' });
   }
 };

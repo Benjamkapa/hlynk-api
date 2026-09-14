@@ -1,13 +1,15 @@
 import axios from 'axios';
-import 'dotenv/config';
+import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(__dirname, '../.env'), quiet: true });
+
 import { redis, redisKeys } from './redis.js';
 import { db } from '../dbms/mysql.js';
 import { ulid } from 'ulid';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const params = JSON.parse(fs.readFileSync(path.join(__dirname, '../configs/params.json'), 'utf8'));
 
 const MPESA_ENV = (process.env.MPESA_ENV || params.mpesa_env || 'sandbox').trim();

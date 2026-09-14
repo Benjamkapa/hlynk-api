@@ -20,7 +20,7 @@ console.log = (msg, ...args) => originalLog(...formatLog(msg, ...args));
 console.error = (msg, ...args) => originalError(...formatLog(msg, ...args));
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.join(__dirname, ".env") });
+dotenv.config({ path: path.join(__dirname, ".env"), quiet: true });
 
 // Route imports
 import authRoutes from "./routes/auth.js";

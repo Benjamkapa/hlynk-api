@@ -7,7 +7,7 @@ import { authenticate } from '../middleware/auth.js';
 import { validateMpesaIP } from '../middleware/ipWhitelist.js';
 import { ulid } from 'ulid';
 import { pushSaleToEtims } from '../controllers/etims.js';
-import { sendPushToTenant, createAdminNotification } from '../controllers/notifications.js';
+import { sendPushToTenant, createNotification, createAdminNotification } from '../controllers/notifications.js';
 
 const router = express.Router();
 
@@ -379,25 +379,67 @@ router.post('/mpesa/callback', express.json(), validateMpesaIP, async (req, res)
         if (sales.length > 0) {
           const saleId = sales[0].id;
           await db.query(`UPDATE sale SET status = ?, mpesaReceipt = ?, updatedAt = NOW() WHERE id = ?`, [status, success ? mpesaReceipt : null, saleId]);
-          console.log(`[SALE-SYNC] Updated Sale ${saleId} to Status ${status} (Success: ${success})`);
+          console.log(`[SALE-SYNC] Updated Sale ${saleId} to Status ${status} (Success: ${success}, Canceled: ${canceled})`);
 
-          // ─── eTIMS push after confirmed MPesa payment ───
-          if (success) {
-            const saleRow = await db.query('SELECT tenantId FROM sale WHERE id = ? LIMIT 1', [saleId]).then(([r]) => r[0]).catch(() => null);
-            if (saleRow?.tenantId) {
-              setImmediate(() => {
-                pushSaleToEtims(saleRow.tenantId, saleId).catch(err =>
+          // Sync request table status if present
+          try {
+            const reqStatus = success ? 'CONFIRMED' : (canceled ? 'CANCELLED' : 'FAILED');
+            await db.query(`UPDATE request SET status = ?, updatedAt = NOW() WHERE message LIKE ? OR id = ?`, [reqStatus, `%${saleId}%`, saleId]);
+          } catch (rErr) {}
+
+          const [saleRows] = await db.query('SELECT s.*, t.businessName FROM sale s LEFT JOIN tenant t ON s.tenantId = t.id WHERE s.id = ? LIMIT 1', [saleId]);
+          const saleObj = saleRows[0];
+          const tenantId = saleObj?.tenantId || payment.tenantId;
+          const customerName = saleObj?.customerName || 'Customer';
+          const amount = saleObj?.totalAmount || payment.amount;
+
+          if (tenantId) {
+            setImmediate(async () => {
+              if (success) {
+                pushSaleToEtims(tenantId, saleId).catch(err =>
                   console.error(`[eTIMS] MPesa callback push failed for sale ${saleId}:`, err.message)
                 );
 
-                // alert the provider
-                sendPushToTenant(saleRow.tenantId, {
-                  title: 'Payment Received! 💰',
-                  body: `KES ${payment.amount} received via M-Pesa for sale #${saleId.slice(-6).toUpperCase()}`,
-                  data: { url: '/dashboard/sales' }
+                createNotification({
+                  tenantId,
+                  title: `💰 New Order Paid Upfront (M-Pesa Verified)`,
+                  message: `${customerName} paid KES ${Number(amount).toLocaleString()} via M-Pesa (Receipt: ${mpesaReceipt}) for order #${saleId.slice(-6).toUpperCase()}`,
+                  type: 'order',
+                  data: { url: '/dashboard/products' }
                 }).catch(e => console.error('[PUSH] Failed to alert provider:', e.message));
-              });
-            }
+
+                createAdminNotification({
+                  title: `💰 Client Purchase Paid Upfront: KES ${Number(amount).toLocaleString()}`,
+                  message: `${customerName} paid KES ${Number(amount).toLocaleString()} via M-Pesa (Receipt: ${mpesaReceipt}) for vendor '${saleObj?.businessName || 'Merchant'}'.`,
+                  type: 'order',
+                  relatedTenantId: tenantId,
+                  data: { url: '/admin/businesses' }
+                }).catch(() => {});
+              } else if (canceled) {
+                createNotification({
+                  tenantId,
+                  title: `❌ Order STK Payment Cancelled`,
+                  message: `${customerName} cancelled the M-Pesa STK payment prompt for order #${saleId.slice(-6).toUpperCase()} (KES ${Number(amount).toLocaleString()}).`,
+                  type: 'warning',
+                  data: { url: '/dashboard/products' }
+                }).catch(e => console.error('[PUSH] Failed to alert provider:', e.message));
+              } else {
+                createNotification({
+                  tenantId,
+                  title: `⚠️ Order Payment Failed`,
+                  message: `M-Pesa STK payment for ${customerName} (order #${saleId.slice(-6).toUpperCase()}) failed: ${ResultDesc}`,
+                  type: 'warning',
+                  data: { url: '/dashboard/products' }
+                }).catch(e => console.error('[PUSH] Failed to alert provider:', e.message));
+
+                createAdminNotification({
+                  title: '⚠️ M-Pesa Payment Failed',
+                  message: `Payment for ${saleObj?.businessName || 'Merchant'} failed. Reason: ${ResultDesc}`,
+                  type: 'warning',
+                  relatedTenantId: tenantId
+                }).catch(() => {});
+              }
+            });
           }
 
           if (!success) {
@@ -412,16 +454,6 @@ router.post('/mpesa/callback', express.json(), validateMpesaIP, async (req, res)
             } catch (err) {
               console.error('[SALE RESTORE] Failed to restore stock:', err);
             }
-          }
-
-          // Notify Admins of Failure (Awareness)
-          if (!canceled && !success) {
-            createAdminNotification({
-              title: '⚠️ M-Pesa Payment Failed',
-              message: `Payment for ${initLog?.tenantName || 'Unknown'} failed. Reason: ${ResultDesc}`,
-              type: 'warning',
-              relatedTenantId: initLog?.tenantId || payment.tenantId || null
-            });
           }
         } else {
           console.warn(`[SALE-SYNC] Failed to find Sale record for reference ${payment.reference} or RequestID ${CheckoutRequestID}`);
@@ -451,6 +483,24 @@ router.post('/mpesa/callback', express.json(), validateMpesaIP, async (req, res)
           JSON.stringify(req.body)
         ]);
         console.log(`[MASTER CALLBACK] Created missing payment record: ${paymentId}`);
+
+        // Update any matching sale record as well
+        const [sales] = await db.query(`SELECT id FROM sale WHERE mpesaRequestId = ? OR id = ? LIMIT 1`, [CheckoutRequestID, initLog.reference]);
+        if (sales.length > 0) {
+          const saleId = sales[0].id;
+          await db.query(`UPDATE sale SET status = ?, mpesaReceipt = ?, updatedAt = NOW() WHERE id = ?`, [status, success ? mpesaReceipt : null, saleId]);
+          console.log(`[SALE-SYNC-ORPHAN] Updated Sale ${saleId} to Status ${status} (Success: ${success})`);
+          if (success) {
+            setImmediate(() => {
+              pushSaleToEtims(initLog.tenantId, saleId).catch(() => {});
+              sendPushToTenant(initLog.tenantId, {
+                title: 'Payment Received! 💰',
+                body: `KES ${initLog.amount} received via M-Pesa for sale #${saleId.slice(-6).toUpperCase()}`,
+                data: { url: '/dashboard/sales' }
+              }).catch(() => {});
+            });
+          }
+        }
       } else {
         console.warn(`[MASTER CALLBACK] Orphaned callback received for ID: ${CheckoutRequestID}. No matching record in Master Payment table OR mpesalog.`);
       }
