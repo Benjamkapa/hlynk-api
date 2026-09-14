@@ -16,6 +16,18 @@ async function setSubscription() {
 
   const [email, planName, status = 'ACTIVE', daysLeft = 30] = args;
 
+  const STATUS_MAP = {
+    'ACTIVE': 0,
+    '0': 0,
+    'EXPIRED': 1,
+    '1': 1,
+    'TRIAL': 2,
+    '2': 2
+  };
+
+  const statusInput = String(status).toUpperCase();
+  const statusCode = STATUS_MAP[statusInput] !== undefined ? STATUS_MAP[statusInput] : 0;
+
   try {
     // Find tenant
     const [tenants] = await db.query(`
@@ -42,17 +54,17 @@ async function setSubscription() {
     if (subRows.length > 0) {
       await db.query(`
         UPDATE subscription 
-        SET planName = ?, status = ?, trialEndDate = ?, updatedAt = NOW() 
+        SET planName = ?, status = ?, trialEndDate = ?, endDate = ?, updatedAt = NOW() 
         WHERE tenantId = ?
-      `, [planName.toUpperCase(), status.toUpperCase(), trialEndDate, tenant.id]);
-      console.log(`✅ Subscription updated to ${planName.toUpperCase()} (${status.toUpperCase()})`);
+      `, [planName.toUpperCase(), statusCode, trialEndDate, trialEndDate, tenant.id]);
+      console.log(`✅ Subscription updated to ${planName.toUpperCase()} (Status Code: ${statusCode})`);
     } else {
       const id = 'sub_' + Math.random().toString(36).substr(2, 9);
       await db.query(`
-        INSERT INTO subscription (id, tenantId, planName, status, trialEndDate, createdAt, updatedAt)
-        VALUES (?, ?, ?, ?, ?, NOW(), NOW())
-      `, [id, tenant.id, planName.toUpperCase(), status.toUpperCase(), trialEndDate]);
-      console.log(`✅ New Subscription created: ${planName.toUpperCase()} (${status.toUpperCase()})`);
+        INSERT INTO subscription (id, tenantId, planName, status, trialEndDate, endDate, createdAt, updatedAt)
+        VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
+      `, [id, tenant.id, planName.toUpperCase(), statusCode, trialEndDate, trialEndDate]);
+      console.log(`✅ New Subscription created: ${planName.toUpperCase()} (Status Code: ${statusCode})`);
     }
 
     console.log(`📅 Trial/Period End Date: ${trialEndDate.toDateString()}`);

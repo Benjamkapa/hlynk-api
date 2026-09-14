@@ -33,8 +33,10 @@ export const getPublicStayListing = async (req, res) => {
     const tenant = tenantRows[0];
 
     // Check subscription plan & trial status
-    const isTrial = Number(tenant.subStatus) === 2 || tenant.subStatus === 'TRIAL' || (tenant.trialEndDate && new Date(tenant.trialEndDate) >= new Date());
-    const isBusinessPro = (Number(tenant.subStatus) === 0 || tenant.subStatus === 'ACTIVE') && tenant.planName === 'MAX';
+    const subStatusNum = Number(tenant.subStatus);
+    const isTrial = (subStatusNum === 2 || tenant.subStatus === 'TRIAL') &&
+      (!tenant.trialEndDate || new Date(tenant.trialEndDate) >= new Date());
+    const isBusinessPro = (subStatusNum === 0 || tenant.subStatus === 'ACTIVE') && tenant.planName === 'MAX';
 
     // Public Stay Booking (/stay/:slug) and Public Store / Shop Page (/store/:slug, /shop/:slug) are exclusively available for Business Pro subscribers or active Trial period.
     const isPublicRoute = req.originalUrl?.includes('/stay/') || req.path?.includes('/stay/') ||
@@ -177,9 +179,10 @@ export const publicMpesaStkPush = async (req, res) => {
 
   try {
     const [tenantRows] = await db.query(
-      `SELECT t.id, t.businessName, p.operationalSettings
+      `SELECT t.id, t.businessName, p.operationalSettings, s.planName, s.status as subStatus, s.trialEndDate
        FROM tenant t
        LEFT JOIN provider p ON p.tenantId = t.id
+       LEFT JOIN subscription s ON s.tenantId = t.id
        WHERE t.slug = ? AND (t.isActive = 1 OR t.isActive IS NULL)
        LIMIT 1`,
       [slug]
@@ -190,6 +193,20 @@ export const publicMpesaStkPush = async (req, res) => {
     }
 
     const tenant = tenantRows[0];
+
+    const subStatusNum = Number(tenant.subStatus);
+    const isTrial = (subStatusNum === 2 || tenant.subStatus === 'TRIAL') &&
+      (!tenant.trialEndDate || new Date(tenant.trialEndDate) >= new Date());
+    const isBusinessPro = (subStatusNum === 0 || tenant.subStatus === 'ACTIVE') && tenant.planName === 'MAX';
+
+    if (!isTrial && !isBusinessPro) {
+      return res.status(403).json({
+        success: false,
+        isLocked: true,
+        message: "Public Store/Stay M-Pesa push is exclusively available for Business Pro subscribers or active trial period."
+      });
+    }
+
     const tenantId = tenant.id;
 
     // ── Read & decrypt tenant's M-Pesa credentials ──
@@ -307,8 +324,10 @@ export const submitPublicOrder = async (req, res) => {
     }
 
     const tenant = tenantRows[0];
-    const isTrial = Number(tenant.subStatus) === 2 || tenant.subStatus === 'TRIAL' || (tenant.trialEndDate && new Date(tenant.trialEndDate) >= new Date());
-    const isBusinessPro = (Number(tenant.subStatus) === 0 || tenant.subStatus === 'ACTIVE') && tenant.planName === 'MAX';
+    const subStatusNum = Number(tenant.subStatus);
+    const isTrial = (subStatusNum === 2 || tenant.subStatus === 'TRIAL') &&
+      (!tenant.trialEndDate || new Date(tenant.trialEndDate) >= new Date());
+    const isBusinessPro = (subStatusNum === 0 || tenant.subStatus === 'ACTIVE') && tenant.planName === 'MAX';
 
     if (!isTrial && !isBusinessPro) {
       return res.status(403).json({
