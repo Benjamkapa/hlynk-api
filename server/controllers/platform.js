@@ -46,12 +46,24 @@ export const getPlatformReviews = async (req, res) => {
 export const getNotifications = async (req, res) => {
   const { tenantId } = req.user;
   try {
-    const [notifications] = await db.query(`
-      SELECT *, (status = 1) as isRead FROM notification 
-      WHERE (tenantId = ? OR tenantId IS NULL) 
-      ORDER BY createdAt DESC 
-      LIMIT 50
-    `, [tenantId]);
+    // Try to fetch with referenceId/referenceType; gracefully fall back if columns don't exist yet
+    let notifications;
+    try {
+      [notifications] = await db.query(`
+        SELECT id, tenantId, title, message, type, status, referenceId, referenceType,
+               (status = 1) as isRead, createdAt FROM notification 
+        WHERE (tenantId = ? OR tenantId IS NULL) 
+        ORDER BY createdAt DESC 
+        LIMIT 50
+      `, [tenantId]);
+    } catch (_colErr) {
+      [notifications] = await db.query(`
+        SELECT *, (status = 1) as isRead FROM notification 
+        WHERE (tenantId = ? OR tenantId IS NULL) 
+        ORDER BY createdAt DESC 
+        LIMIT 50
+      `, [tenantId]);
+    }
     return res.json({ success: true, data: notifications });
   } catch (err) {
     console.error('getNotifications Error:', err);

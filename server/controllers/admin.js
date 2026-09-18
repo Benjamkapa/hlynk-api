@@ -862,8 +862,9 @@ export const updateTenant = async (req, res) => {
 };
 
 export const getActivityLogs = async (req, res) => {
-  const { page = 1, limit = 5, search = '', category = '' } = req.query;
-  const offset = (Number(page) - 1) * Number(limit);
+  const { page = 1, limit = 25, search = '', category = '' } = req.query;
+  const parsedLimit = Math.min(100, Math.max(1, Number(limit) || 25));
+  const offset = (Number(page) - 1) * parsedLimit;
 
   try {
     let q = `
@@ -881,18 +882,18 @@ export const getActivityLogs = async (req, res) => {
     const params = [];
 
     if (search) {
-      q += ` AND (a.action LIKE ? OR a.details LIKE ? OR u.name LIKE ? OR t.businessName LIKE ?)`;
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+      q += ` AND (a.action LIKE ? OR a.details LIKE ? OR a.logName LIKE ? OR u.name LIKE ? OR t.businessName LIKE ?)`;
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
 
     if (category) {
-      q += ` AND a.action LIKE ?`;
-      params.push(`%${category}%`);
+      q += ` AND (a.action LIKE ? OR a.logName LIKE ?)`;
+      params.push(`%${category}%`, `%${category}%`);
     }
 
     // Since LEFT JOIN with LIKE might return duplicates, use GROUP BY a.id to prevent duplicates
     q += ` GROUP BY a.id ORDER BY a.createdAt DESC LIMIT ? OFFSET ?`;
-    params.push(Number(limit), offset);
+    params.push(parsedLimit, offset);
 
     const [items] = await db.query(q, params);
 
@@ -906,15 +907,15 @@ export const getActivityLogs = async (req, res) => {
     `;
     const cParams = [];
     if (search) {
-      cQ += ` AND (a.action LIKE ? OR a.details LIKE ? OR u.name LIKE ? OR t.businessName LIKE ?)`;
-      cParams.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+      cQ += ` AND (a.action LIKE ? OR a.details LIKE ? OR a.logName LIKE ? OR u.name LIKE ? OR t.businessName LIKE ?)`;
+      cParams.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
     if (category) {
-      cQ += ` AND a.action LIKE ?`;
-      cParams.push(`%${category}%`);
+      cQ += ` AND (a.action LIKE ? OR a.logName LIKE ?)`;
+      cParams.push(`%${category}%`, `%${category}%`);
     }
     const [counts] = await db.query(cQ, cParams);
-    const total = counts[0].total;
+    const total = counts[0]?.total || 0;
 
     // Transform
     const formatted = items.map(log => ({
@@ -933,7 +934,7 @@ export const getActivityLogs = async (req, res) => {
       success: true,
       data: {
         items: formatted,
-        pagination: { total, pages: Math.ceil(total / Number(limit)) }
+        pagination: { total, pages: Math.ceil(total / parsedLimit), page: Number(page), limit: parsedLimit }
       }
     });
   } catch (err) {

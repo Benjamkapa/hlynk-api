@@ -1,5 +1,6 @@
 import { db } from "../dbms/mysql.js";
 import { v4 as uuidv4 } from "uuid";
+import { createNotification } from "./notifications.js";
 
 // Get all events for tenant (filtered by eventType, status, resourceId, dates)
 export const getEvents = async (req, res) => {
@@ -180,6 +181,21 @@ export const createEvent = async (req, res) => {
     const [eventRow] = await db.query("SELECT * FROM event WHERE id = ?", [eventId]);
     const result = eventRow[0];
     result.meta = typeof result.meta === 'string' ? JSON.parse(result.meta) : (result.meta || {});
+
+    // Fire notification for BOOKING events so providers can deep-link from the bell
+    if (eventType === 'BOOKING') {
+      const displayName = guestName || 'A customer';
+      const resourceTitle = result.meta?.resourceTitle || '';
+      createNotification({
+        tenantId,
+        title: `📅 New Booking: ${displayName}`,
+        message: `${displayName} booked${resourceTitle ? ` ${resourceTitle}` : ''} — KES ${total.toLocaleString()}. Paid: KES ${paid.toLocaleString()}.`,
+        type: 'booking',
+        referenceId: eventId,
+        referenceType: 'booking',
+        data: { url: '/dashboard/hospitality/bookings' }
+      }).catch(() => {});
+    }
 
     res.status(201).json({
       success: true,

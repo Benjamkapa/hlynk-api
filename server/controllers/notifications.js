@@ -200,13 +200,22 @@ export const sendPushToAdmins = async (message) => {
 /**
  * Utility to create a notification (DB + Push) for a specific tenant
  */
-export const createNotification = async ({ tenantId, title, message, type = 'info', data = {} }) => {
+export const createNotification = async ({ tenantId, title, message, type = 'info', data = {}, referenceId = null, referenceType = null }) => {
   try {
     // 1. Insert into database (for in-app bell)
-    await db.query(`
-      INSERT INTO notification (id, tenantId, title, message, type, status, createdAt) 
-      VALUES (?, ?, ?, ?, ?, 0, NOW())
-    `, [ulid(), tenantId, title, message, type]);
+    // Try with referenceId/referenceType columns first, fall back to without
+    try {
+      await db.query(`
+        INSERT INTO notification (id, tenantId, title, message, type, status, referenceId, referenceType, createdAt) 
+        VALUES (?, ?, ?, ?, ?, 0, ?, ?, NOW())
+      `, [ulid(), tenantId, title, message, type, referenceId || null, referenceType || null]);
+    } catch (colErr) {
+      // Columns may not exist yet — fall back to legacy insert
+      await db.query(`
+        INSERT INTO notification (id, tenantId, title, message, type, status, createdAt) 
+        VALUES (?, ?, ?, ?, ?, 0, NOW())
+      `, [ulid(), tenantId, title, message, type]);
+    }
 
     // 2. Send push notification (for OS-level tray)
     await sendPushToTenant(tenantId, { title, body: message, type, data });

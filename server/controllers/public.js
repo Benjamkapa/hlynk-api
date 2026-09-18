@@ -464,6 +464,8 @@ export const submitPublicOrder = async (req, res) => {
         title: `📦 New Order (${payLabel}) from ${customerName.trim()}`,
         message: `${customerName.trim()} (${customerPhone.trim()}) ordered ${items.length} item(s) — total KES ${totalAmount.toLocaleString()} [${payLabel}]`,
         type: "order",
+        referenceId: saleId,
+        referenceType: 'order',
         data: { url: "/dashboard/products" }
       });
 
