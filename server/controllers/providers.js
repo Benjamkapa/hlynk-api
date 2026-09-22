@@ -419,13 +419,24 @@ export const clearData = async (req, res) => {
         await connection.query(`DELETE FROM expense WHERE tenantId = ?`, [tenantId]);
         // 5. Delete Customers (User with role CUSTOMER)
         await connection.query(`DELETE FROM user WHERE tenantId = ? AND role = 'CUSTOMER'`, [tenantId]);
-        // 6. Delete Logs
+        // 6. Delete Notifications
+        await connection.query(`DELETE FROM notification WHERE tenantId = ?`, [tenantId]);
+        // 7. Delete Client Requests / Orders
+        await connection.query(`DELETE FROM request WHERE tenantId = ?`, [tenantId]);
+        // 8. Delete Hospitality Tasks
+        try { await connection.query(`DELETE FROM operationtask WHERE tenantId = ?`, [tenantId]); } catch (_) {}
+        // 9. Delete Hospitality Events/Bookings
+        try { await connection.query(`DELETE FROM event WHERE tenantId = ?`, [tenantId]); } catch (_) {}
+        // 10. Delete Hospitality Resources/Units
+        try { await connection.query(`DELETE FROM resource WHERE tenantId = ?`, [tenantId]); } catch (_) {}
+        // 11. Delete Logs
         await connection.query(`DELETE FROM activitylog WHERE tenantId = ?`, [tenantId]);
         
         await connection.commit();
-        return res.json({ success: true, message: 'Business data cleared successfully' });
+        return res.json({ success: true, message: 'Business data and notifications cleared successfully' });
     } catch (err) {
         await connection.rollback();
+        console.error('[CLEAR DATA] Error:', err);
         return res.status(500).json({ success: false, message: 'Failed to clear data' });
     } finally {
         connection.release();
