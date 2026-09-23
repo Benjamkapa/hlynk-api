@@ -958,8 +958,8 @@ export const getSettings = async (req, res) => {
     return res.json({ success: true, data: settings });
   } catch (err) {
     const defaultSettings = [
-      { key: 'APP_NAME', value: 'HudumaLynk' },
-      { key: 'SUPPORT_EMAIL', value: 'support@hlynk.co.ke' },
+      { key: 'APP_NAME', value: 'hlynk' },
+      { key: 'SUPPORT_EMAIL', value: 'info@hlynk.co.ke' },
       { key: 'DEFAULT_CURRENCY', value: 'KES - Kenya Shilling' },
       { key: 'TIMEZONE', value: 'Africa/Nairobi (UTC+3)' },
       { key: 'ENFORCE_2FA', value: 'false' },
