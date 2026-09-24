@@ -56,7 +56,7 @@ export const listProducts = async (req, res) => {
       const globalThreshold = Number(ops?.lowStockThreshold) || 5;
 
       const [totalItemsRes] = await db.query(`SELECT COUNT(*) as total FROM product WHERE tenantId = ? AND IFNULL(type, 'GOOD') != 'SERVICE'`, [tenantId]);
-      const [lowStockRes] = await db.query(`SELECT COUNT(*) as total FROM product WHERE tenantId = ? AND IFNULL(type, 'GOOD') != 'SERVICE' AND stockLevel <= IFNULL(minLevel, ?)`, [tenantId, globalThreshold]);
+      const [lowStockRes] = await db.query(`SELECT COUNT(*) as total FROM product WHERE tenantId = ? AND IFNULL(type, 'GOOD') != 'SERVICE' AND stockLevel > 0 AND stockLevel <= IFNULL(minLevel, ?)`, [tenantId, globalThreshold]);
       const [totalValueRes] = await db.query(`SELECT SUM(buyingPrice * stockLevel) as total FROM product WHERE tenantId = ? AND IFNULL(type, 'GOOD') != 'SERVICE'`, [tenantId]);
       
       const todayStr = getEatDateString();
@@ -113,7 +113,7 @@ export const createProduct = async (req, res) => {
       [
         id, tenantId, data.name, data.category || 'General', Number(data.price), 
         data.type === 'SERVICE' ? 0 : (Number(data.buyingPrice) || 0), 
-        parseInt(data.stock) || 0, sku, data.imageUrl || null, data.description || null, 
+        (data.stock !== undefined && data.stock !== null && String(data.stock).trim() !== '') ? parseInt(data.stock) : 0, sku, data.imageUrl || null, data.description || null, 
         parseInt(data.minLevel) || 5, data.isPerishable ? 1 : 0, 
         data.type || 'GOOD', data.expiryDate || null
       ]
@@ -139,7 +139,11 @@ export const updateProduct = async (req, res) => {
 
     if (data.name) { updateQuery += ', name = ?'; updateParams.push(data.name); }
     if (data.price !== undefined) { updateQuery += ', price = ?'; updateParams.push(Number(data.price)); }
-    if (data.stock !== undefined) { updateQuery += ', stockLevel = ?'; updateParams.push(parseInt(data.stock)); }
+    if (data.stock !== undefined) { 
+      const parsedStock = String(data.stock).trim() === '' ? 0 : parseInt(data.stock);
+      updateQuery += ', stockLevel = ?'; 
+      updateParams.push(isNaN(parsedStock) ? 0 : parsedStock); 
+    }
     if (data.minLevel !== undefined) { updateQuery += ', minLevel = ?'; updateParams.push(parseInt(data.minLevel) || 0); }
     if (data.category) { updateQuery += ', category = ?'; updateParams.push(data.category); }
     if (data.buyingPrice !== undefined) { updateQuery += ', buyingPrice = ?'; updateParams.push(data.type === 'SERVICE' ? 0 : Number(data.buyingPrice)); }

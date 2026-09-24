@@ -218,7 +218,7 @@ export const createSale = async (req, res) => {
         if (prod) {
           const ops = typeof prod.operationalSettings === 'string' ? JSON.parse(prod.operationalSettings) : prod.operationalSettings;
           const threshold = ops?.lowStockThreshold || 5;
-          if (prod.stockLevel <= threshold) {
+          if (prod.stockLevel > 0 && prod.stockLevel <= threshold) {
             sendPushToTenant(tenantId, {
               title: 'Low Stock Alert! ⚠️',
               body: `Only ${prod.stockLevel} left of "${prod.name}". Time to restock!`,
