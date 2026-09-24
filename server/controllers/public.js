@@ -154,6 +154,9 @@ export const getPublicStayListing = async (req, res) => {
         slug: tenant.slug,
         businessType: tenant.businessType,
         hasMpesaGateway: Boolean(hasMpesaGateway),
+        operationalSettings: typeof tenant.operationalSettings === "string"
+          ? (() => { try { return JSON.parse(tenant.operationalSettings); } catch (e) { return {}; } })()
+          : (tenant.operationalSettings || {}),
         properties: formattedProperties,
         rooms: formattedRooms,
         products: allProductsAndServices,

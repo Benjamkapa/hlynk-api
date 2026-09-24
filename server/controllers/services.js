@@ -17,7 +17,7 @@ export const createService = async (req, res) => {
   const id = ulid();
 
   try {
-    // Note: In HudumaLynk, providerId is often the userId of the business owner
+    // Note: In hlynk, providerId is often the userId of the business owner
     await db.query(`
       INSERT INTO service (id, tenantId, providerId, name, description, price, duration, isActive, createdAt, updatedAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())

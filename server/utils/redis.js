@@ -1,6 +1,6 @@
 import { createClient } from 'redis';
 
-// Simplified Redis wrapper for HudumaLynk
+// Simplified Redis wrapper for hlynk
 export const redis = {
   get: async (key) => null,
   set: async (key, val) => {},
