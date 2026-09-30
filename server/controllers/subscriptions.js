@@ -79,7 +79,7 @@ export const getBillingHistory = async (req, res) => {
 
 export const initiateRenewal = async (req, res) => {
   const { tenantId } = req.user;
-  const { phone, months = 1 } = req.body; // Added months
+  const { phone, months = 1, plan } = req.body;
 
   try {
     const limit = process.env.NODE_ENV === 'development' ? 7 : 5;
@@ -92,7 +92,9 @@ export const initiateRenewal = async (req, res) => {
     if (subs.length === 0) return res.status(404).json({ success: false, message: 'Subscription not found' });
 
     const sub = subs[0];
-    const baseAmount = PLAN_PRICES[sub.planName];
+    // Default to PLUS (Starter - 4,450 KES) when no plan is explicitly specified
+    const planToRenew = plan || 'PLUS';
+    const baseAmount = PLAN_PRICES[planToRenew] || PLAN_PRICES.PLUS;
 
     // Calculate final amount and days
     let finalAmount = baseAmount * months;
@@ -112,7 +114,7 @@ export const initiateRenewal = async (req, res) => {
     await db.query(`
       INSERT INTO payment (id, tenantId, amount, phone, plan, status, reference, transactionType, createdAt, meta) 
       VALUES (?, ?, ?, ?, ?, 2, ?, 'SUBSCRIPTION', NOW(), ?)
-    `, [paymentId, tenantId, finalAmount, phone, sub.planName, reference, JSON.stringify({ months, daysToReward })]);
+    `, [paymentId, tenantId, finalAmount, phone, planToRenew, reference, JSON.stringify({ months, daysToReward })]);
 
     const [tenants] = await db.query(`SELECT businessName FROM tenant WHERE id = ?`, [tenantId]);
     const tenantName = tenants[0]?.businessName || 'Tenant';

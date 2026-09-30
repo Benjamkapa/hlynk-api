@@ -146,8 +146,8 @@ export const googleAuth = async (req, res) => {
       try {
         await connection.beginTransaction();
 
-        // FORCE MAX PLAN FOR TRIAL (The "Full Experience")
-        const requestedPlan = 'MAX';
+        // Default to PLUS (Starter - 4,450 KES) for new user trials
+        const requestedPlan = 'PLUS';
         const subStatus = 2; // 2 = TRIAL
         
         let trialDays = 14; 

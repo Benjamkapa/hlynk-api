@@ -69,13 +69,15 @@ app.use(cors({
 }));
 
 app.use(cookieParser());
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ limit: '10mb', extended: true }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 import fileUpload from 'express-fileupload';
 app.use(fileUpload({
   createParentPath: true,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB limit
+  abortOnLimit: true,
+  responseOnLimit: 'File size limit exceeded (max 25MB)',
 }));
 
 // Serve static files from the 'uploads' directory
@@ -146,11 +148,35 @@ app.use((req, res) => {
 
 // Global error handler
 app.use((err, req, res, next) => {
+  // Handle client aborted / interrupted file uploads (e.g. busboy / express-fileupload)
+  if (err.message === 'Unexpected end of form' || err.message?.includes('Unexpected end of multipart data')) {
+    if (!res.headersSent) {
+      return res.status(400).json({
+        success: false,
+        message: 'Upload interrupted or aborted by client.',
+      });
+    }
+    return;
+  }
+
+  // Handle payload too large (413) from body-parser or fileUpload
+  if (err.type === 'entity.too.large' || err.status === 413 || err.name === 'PayloadTooLargeError') {
+    if (!res.headersSent) {
+      return res.status(413).json({
+        success: false,
+        message: 'Request payload too large. Please upload smaller files or compress images.',
+      });
+    }
+    return;
+  }
+
   console.error(err);
-  res.status(err.status || 500).json({
-    success: false,
-    message: err.message || "Internal Server Error",
-  });
+  if (!res.headersSent) {
+    res.status(err.status || 500).json({
+      success: false,
+      message: err.message || "Internal Server Error",
+    });
+  }
 });
 
 // Start server with DB check
