@@ -7,6 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createAdminNotification } from './notifications.js';
+import { logSessionLogin, logSessionLogout, logSessionRefresh, logSessionAlert } from '../utils/sessionLogger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const params = JSON.parse(fs.readFileSync(path.join(__dirname, '../configs/params.json'), 'utf8'));
@@ -74,8 +75,8 @@ const issueTokens = async (user, res, userAgent = 'Unknown', ipAddress = 'Unknow
   // Set refresh token as httpOnly cookie
   setRefreshCookie(res, refreshToken);
 
-  // Return only access token in JSON body (refresh token is in cookie)
-  return { accessToken, refreshToken };
+  // Return access token, refresh token, and sessionId
+  return { accessToken, refreshToken, sessionId };
 };
 
 export const googleAuth = async (req, res) => {
@@ -188,7 +189,18 @@ export const googleAuth = async (req, res) => {
         });
 
         const [newUser] = await db.query(`SELECT * FROM user WHERE id = ?`, [userId]);
-        const { accessToken, refreshToken } = await issueTokens(newUser[0], res, userAgent, ipAddress);
+        const { accessToken, refreshToken, sessionId } = await issueTokens(newUser[0], res, userAgent, ipAddress);
+        
+        // Real-Time Session Audit
+        logSessionLogin({
+          user: newUser[0],
+          tenant: { id: tenantId, businessName: registration.businessName },
+          ipAddress,
+          userAgent,
+          sessionId,
+          isNew: true
+        });
+
         return res.json({ 
           success: true, 
           data: { 
@@ -216,7 +228,18 @@ export const googleAuth = async (req, res) => {
       activeModules = ['POS'];
     }
 
-    const { accessToken, refreshToken } = await issueTokens(user, res, userAgent, ipAddress);
+    const { accessToken, refreshToken, sessionId } = await issueTokens(user, res, userAgent, ipAddress);
+    
+    // Real-Time Session Audit
+    logSessionLogin({
+      user,
+      tenant: { id: user.tenantId, businessName: user.businessName },
+      ipAddress,
+      userAgent,
+      sessionId,
+      isNew: false
+    });
+
     return res.json({ 
       success: true, 
       data: { 
@@ -245,6 +268,7 @@ export const logout = async (req, res) => {
   try {
     await db.query(`UPDATE session SET isActive = 0 WHERE id = ?`, [sessionId]);
     clearRefreshCookie(res);
+    logSessionLogout({ user: req.user, sessionId, ipAddress: req.ip });
     return res.json({ success: true, data: { message: 'Logged out' } });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Logout failed' });
@@ -335,6 +359,13 @@ export const refresh = async (req, res) => {
       // Possible token reuse attack — invalidate ALL sessions for this user
       await db.query(`UPDATE session SET isActive = 0 WHERE userId = ?`, [decoded.userId]);
       clearRefreshCookie(res);
+      logSessionAlert({
+        title: 'Token Reuse Attack Detected',
+        message: `Invalid or reused token for user ${decoded.userId}. All active sessions invalidated.`,
+        ipAddress: req.ip,
+        userId: decoded.userId,
+        tenantId: decoded.tenantId
+      });
       return res.status(401).json({ success: false, message: 'Session invalidated. Please log in again.' });
     }
 
@@ -369,6 +400,8 @@ export const refresh = async (req, res) => {
 
     // Set new refresh token cookie
     setRefreshCookie(res, newRefreshToken);
+
+    logSessionRefresh({ user: decoded, sessionId: decoded.sessionId, ipAddress: req.ip });
 
     return res.json({ success: true, data: { accessToken: newAccessToken, refreshToken: newRefreshToken } });
   } catch (err) {

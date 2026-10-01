@@ -253,6 +253,7 @@ export const createSale = async (req, res) => {
         INSERT INTO activitylog (id, tenantId, userId, action, logName, details, ipAddress, actionId, createdAt) 
         VALUES (?, ?, ?, 'Sale recorded', 'Sale recorded', ?, ?, ?, NOW())
       `, [ulid(), tenantId, userId || null, `Sale of ${items.length} items for ${totalAmount}`, clientIp, `#sale-${saleId.slice(-6).toUpperCase()}`]);
+      res.locals._activityLogged = true;
     } catch (logErr) {
       console.error('[SALE-ACTIVITY-LOG] Warning: Failed to record activity:', logErr.message);
     }

@@ -11,6 +11,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import os from 'os';
 import { execSync } from 'child_process';
+import { parseDevice, logSessionImpersonate, logSessionTerminate } from '../utils/sessionLogger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const params = JSON.parse(fs.readFileSync(path.join(__dirname, '../configs/params.json'), 'utf8'));
@@ -465,6 +466,8 @@ export const impersonateUser = async (req, res) => {
       [sessionId, targetUser.id, tokenHash, req.get('user-agent') || 'Admin Impersonation', req.ip || '0.0.0.0']
     );
 
+    logSessionImpersonate({ adminUser: req.user, targetUser, sessionId, ipAddress: req.ip || '0.0.0.0' });
+
     res.cookie('__hlynk_rt', refreshToken, {
       httpOnly: true,
       secure: IS_PROD,
@@ -570,40 +573,39 @@ export const getSessions = async (req, res) => {
   try {
     const [sessions] = await db.query(`
       SELECT 
-        s.id, s.ipAddress, s.userAgent, s.isActive, 
+        s.id, s.ipAddress, s.userAgent, s.isActive, s.createdAt, s.lastActive,
         u.id as userId, u.name, u.email, u.role, u.photoUrl,
-        s.lastActive
+        t.id as tenantId, t.businessName, t.slug as tenantSlug
       FROM session s
       JOIN user u ON s.userId = u.id
+      LEFT JOIN tenant t ON u.tenantId = t.id
       WHERE s.isActive = 1 AND s.lastActive >= NOW() - INTERVAL 30 MINUTE
       ORDER BY s.lastActive DESC
       LIMIT 100
     `);
 
-
-    // Group by userId manually to ensure we keep the MOST recent session object properly
-    const latestSessionsMap = new Map();
-    sessions.forEach(s => {
-      if (!latestSessionsMap.has(s.userId)) {
-        latestSessionsMap.set(s.userId, {
-          id: s.id,
-          ipAddress: s.ipAddress,
-          userAgent: s.userAgent,
-          isActive: s.isActive,
-          lastActive: s.lastActive,
-          user: {
-            id: s.userId,
-            name: s.name,
-            email: s.email,
-            role: s.role,
-            photoUrl: s.photoUrl
-          }
-        });
-      }
+    const formattedSessions = sessions.map(s => {
+      const device = parseDevice(s.userAgent);
+      return {
+        id: s.id,
+        ipAddress: s.ipAddress,
+        userAgent: s.userAgent,
+        device,
+        isActive: s.isActive,
+        createdAt: s.createdAt,
+        lastActive: s.lastActive,
+        user: {
+          id: s.userId,
+          name: s.name,
+          email: s.email,
+          role: s.role,
+          photoUrl: s.photoUrl,
+          businessName: s.businessName || 'Platform',
+          tenantId: s.tenantId,
+          tenantSlug: s.tenantSlug
+        }
+      };
     });
-
-    const formattedSessions = Array.from(latestSessionsMap.values());
-    // console.log(`📡 SESSIONS_FETCHED: Found ${sessions.length} total, ${formattedSessions.length} unique active users.`);
 
     return res.json({ success: true, data: formattedSessions });
   } catch (err) {
@@ -613,7 +615,16 @@ export const getSessions = async (req, res) => {
 
 export const terminateSession = async (req, res) => {
   try {
+    const [sess] = await db.query(
+      `SELECT s.id, u.name as userName FROM session s JOIN user u ON s.userId = u.id WHERE s.id = ?`,
+      [req.params.id]
+    );
     await db.query(`UPDATE session SET isActive = 0 WHERE id = ?`, [req.params.id]);
+    logSessionTerminate({
+      adminName: req.user?.name,
+      sessionId: req.params.id,
+      targetUserName: sess[0]?.userName
+    });
     return res.json({ success: true, message: 'Session terminated' });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to terminate session' });

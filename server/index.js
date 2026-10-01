@@ -83,6 +83,11 @@ app.use(fileUpload({
 // Serve static files from the 'uploads' directory
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+import { sessionActivityMiddleware } from "./utils/sessionLogger.js";
+
+// Real-Time Session & Activity Tracking Middleware
+app.use(sessionActivityMiddleware);
+
 // Set COOP header for Google Auth popups
 app.use((req, res, next) => {
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
@@ -535,6 +540,7 @@ const startServer = async () => {
     // 4. Start Listener
     app.listen(PORT, () => {
       console.log(`🚀 Server running on http://127.0.0.1:${PORT}`);
+      console.log(`📡 Real-Time Session & Activity Monitoring: ACTIVE`);
       if (process.send) {
         process.send('ready');
       }
