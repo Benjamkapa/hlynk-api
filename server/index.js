@@ -108,7 +108,7 @@ app.use("/api/v1/admin", adminRoutes);
 app.use("/api/v1/services", serviceRoutes);
 app.use("/api/v1/requests", requestRoutes);
 app.use("/api/v1/platform", platformRoutes);
-app.use("/api/v1/etims",    etimsRoutes);
+app.use("/api/v1/etims", etimsRoutes);
 app.use("/api/v1/notifications", notificationRoutes);
 app.use("/api/v1/resources", resourceRoutes);
 app.use("/api/v1/events", eventRoutes);
@@ -120,12 +120,12 @@ app.get("/api/v1/storage/:bucket/:folder/:file", async (req, res) => {
   try {
     const { bucket, folder, file } = req.params;
     const objectName = `${folder}/${file}`;
-    
+
     // Set Content-Type based on extension
     const ext = file.split('.').pop().toLowerCase();
     const mimeTypes = { 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png', 'gif': 'image/gif', 'webp': 'image/webp' };
     if (mimeTypes[ext]) res.setHeader('Content-Type', mimeTypes[ext]);
-    
+
     const stream = await minioClient.getObject(bucket, objectName);
     res.setHeader('Cache-Control', 'public, max-age=31536000');
     stream.pipe(res);
@@ -391,9 +391,9 @@ const startServer = async () => {
         INDEX idx_req_status (status)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
 
-      await db.query("ALTER TABLE request MODIFY customerId VARCHAR(50) NULL DEFAULT NULL;").catch(() => {});
-      await db.query("ALTER TABLE request MODIFY providerId VARCHAR(50) NULL DEFAULT NULL;").catch(() => {});
-      await db.query("ALTER TABLE request MODIFY serviceId VARCHAR(50) NULL DEFAULT NULL;").catch(() => {});
+      await db.query("ALTER TABLE request MODIFY customerId VARCHAR(50) NULL DEFAULT NULL;").catch(() => { });
+      await db.query("ALTER TABLE request MODIFY providerId VARCHAR(50) NULL DEFAULT NULL;").catch(() => { });
+      await db.query("ALTER TABLE request MODIFY serviceId VARCHAR(50) NULL DEFAULT NULL;").catch(() => { });
     } catch (e) {
       console.warn("⚠️ Migration Warning:", e.message);
     }
@@ -439,15 +439,15 @@ const startServer = async () => {
       }
       // Upgrade etims_credentials if columns are missing
       const [credCols] = await db.query('DESCRIBE etims_credentials').catch(() => [[]]);
-      
+
       // Ensure cert_password exists
       if (credCols.length && !credCols.some(c => c.Field === 'cert_password')) {
         await db.query("ALTER TABLE etims_credentials ADD COLUMN cert_password VARCHAR(255) AFTER kra_pin");
       }
-      
+
       // Ensure cmc_key exists
       if (credCols.length && !credCols.some(c => c.Field === 'cmc_key')) {
-        await db.query("ALTER TABLE etims_credentials ADD COLUMN cmc_key TEXT AFTER kra_pin"); 
+        await db.query("ALTER TABLE etims_credentials ADD COLUMN cmc_key TEXT AFTER kra_pin");
       }
 
       // Ensure env exists
@@ -540,7 +540,7 @@ const startServer = async () => {
     // 4. Start Listener
     app.listen(PORT, () => {
       console.log(`🚀 Server running on http://127.0.0.1:${PORT}`);
-      console.log(`📡 Real-Time Session & Activity Monitoring: ACTIVE`);
+      // console.log(`📡 Real-Time Session & Activity Monitoring: ACTIVE`);
       if (process.send) {
         process.send('ready');
       }
