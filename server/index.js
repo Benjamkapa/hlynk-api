@@ -45,7 +45,7 @@ import publicRoutes from "./routes/public.js";
 import { startSubscriptionDaemon } from "./daemon/subscriptions.js";
 import { startEtimsDaemon } from "./daemon/etims.js";
 import { startPayoutDaemon } from "./daemon/payouts.js";
-import { db } from "./dbms/mysql.js";
+import { db, runAutoMigrations } from "./dbms/mysql.js";
 import { initStorage, minioClient } from "./utils/storage.js";
 import { fixResourceImages } from "./scripts/fix_resource_images.js";
 
@@ -190,6 +190,9 @@ const startServer = async () => {
     // 1. Check Database Connection
     await db.query("SELECT 1");
     console.log("✅ Database: Connected Successfully");
+
+    // Auto-run schema migrations
+    await runAutoMigrations();
 
     // 2. Run Critical Migrations
     try {

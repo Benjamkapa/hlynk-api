@@ -116,6 +116,17 @@ export const sendTestNotification = async (req, res) => {
 export const sendPushToTenant = async (tenantId, message) => {
     try {
         const [subs] = await db.query('SELECT * FROM push_subscriptions WHERE tenantId = ?', [tenantId]);
+        if (subs.length === 0) return;
+
+        // Query current unread notifications count for device badge
+        let unreadCount = 1;
+        try {
+            const [[countRes]] = await db.query(
+                'SELECT COUNT(*) as unreadCount FROM notification WHERE (tenantId = ? OR tenantId IS NULL) AND status = 0',
+                [tenantId]
+            );
+            unreadCount = Number(countRes?.unreadCount) || 1;
+        } catch (_) {}
         
         const dataObj = Object.keys(message.data || {}).length > 0 ? message.data : { url: '/dashboard' };
 
@@ -124,6 +135,7 @@ export const sendPushToTenant = async (tenantId, message) => {
             body: message.body,
             icon: message.icon || '/logo.png',
             type: message.type || 'info',
+            unreadCount,
             data: dataObj
         });
 
@@ -164,6 +176,15 @@ export const sendPushToAdmins = async (message) => {
         
         if (subs.length === 0) return;
 
+        // Query current unread notifications count for admins
+        let unreadCount = 1;
+        try {
+            const [[countRes]] = await db.query(
+                "SELECT COUNT(*) as unreadCount FROM notification n JOIN user u ON n.tenantId = u.tenantId WHERE u.role = 'SUPER_ADMIN' AND n.status = 0"
+            );
+            unreadCount = Number(countRes?.unreadCount) || 1;
+        } catch (_) {}
+
         const dataObj = Object.keys(message.data || {}).length > 0 ? message.data : { url: '/admin/dashboard' };
 
         const payload = JSON.stringify({
@@ -171,6 +192,7 @@ export const sendPushToAdmins = async (message) => {
             body: message.body,
             icon: message.icon || '/logo.png',
             type: message.type || 'info',
+            unreadCount,
             data: dataObj
         });
 
