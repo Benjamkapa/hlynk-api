@@ -243,14 +243,57 @@ export const getActionDescription = (method, url) => {
 export const sessionActivityMiddleware = (req, res, next) => {
   const url = req.originalUrl || req.url;
 
-  // Filter out static assets, internal MinIO proxy, and health checks to keep pm2 logs clean
-  if (
-    url.startsWith('/uploads/') ||
-    url.startsWith('/api/v1/storage/') ||
-    url === '/favicon.ico' ||
-    url === '/' ||
-    url === '/api/v1/admin/health' // Frequent 5-second polling by admin dashboard
-  ) {
+  // ── Silent pass-through list ─────────────────────────────────────────────
+  // Filter out static assets, health pings, and any noisy polling routes so
+  // PM2 logs stay focused on meaningful events only.
+  const cleanPath = url.split('?')[0];
+
+  const SILENT_ROUTES = [
+    '/uploads/',
+    '/api/v1/storage/',
+    '/favicon.ico',
+    // Health & admin polling
+    '/api/v1/admin/health',
+    // Notification bell polling (every 30 s)
+    '/api/v1/platform/notifications',
+    '/api/v1/notifications',
+    // Dashboard & stats fetches
+    '/api/v1/admin/stats',
+    '/api/v1/admin/finance/vault',
+    '/api/v1/admin/payouts',
+    '/api/v1/admin/transactions',
+    '/api/v1/admin/subscriptions',
+    '/api/v1/admin/sessions',
+    '/api/v1/admin/activity',
+    '/api/v1/admin/system-events',
+    '/api/v1/admin/media',
+    '/api/v1/admin/reviews',
+    '/api/v1/admin/schedules',
+    '/api/v1/admin/settings',
+    '/api/v1/admin/tenants',
+    '/api/v1/admin/users',
+    // Provider dashboard polls
+    '/api/v1/providers/me',
+    '/api/v1/subscriptions',
+    '/api/v1/sales',
+    '/api/v1/expenses',
+    '/api/v1/customers',
+    '/api/v1/inventory',
+    '/api/v1/staff',
+    '/api/v1/resources',
+    '/api/v1/events',
+    '/api/v1/operations',
+    '/api/v1/services',
+    '/api/v1/requests',
+    '/api/v1/platform/stats',
+    '/api/v1/platform/reviews',
+  ];
+
+  const isSilentRoute =
+    cleanPath === '/' ||
+    SILENT_ROUTES.some(r => cleanPath === r || cleanPath.startsWith(r));
+
+  if (req.method === 'GET' && isSilentRoute) {
     return next();
   }
 
@@ -297,13 +340,8 @@ export const sessionActivityMiddleware = (req, res, next) => {
         }
       }
     } 
-    // 2. READ QUERIES (GET) - Clean one-liner in PM2
-    else if (method === 'GET') {
-      // Don't flood console with repeated notification polling
-      if (url === '/api/v1/notifications' && status === 200) return;
-
-      console.log(`${C.dim}👁️ [QUERY]${C.reset} ${userLabel} ${C.dim}${method} ${url}${C.reset} -> ${statusColor}${status}${C.reset} ${C.dim}(${duration}ms)${C.reset}`);
-    }
+    // 2. GET requests — already filtered above; any that reach here are unknown
+    //    routes or edge cases. Suppress them to keep logs clean.
   });
 
   next();
