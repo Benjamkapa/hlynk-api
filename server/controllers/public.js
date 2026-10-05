@@ -143,6 +143,15 @@ export const getPublicStayListing = async (req, res) => {
       }
     }
 
+    // Extract bannerUrl stored inside operationalSettings (set via /providers/me/banner)
+    let bannerUrl = null;
+    try {
+      const ops = typeof tenant.operationalSettings === "string"
+        ? JSON.parse(tenant.operationalSettings || "{}")
+        : (tenant.operationalSettings || {});
+      bannerUrl = ops?.bannerUrl || null;
+    } catch (_) {}
+
     return res.json({
       success: true,
       data: {
@@ -153,6 +162,7 @@ export const getPublicStayListing = async (req, res) => {
         phone: tenant.providerPhone,
         slug: tenant.slug,
         businessType: tenant.businessType,
+        bannerUrl,
         hasMpesaGateway: Boolean(hasMpesaGateway),
         operationalSettings: typeof tenant.operationalSettings === "string"
           ? (() => { try { return JSON.parse(tenant.operationalSettings); } catch (e) { return {}; } })()

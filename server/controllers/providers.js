@@ -529,3 +529,39 @@ export const uploadPhoto = async (req, res) => {
         return res.status(500).json({ success: false, message: 'Upload failed' });
     }
 };
+
+/**
+ * Upload store banner image to storage.
+ * The URL is stored inside operationalSettings.bannerUrl to avoid a DB migration.
+ */
+export const uploadBanner = async (req, res) => {
+    const { tenantId } = req.user;
+    if (!req.files || !req.files.file) {
+        return res.status(400).json({ success: false, message: 'No file uploaded' });
+    }
+
+    try {
+        const url = await uploadFile(req.files.file, 'banners');
+
+        // Merge bannerUrl into the existing operationalSettings JSON
+        const [[row]] = await db.query(`SELECT operationalSettings FROM provider WHERE tenantId = ?`, [tenantId]);
+        let ops = {};
+        try {
+            ops = typeof row?.operationalSettings === 'string'
+                ? JSON.parse(row.operationalSettings || '{}')
+                : (row?.operationalSettings || {});
+        } catch (_) {}
+
+        ops.bannerUrl = url;
+
+        await db.query(
+            `UPDATE provider SET operationalSettings = ?, updatedAt = NOW() WHERE tenantId = ?`,
+            [JSON.stringify(ops), tenantId]
+        );
+
+        return res.json({ success: true, data: { url } });
+    } catch (err) {
+        console.error('[BANNER] Upload error:', err);
+        return res.status(500).json({ success: false, message: 'Banner upload failed' });
+    }
+};
