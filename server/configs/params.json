@@ -14,6 +14,14 @@
   "notification_url": "",
   "token_expires": "40000",
   "jwt_secret": "MDIzIDE2OjUwOjQ1IEdNVCswMzAwIChFYXN0IEFmcmljYSBUaW1lKSIsInVzZXJJZCI6MTIsImlhdCI6MTY6Nz",
+  "refresh_secret": "MDIzIDE2OjUwOjQ1IEdNVCswMzAwIChFYXN0IEFmcmljYSBUaW1lKSIsInVzZXJJZCI6MTIsImlhdCI6MTY6Nz_refresh_ext",
+  "restore_passphrase": "CHANGE_ME_BEFORE_GOING_LIVE",
+  "allowed_origins": [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://hlynk.co.ke",
+    "https://app.hlynk.co.ke"
+  ],
   "algorithm": "HS256",
   "expires_in": "370m",
   "minio_endpoint": "167.86.73.103",
@@ -38,5 +46,30 @@
     "196.201.212.69",
     "127.0.0.1",
     "::1"
-  ]
+  ],
+  "blocked_ip_ranges": [
+    "# ── MCP/SSE scanner IPs seen in logs (2026-10-05) ──",
+    "2.57.17.",
+    "5.252.83.",
+    "45.133.173.",
+    "2.57.17.",
+    "# ── OWA/Exchange scanner ──",
+    "134.33.66.",
+    "# ── Known hostile ASN ranges (Shodan, Censys, PentestTools) ──",
+    "198.235.24.",
+    "162.142.125.",
+    "167.94.138.",
+    "167.94.145.",
+    "167.94.146.",
+    "185.180.143.",
+    "193.163.125.",
+    "205.210.31.",
+    "# ── Add more entries below as needed ──"
+  ],
+  "rate_limit": {
+    "windowMs": 60000,
+    "max": 120,
+    "scanner_windowMs": 60000,
+    "scanner_max": 10
+  }
 }

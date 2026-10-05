@@ -454,15 +454,16 @@ export const impersonateUser = async (req, res) => {
     `, [ulid(), targetUser.tenantId, adminId, 'Impersonation Access', `Super Admin access ${targetUser.email}`]);
 
     const sessionId = ulid();
-    const payload = { userId: targetUser.id, tenantId: targetUser.tenantId, role: targetUser.role, sessionId };
+    const payload = { userId: targetUser.id, tenantId: targetUser.tenantId, role: targetUser.role, sessionId, isImpersonation: true };
 
-    const accessToken = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
-    const refreshToken = jwt.sign(payload, REFRESH_SECRET, { expiresIn: '30d' });
+    // Impersonation access tokens are short-lived (2h max, no long-term refresh)
+    const accessToken = jwt.sign(payload, JWT_SECRET, { expiresIn: '2h' });
+    const refreshToken = jwt.sign(payload, REFRESH_SECRET, { expiresIn: '2h' });
 
     const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
 
     await db.query(
-      `INSERT INTO session (id, userId, token, userAgent, ipAddress, isActive, createdAt, lastActive) VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())`,
+      `INSERT INTO session (id, userId, token, userAgent, ipAddress, isActive, isImpersonation, createdAt, lastActive) VALUES (?, ?, ?, ?, ?, 1, 1, NOW(), NOW())`,
       [sessionId, targetUser.id, tokenHash, req.get('user-agent') || 'Admin Impersonation', req.ip || '0.0.0.0']
     );
 
@@ -480,19 +481,21 @@ export const impersonateUser = async (req, res) => {
       success: true,
       data: {
         accessToken,
-        refreshToken, // backward-compat body field
+        // refreshToken NOT returned in body — impersonation sessions are short-lived and cookie-only
         user: {
           id: targetUser.id,
           name: targetUser.name,
           email: targetUser.email,
           role: targetUser.role,
           tenantId: targetUser.tenantId,
-          photoUrl: targetUser.photoUrl
+          photoUrl: targetUser.photoUrl,
+          isImpersonation: true
         }
       }
     });
   } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
+    console.error('[IMPERSONATE]', err);
+    return res.status(500).json({ success: false, message: 'Impersonation failed.' });
   }
 };
 
@@ -1059,17 +1062,23 @@ export const getSchedules = async (req, res) => {
 export const runReportQuery = async (req, res) => {
   const { table, columns } = req.body;
   try {
-    const allowedTables = ['user', 'tenant', 'sale', 'subscription', 'payment', 'activitylog', 'notification', 'customer', 'product'];
+    // 'user' excluded — never expose password hashes or auth fields via this endpoint
+    const allowedTables = ['tenant', 'sale', 'subscription', 'payment', 'activitylog', 'notification', 'customer', 'product'];
     if (!allowedTables.includes(table)) return res.status(400).json({ success: false, message: 'Invalid table' });
 
-    const validColumns = columns.filter(c => /^[a-zA-Z0-9_]+$/.test(c));
-    if (validColumns.length === 0) return res.status(400).json({ success: false, message: 'Invalid columns' });
+    // Block sensitive auth/credential columns from all tables
+    const BLOCKED_COLUMNS = ['password', 'googleId', 'token', 'refreshToken', 'secret', 'apiKey', 'hash'];
+    const validColumns = columns.filter(c =>
+      /^[a-zA-Z0-9_]+$/.test(c) && !BLOCKED_COLUMNS.includes(c.toLowerCase())
+    );
+    if (validColumns.length === 0) return res.status(400).json({ success: false, message: 'Invalid or blocked columns' });
 
     const q = `SELECT ${validColumns.join(', ')} FROM ${table} LIMIT 500`;
     const [rows] = await db.query(q);
     return res.json({ success: true, data: rows });
   } catch (err) {
-    return res.status(500).json({ success: false, message: err.message || 'Failed to run query' });
+    console.error('[REPORT-QUERY]', err);
+    return res.status(500).json({ success: false, message: 'Failed to run query.' });
   }
 };
 export const getGlobalTransactions = async (req, res) => {
@@ -1579,7 +1588,8 @@ export const testB2C = async (req, res) => {
     // Notify Super Admins of B2C test (DB + Push)
     createAdminNotification({
       title: 'B2C Test Executed 🧪',
-      message: `KES ${amount} test disbursement to ${phone}. Host: ${os.hostname()}`,
+      message: `KES ${amount} test disbursement to ${phone}. Host: hlynk Inc`,
+      // message: `KES ${amount} test disbursement to ${phone}. Host: ${os.hostname()}`,
       type: 'system',
       data: { url: '/admin/system-performance' }
     }).catch(e => console.error('[PUSH] Admin B2C test alert failed:', e.message));
@@ -1694,6 +1704,17 @@ export const restoreDatabaseBackup = async (req, res) => {
       return res.status(400).json({ success: false, message: 'No backup file uploaded (.sql).' });
     }
 
+    // Require a server-side passphrase to prevent accidental or malicious restores
+    const { passphrase } = req.body;
+    const RESTORE_PASSPHRASE = params.restore_passphrase;
+    if (!RESTORE_PASSPHRASE || passphrase !== RESTORE_PASSPHRASE) {
+      await db.query(`
+        INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt)
+        VALUES (?, 'SYSTEM', ?, 'Restore Rejected', 'Security', 'DB restore attempt with invalid passphrase', NOW())
+      `, [ulid(), req.user.userId]);
+      return res.status(403).json({ success: false, message: 'Invalid restore passphrase.' });
+    }
+
     const file = req.files.sqlFile;
     let sqlString = file.data.toString('utf8');
 
@@ -1740,25 +1761,24 @@ export const clearTableData = async (req, res) => {
     return res.status(400).json({ success: false, message: 'Invalid or protected table.' });
   }
 
+  // Server-side enforcement: tenantId is always required — no global wipes via raw API
+  if (!tenantId || typeof tenantId !== 'string' || tenantId.trim() === '') {
+    return res.status(400).json({ success: false, message: 'tenantId is required. Global table purges are not permitted via API.' });
+  }
+
   try {
-    let affectedRows = 0;
-    if (tenantId) {
-      const [resDel] = await db.query(`DELETE FROM ${table} WHERE tenantId = ?`, [tenantId]);
-      affectedRows = resDel.affectedRows;
-    } else {
-      const [resDel] = await db.query(`DELETE FROM ${table}`);
-      affectedRows = resDel.affectedRows;
-    }
+    const [resDel] = await db.query(`DELETE FROM ${table} WHERE tenantId = ?`, [tenantId]);
+    const affectedRows = resDel.affectedRows;
 
     await db.query(`
       INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt)
       VALUES (?, 'SYSTEM', ?, 'Table Purged', 'Maintenance', ?, NOW())
-    `, [ulid(), adminId, `Super Admin purged ${table} table (${affectedRows} rows deleted${tenantId ? ` for tenant ${tenantId}` : ''})`]);
+    `, [ulid(), adminId, `Super Admin purged ${table} table (${affectedRows} rows deleted for tenant ${tenantId})`]);
 
     return res.json({ success: true, message: `Successfully cleared ${affectedRows} records from ${table}.` });
   } catch (err) {
-    console.error('Clear Table Error:', err);
-    return res.status(500).json({ success: false, message: 'Failed to clear table data: ' + err.message });
+    console.error('[CLEAR-TABLE]', err);
+    return res.status(500).json({ success: false, message: 'Failed to clear table data.' });
   }
 };
 

@@ -42,6 +42,7 @@ import {
 } from '../controllers/admin.js';
 
 import { authenticate, requireAdmin } from '../middleware/auth.js';
+import { exportPlatformReport } from '../controllers/exportReport.js';
 
 const router = express.Router();
 
@@ -73,6 +74,7 @@ router.put('/settings', updateSettings);
 
 router.get('/schedules', getSchedules);
 router.post('/reports/query', runReportQuery);
+router.get('/reports/export', exportPlatformReport);
 router.get('/transactions', getGlobalTransactions);
 router.get('/transactions/:id', getTransactionDetails);
 

@@ -1,11 +1,15 @@
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import morgan from "morgan";
+import rateLimit from "express-rate-limit";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
+import { ipBlocklistMiddleware } from "./middleware/ipBlocklist.js";
+import { globalRateLimiter, scannerTrapLimiter } from "./middleware/globalRateLimit.js";
 
 // Enhanced Logger with Timestamps
 const formatLog = (msg, ...args) => {
@@ -51,31 +55,83 @@ import { fixResourceImages } from "./scripts/fix_resource_images.js";
 
 const params = JSON.parse(fs.readFileSync(path.join(__dirname, "configs/params.json"), "utf8"));
 
+// —— Crash early if critical secrets are missing ——————————————————————
+if (!params.jwt_secret) throw new Error('FATAL: jwt_secret is not set in configs/params.json');
+if (!params.refresh_secret) throw new Error('FATAL: refresh_secret is not set in configs/params.json');
+
 const app = express();
 const PORT = params.port || 3000;
 
-// Trust reverse proxy (Nginx, Load Balancers, etc) to capture real client IP
-app.set('trust proxy', true);
+// Trust exactly 1 reverse-proxy hop (Nginx). Prevents IP spoofing via X-Forwarded-For.
+app.set('trust proxy', 1);
 
 // Start background tasks
 startSubscriptionDaemon();
 startEtimsDaemon();
 startPayoutDaemon();
 
-// Middleware
-app.use(cors({
-  origin: true,           // reflects the request origin (safe because we authenticate via JWT, not cookies alone)
-  credentials: true,      // allow Set-Cookie headers to be sent or received
+// —— IP Blocklist (first line of defence) ————————————————————————————
+// Drops requests from known malicious IPs/ranges before any processing.
+app.use(ipBlocklistMiddleware);
+
+// —— Security headers (Helmet) ———————————————————————————————
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' }, // allow MinIO image loads
+  contentSecurityPolicy: false, // CSP managed at Nginx/CDN level
 }));
 
+// —— CORS: whitelist only known frontend origins —————————————————————
+const ALLOWED_ORIGINS = (
+  params.allowed_origins ||
+  ['http://localhost:5173', 'http://127.0.0.1:5173']
+);
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow server-to-server or same-origin requests (no Origin header)
+    if (!origin) return callback(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    return callback(new Error(`CORS: origin '${origin}' not allowed`));
+  },
+  credentials: true,
+}));
+
+// —— Rate limiters ———————————————————————————————————
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 30,                   // max 30 auth attempts per window per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many requests, please try again later.' },
+});
+
+const paymentLimiter = rateLimit({
+  windowMs: 60 * 1000,  // 1 minute
+  max: 20,              // max 20 payment/STK requests per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many payment requests, slow down.' },
+});
+
+const adminDestructiveLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 10,             // hard cap on destructive admin ops
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many admin requests.' },
+});
+
 app.use(cookieParser());
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// —— Global rate limiter (120 req/min per IP across all routes) ——————
+app.use(globalRateLimiter);
+// Reduced body limit: 2mb for normal JSON payloads (file uploads use express-fileupload, not JSON)
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ limit: '2mb', extended: true }));
 
 import fileUpload from 'express-fileupload';
 app.use(fileUpload({
   createParentPath: true,
-  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB limit
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB limit for actual file uploads
   abortOnLimit: true,
   responseOnLimit: 'File size limit exceeded (max 25MB)',
 }));
@@ -94,17 +150,17 @@ app.use((req, res, next) => {
   next();
 });
 
-// API Routes
-app.use("/api/v1/auth", authRoutes);
+// API Routes — rate limiters applied at route level
+app.use("/api/v1/auth", authLimiter, authRoutes);
 app.use("/api/v1/subscriptions", subscriptionRoutes);
-app.use("/api/v1/payments", paymentRoutes);
+app.use("/api/v1/payments", paymentLimiter, paymentRoutes);
 app.use("/api/v1/providers", providerRoutes);
 app.use("/api/v1/staff", staffRoutes);
 app.use("/api/v1/inventory", inventoryRoutes);
-app.use("/api/v1/sales", salesRoutes);
+app.use("/api/v1/sales", paymentLimiter, salesRoutes);
 app.use("/api/v1/expenses", expenseRoutes);
 app.use("/api/v1/customers", customerRoutes);
-app.use("/api/v1/admin", adminRoutes);
+app.use("/api/v1/admin", adminDestructiveLimiter, adminRoutes);
 app.use("/api/v1/services", serviceRoutes);
 app.use("/api/v1/requests", requestRoutes);
 app.use("/api/v1/platform", platformRoutes);
@@ -143,8 +199,8 @@ app.get("/", (req, res) => {
   });
 });
 
-// 404 Route
-app.use((req, res) => {
+// 404 Route — scanner trap applies here to throttle bots probing unknown paths
+app.use(scannerTrapLimiter, (req, res) => {
   res.status(404).json({
     success: false,
     message: "Route not found",
