@@ -509,28 +509,42 @@ export const getUsers = async (req, res) => {
   const offset = (Number(page) - 1) * Number(limit);
 
   try {
-    let query = `SELECT id, name, email, phone, role, photoUrl FROM user WHERE 1=1`;
+    let query = `
+      SELECT u.id, u.tenantId, u.name, u.email, u.phone, u.role, u.photoUrl, u.createdAt,
+             t.businessName, t.slug as tenantSlug
+      FROM user u
+      LEFT JOIN tenant t ON u.tenantId = t.id
+      WHERE 1=1
+    `;
     const queryParams = [];
 
     if (search) {
-      query += ` AND (name LIKE ? OR email LIKE ? OR phone LIKE ?)`;
-      queryParams.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      query += ` AND (u.name LIKE ? OR u.email LIKE ? OR u.phone LIKE ? OR t.businessName LIKE ?)`;
+      queryParams.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
 
     if (role) {
-      query += ` AND role = ?`;
+      query += ` AND u.role = ?`;
       queryParams.push(role);
     }
 
-    query += ` ORDER BY createdAt DESC LIMIT ? OFFSET ?`;
+    query += ` ORDER BY u.createdAt DESC LIMIT ? OFFSET ?`;
     queryParams.push(Number(limit), offset);
 
     const [items] = await db.query(query, queryParams);
 
-    let countQuery = `SELECT COUNT(*) as total FROM user WHERE 1=1`;
+    let countQuery = `
+      SELECT COUNT(*) as total 
+      FROM user u 
+      LEFT JOIN tenant t ON u.tenantId = t.id 
+      WHERE 1=1
+    `;
     const countParams = [];
-    if (search) { countQuery += ` AND (name LIKE ? OR email LIKE ? OR phone LIKE ?)`; countParams.push(`%${search}%`, `%${search}%`, `%${search}%`); }
-    if (role) { countQuery += ` AND role = ?`; countParams.push(role); }
+    if (search) { 
+      countQuery += ` AND (u.name LIKE ? OR u.email LIKE ? OR u.phone LIKE ? OR t.businessName LIKE ?)`; 
+      countParams.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`); 
+    }
+    if (role) { countQuery += ` AND u.role = ?`; countParams.push(role); }
 
     const [countRes] = await db.query(countQuery, countParams);
     const total = countRes[0].total;
@@ -654,6 +668,234 @@ export const getUserActivity = async (req, res) => {
     return res.json({ success: true, data: logs });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to fetch activity' });
+  }
+};
+
+export const getUserFinancialValue = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    // 1. Fetch user & associated tenant
+    const [[user]] = await db.query(`
+      SELECT u.id, u.tenantId, u.name, u.email, u.phone, u.role, u.photoUrl, u.createdAt,
+             t.id as businessId, t.businessName, t.slug as tenantSlug, t.category, t.planName, t.isActive as tenantIsActive
+      FROM user u
+      LEFT JOIN tenant t ON u.tenantId = t.id
+      WHERE u.id = ?
+    `, [id]);
+
+    let tenantId = user?.tenantId;
+    let targetUser = user;
+
+    // Fallback: If not found by user id, check if id is actually a tenantId (for provider business views)
+    if (!targetUser) {
+      const [[tenant]] = await db.query(`
+        SELECT t.id as businessId, t.id as tenantId, t.businessName, t.slug as tenantSlug, t.category, t.planName, t.isActive as tenantIsActive,
+               u.id, u.name, u.email, u.phone, u.role, u.photoUrl, u.createdAt
+        FROM tenant t
+        LEFT JOIN user u ON (u.tenantId = t.id AND u.role = 'PROVIDER')
+        WHERE t.id = ?
+        LIMIT 1
+      `, [id]);
+
+      if (tenant) {
+        tenantId = tenant.businessId;
+        targetUser = tenant;
+      } else {
+        return res.status(404).json({ success: false, message: 'User or provider business not found' });
+      }
+    }
+
+    if (!tenantId) {
+      return res.json({
+        success: true,
+        data: {
+          user: targetUser,
+          hasBusiness: false,
+          stockValue: { costValue: 0, retailValue: 0, potentialProfit: 0, totalItems: 0, totalUnits: 0, lowStockCount: 0, outOfStockCount: 0 },
+          profit: { allTimeGrossProfit: 0, mtdGrossProfit: 0, todayGrossProfit: 0, totalRevenue: 0, mtdRevenue: 0, todayRevenue: 0, totalSalesCount: 0, marginPercent: 0 },
+          loss: { totalExpenses: 0, mtdExpenses: 0, expenseCount: 0, netLoss: 0, isLoss: false },
+          netProfit: 0,
+          mtdNetProfit: 0,
+          summary: { stockValue: 0, profit: 0, loss: 0, netProfit: 0, isLoss: false }
+        }
+      });
+    }
+
+    // 2. STOCK VALUE (Inventory Valuation)
+    const [[stockRes]] = await db.query(`
+      SELECT 
+        COUNT(*) as totalItems,
+        IFNULL(SUM(stockLevel), 0) as totalUnits,
+        IFNULL(SUM(buyingPrice * stockLevel), 0) as costValue,
+        IFNULL(SUM(price * stockLevel), 0) as retailValue,
+        IFNULL(SUM((price - buyingPrice) * stockLevel), 0) as potentialProfit,
+        COUNT(CASE WHEN stockLevel <= IFNULL(minLevel, 5) THEN 1 END) as lowStockCount,
+        COUNT(CASE WHEN stockLevel = 0 THEN 1 END) as outOfStockCount
+      FROM product
+      WHERE tenantId = ? AND IFNULL(type, 'GOOD') != 'SERVICE'
+    `, [tenantId]);
+
+    // 3. PROFIT (Sales & Gross Profit)
+    let allTimeGrossProfit = 0;
+    let totalRevenue = 0;
+    let totalSalesCount = 0;
+    try {
+      const [[saleProfitRes]] = await db.query(`
+        SELECT 
+          IFNULL(SUM((si.price - IFNULL(si.buyingPrice, 0)) * si.quantity), 0) as grossProfit,
+          IFNULL(SUM(s.totalAmount), 0) as totalRevenue,
+          COUNT(DISTINCT s.id) as totalSalesCount
+        FROM sale s
+        JOIN saleitem si ON s.id = si.saleId
+        WHERE s.tenantId = ? AND s.status = 0
+      `, [tenantId]);
+      allTimeGrossProfit = Number(saleProfitRes?.grossProfit || 0);
+      totalRevenue = Number(saleProfitRes?.totalRevenue || 0);
+      totalSalesCount = Number(saleProfitRes?.totalSalesCount || 0);
+    } catch (e) {
+      const [[joinProfitRes]] = await db.query(`
+        SELECT 
+          IFNULL(SUM((si.price - IFNULL(p.buyingPrice, 0)) * si.quantity), 0) as grossProfit,
+          IFNULL(SUM(s.totalAmount), 0) as totalRevenue,
+          COUNT(DISTINCT s.id) as totalSalesCount
+        FROM sale s
+        JOIN saleitem si ON s.id = si.saleId
+        LEFT JOIN product p ON si.productId = p.id
+        WHERE s.tenantId = ? AND s.status = 0
+      `, [tenantId]);
+      allTimeGrossProfit = Number(joinProfitRes?.grossProfit || 0);
+      totalRevenue = Number(joinProfitRes?.totalRevenue || 0);
+      totalSalesCount = Number(joinProfitRes?.totalSalesCount || 0);
+    }
+
+    // MTD Gross Profit (Month-to-date EAT)
+    let mtdGrossProfit = 0;
+    let mtdRevenue = 0;
+    try {
+      const [[mtdProfitRes]] = await db.query(`
+        SELECT 
+          IFNULL(SUM((si.price - IFNULL(si.buyingPrice, 0)) * si.quantity), 0) as grossProfit,
+          IFNULL(SUM(s.totalAmount), 0) as revenue
+        FROM sale s
+        JOIN saleitem si ON s.id = si.saleId
+        WHERE s.tenantId = ? AND s.status = 0
+          AND DATE(CONVERT_TZ(s.createdAt, '+00:00', '+03:00')) >= DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+03:00'), '%Y-%m-01')
+      `, [tenantId]);
+      mtdGrossProfit = Number(mtdProfitRes?.grossProfit || 0);
+      mtdRevenue = Number(mtdProfitRes?.revenue || 0);
+    } catch (e) {
+      const [[joinMtdRes]] = await db.query(`
+        SELECT 
+          IFNULL(SUM((si.price - IFNULL(p.buyingPrice, 0)) * si.quantity), 0) as grossProfit,
+          IFNULL(SUM(s.totalAmount), 0) as revenue
+        FROM sale s
+        JOIN saleitem si ON s.id = si.saleId
+        LEFT JOIN product p ON si.productId = p.id
+        WHERE s.tenantId = ? AND s.status = 0
+          AND DATE(CONVERT_TZ(s.createdAt, '+00:00', '+03:00')) >= DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+03:00'), '%Y-%m-01')
+      `, [tenantId]);
+      mtdGrossProfit = Number(joinMtdRes?.grossProfit || 0);
+      mtdRevenue = Number(joinMtdRes?.revenue || 0);
+    }
+
+    // Today Gross Profit (Today EAT)
+    let todayGrossProfit = 0;
+    let todayRevenue = 0;
+    try {
+      const [[todayRes]] = await db.query(`
+        SELECT 
+          IFNULL(SUM((si.price - IFNULL(si.buyingPrice, 0)) * si.quantity), 0) as grossProfit,
+          IFNULL(SUM(s.totalAmount), 0) as revenue
+        FROM sale s
+        JOIN saleitem si ON s.id = si.saleId
+        WHERE s.tenantId = ? AND s.status = 0
+          AND DATE(CONVERT_TZ(s.createdAt, '+00:00', '+03:00')) = CURDATE()
+      `, [tenantId]);
+      todayGrossProfit = Number(todayRes?.grossProfit || 0);
+      todayRevenue = Number(todayRes?.revenue || 0);
+    } catch (e) {
+      const [[joinTodayRes]] = await db.query(`
+        SELECT 
+          IFNULL(SUM((si.price - IFNULL(p.buyingPrice, 0)) * si.quantity), 0) as grossProfit,
+          IFNULL(SUM(s.totalAmount), 0) as revenue
+        FROM sale s
+        JOIN saleitem si ON s.id = si.saleId
+        LEFT JOIN product p ON si.productId = p.id
+        WHERE s.tenantId = ? AND s.status = 0
+          AND DATE(CONVERT_TZ(s.createdAt, '+00:00', '+03:00')) = CURDATE()
+      `, [tenantId]);
+      todayGrossProfit = Number(joinTodayRes?.grossProfit || 0);
+      todayRevenue = Number(joinTodayRes?.revenue || 0);
+    }
+
+    // 4. LOSS (Expenses & Cost Outflows)
+    const [[allTimeExpRes]] = await db.query(`
+      SELECT IFNULL(SUM(amount), 0) as total, COUNT(*) as count FROM expense WHERE tenantId = ?
+    `, [tenantId]);
+    const totalExpenses = Number(allTimeExpRes?.total || 0);
+    const expenseCount = Number(allTimeExpRes?.count || 0);
+
+    const [[mtdExpRes]] = await db.query(`
+      SELECT IFNULL(SUM(amount), 0) as total FROM expense
+      WHERE tenantId = ?
+        AND DATE(CONVERT_TZ(createdAt, '+00:00', '+03:00')) >= DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+03:00'), '%Y-%m-01')
+    `, [tenantId]);
+    const mtdExpenses = Number(mtdExpRes?.total || 0);
+
+    // Net Profit & Loss Calculation
+    const netProfit = allTimeGrossProfit - totalExpenses;
+    const mtdNetProfit = mtdGrossProfit - mtdExpenses;
+    const isNetLoss = netProfit < 0;
+    const netLossAmount = isNetLoss ? Math.abs(netProfit) : 0;
+    const marginPercent = totalRevenue > 0 ? Number(((allTimeGrossProfit / totalRevenue) * 100).toFixed(1)) : 0;
+
+    return res.json({
+      success: true,
+      data: {
+        user: targetUser,
+        hasBusiness: true,
+        stockValue: {
+          costValue: Number(stockRes?.costValue || 0),
+          retailValue: Number(stockRes?.retailValue || 0),
+          potentialProfit: Number(stockRes?.potentialProfit || 0),
+          totalItems: Number(stockRes?.totalItems || 0),
+          totalUnits: Number(stockRes?.totalUnits || 0),
+          lowStockCount: Number(stockRes?.lowStockCount || 0),
+          outOfStockCount: Number(stockRes?.outOfStockCount || 0)
+        },
+        profit: {
+          allTimeGrossProfit,
+          mtdGrossProfit,
+          todayGrossProfit,
+          totalRevenue,
+          mtdRevenue,
+          todayRevenue,
+          totalSalesCount,
+          marginPercent
+        },
+        loss: {
+          totalExpenses,
+          mtdExpenses,
+          expenseCount,
+          netLoss: netLossAmount,
+          isLoss: isNetLoss
+        },
+        netProfit,
+        mtdNetProfit,
+        summary: {
+          stockValue: Number(stockRes?.costValue || 0),
+          retailStockValue: Number(stockRes?.retailValue || 0),
+          profit: allTimeGrossProfit,
+          loss: totalExpenses,
+          netProfit: netProfit,
+          isLoss: isNetLoss
+        }
+      }
+    });
+  } catch (err) {
+    console.error('[GET USER FINANCIAL VALUE]', err);
+    return res.status(500).json({ success: false, message: 'Failed to calculate user financial value' });
   }
 };
 

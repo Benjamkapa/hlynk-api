@@ -49,6 +49,7 @@ import publicRoutes from "./routes/public.js";
 import { startSubscriptionDaemon } from "./daemon/subscriptions.js";
 import { startEtimsDaemon } from "./daemon/etims.js";
 import { startPayoutDaemon } from "./daemon/payouts.js";
+import { startBackupDaemon } from "./daemon/backup.js";
 import { db, runAutoMigrations } from "./dbms/mysql.js";
 import { initStorage, minioClient } from "./utils/storage.js";
 import { fixResourceImages } from "./scripts/fix_resource_images.js";
@@ -69,6 +70,7 @@ app.set('trust proxy', 1);
 startSubscriptionDaemon();
 startEtimsDaemon();
 startPayoutDaemon();
+startBackupDaemon();
 
 // —— IP Blocklist (first line of defence) ————————————————————————————
 // Drops requests from known malicious IPs/ranges before any processing.

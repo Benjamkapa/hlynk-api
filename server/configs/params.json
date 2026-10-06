@@ -15,7 +15,7 @@
   "token_expires": "40000",
   "jwt_secret": "MDIzIDE2OjUwOjQ1IEdNVCswMzAwIChFYXN0IEFmcmljYSBUaW1lKSIsInVzZXJJZCI6MTIsImlhdCI6MTY6Nz",
   "refresh_secret": "MDIzIDE2OjUwOjQ1IEdNVCswMzAwIChFYXN0IEFmcmljYSBUaW1lKSIsInVzZXJJZCI6MTIsImlhdCI6MTY6Nz_refresh_ext",
-  "restore_passphrase": "CHANGE_ME_BEFORE_GOING_LIVE",
+  "restore_passphrase": "FortJesus-_@G2!^^",
   "allowed_origins": [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
@@ -51,11 +51,11 @@
   "admin_whitelist_ips": [
     "# Exact IPs or subnet prefixes allowed to log in as SUPER_ADMIN.",
     "# A prefix like '197.248.112.' matches the entire /24 subnet.",
-    "127.0.0.1",
-    "::1",
     "197.248.112.175",
     "105.160.27.242",
-    "104.28.211.149"
+    "104.28.211.149",
+    "127.0.0.1",
+    "::1"
   ],
   "blocked_ip_ranges": [
     "# ── .env probe / recon bots seen in logs (2026-10-05) ──",

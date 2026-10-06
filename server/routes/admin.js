@@ -10,6 +10,7 @@ import {
   getSessions,
   terminateSession,
   getUserActivity,
+  getUserFinancialValue,
   upgradePlan,
   suspendTenant,
   activateTenant,
@@ -87,6 +88,8 @@ router.post('/test-b2c', testB2C);
 router.get('/users', getUsers);
 router.delete('/users/:id', deleteUser);
 router.get('/users/:id/activity', getUserActivity);
+router.get('/users/:id/value', getUserFinancialValue);
+router.get('/tenants/:id/value', getUserFinancialValue);
 router.post('/users/:id/impersonate', impersonateUser);
 
 router.get('/sessions', getSessions);

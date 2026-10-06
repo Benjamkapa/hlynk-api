@@ -89,7 +89,7 @@ export const runAutoMigrations = async () => {
 
     if (sessionFieldNames.length && !sessionFieldNames.includes('displacedBy')) {
       await pool.query('ALTER TABLE session ADD COLUMN displacedBy VARCHAR(64) NULL DEFAULT NULL;');
-      console.log('🔒 [DB] Added displacedBy to session table (admin single-session enforcement).');
+      // console.log('🔒 [DB] Added displacedBy to session table (admin single-session enforcement).');
     }
   } catch (err) {
     console.warn('⚠️ [DB] Auto-migration notice:', err.message);

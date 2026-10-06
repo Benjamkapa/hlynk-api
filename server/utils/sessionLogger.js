@@ -99,7 +99,7 @@ export const logSessionLogin = async ({ user, tenant, ipAddress, userAgent, sess
   const tenantId = tenant?.id || user?.tenantId || 'SYSTEM';
 
   // Live Terminal Stream for PM2
-  console.log(`${C.brightGreen}${C.bold}🟢 [SESSION:LOGIN]${C.reset} ${C.bold}${userName}${C.reset} (${C.cyan}${userEmail}${C.reset}) [${C.brightYellow}${role}${C.reset}]`);
+  console.log(`${C.brightGreen}${C.bold}🟢 [SESSION:LOGIN]${C.reset} ${C.bold}${userName}${C.reset} [${C.brightYellow}${role}${C.reset}]`);
   console.log(`   🏢 ${C.dim}Business:${C.reset} ${business} ${C.dim}(Tenant: ${tenantId.slice(-8).toUpperCase()})${C.reset}`);
   console.log(`   📱 ${C.dim}Device:${C.reset} ${device.summary} ${C.dim}(${device.deviceType})${C.reset}`);
   console.log(`   🌐 ${C.dim}IP:${C.reset} ${ipAddress} | ${C.dim}Session:${C.reset} ${sessionId} | ${C.dim}Auth:${C.reset} ${isNew ? 'Google Signup' : 'Google OAuth'}`);
@@ -124,7 +124,7 @@ export const logSessionLogout = async ({ user, sessionId, ipAddress }) => {
   const userEmail = user?.email || 'N/A';
   const role = user?.role || 'USER';
 
-  console.log(`${C.brightRed}${C.bold}🔴 [SESSION:LOGOUT]${C.reset} ${C.bold}${userName}${C.reset} (${C.cyan}${userEmail}${C.reset}) [${C.yellow}${role}${C.reset}] | ${C.dim}Session closed:${C.reset} ${sessionId} | ${C.dim}IP:${C.reset} ${ipAddress}`);
+  console.log(`${C.brightRed}${C.bold}🔴 [SESSION:LOGOUT]${C.reset} ${C.bold}${userName}${C.reset} [${C.yellow}${role}${C.reset}] | ${C.dim}Session closed:${C.reset} ${sessionId} | ${C.dim}IP:${C.reset} ${ipAddress}`);
 
   await recordActivityDb({
     tenantId: user?.tenantId || 'SYSTEM',

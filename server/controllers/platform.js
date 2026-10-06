@@ -96,9 +96,23 @@ export const clearNotifications = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Failed to clear notifications' });
   }
 };
+export const getMyPlatformReview = async (req, res) => {
+  const { tenantId, userId } = req.user;
+  try {
+    const [reviews] = await db.query(
+      'SELECT * FROM platformreview WHERE tenantId = ? OR userId = ? ORDER BY createdAt DESC LIMIT 1',
+      [tenantId, userId]
+    );
+    return res.json({ success: true, data: reviews[0] || null });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to fetch review' });
+  }
+};
+
 export const submitPlatformReview = async (req, res) => {
   const { tenantId, userId } = req.user;
-  const { rating, reviewText } = req.body;
+  const rating = Number(req.body.rating) || 5;
+  const reviewText = req.body.reviewText || req.body.comment || '';
 
   try {
     // 1. Get business and user names for the review record
@@ -111,6 +125,15 @@ export const submitPlatformReview = async (req, res) => {
       INSERT INTO platformreview (id, tenantId, userId, rating, reviewText, businessName, ownerName, status, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, 0, NOW())
     `, [reviewId, tenantId, userId, rating, reviewText, tenant?.businessName || 'Business', user?.name || 'Owner']);
+
+    // Auto-clean any review request notifications for this tenant so they never prompt again
+    try {
+      await db.query(`
+        DELETE FROM notification 
+        WHERE (tenantId = ? OR tenantId IS NULL) 
+          AND (type LIKE '%review%' OR title LIKE '%Experience%' OR message LIKE '%rating%')
+      `, [tenantId]);
+    } catch (_) {}
 
     // Notify Super Admins of new review
     sendPushToAdmins({
