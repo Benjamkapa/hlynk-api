@@ -221,76 +221,19 @@ export const googleAuth = async (req, res) => {
 
     if (user.isActive === 0 || !user.tenantIsActive) return res.status(403).json({ success: false, message: 'Account inactive' });
 
-    // ENFORCE ADMIN IP WHITELIST + SINGLE-SESSION
-    // Gate 1: IP must be whitelisted — unknown IPs cannot log in as admin at all.
-    // Gate 2: Once the IP is confirmed as trusted, enforce one active session at a time.
-    //         Only a whitelisted IP can ever displace an existing session.
+    // ADMIN CONCURRENT SESSION HANDLING
+    // IP Whitelist blocking is disabled to support roaming/dynamic networks.
+    // Existing sessions are NOT killed automatically. Instead, existing admins
+    // are notified with details of the new incoming session so they can kill it or leave it be.
+    let priorAdminSessions = [];
+    const resolvedIP = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket?.remoteAddress || ipAddress || 'Unknown';
+
     if (user.role === 'SUPER_ADMIN') {
-      const { authorized, clientIP: resolvedIP } = isAdminIPAuthorized(req);
-
-      if (!authorized) {
-        // Log the blocked attempt
-        console.warn(`[SECURITY] 🚨 Blocked SUPER_ADMIN login for ${user.email} from unauthorized IP: ${resolvedIP}`);
-        try {
-          await db.query(`
-            INSERT INTO activitylog (id, tenantId, userId, action, logName, details, ipAddress, createdAt)
-            VALUES (?, ?, ?, 'Unauthorized Admin Login Blocked', 'Security', ?, ?, NOW())
-          `, [
-            ulid(),
-            user.tenantId || 'SYSTEM',
-            user.id,
-            `Admin login attempt for ${user.email} was blocked: IP address ${resolvedIP} is not in the authorized Admin IP Whitelist.`,
-            resolvedIP
-          ]);
-        } catch (_) {}
-
-        return res.status(403).json({
-          success: false,
-          message: `Access Denied: Your IP address (${resolvedIP}) is not authorized for Administrator access. Please connect via an approved network or update the whitelist in params.json.`
-        });
-      }
-
-      // Gate 2: IP is trusted — enforce single active session (whitelisted IP replaces any prior session)
       const [existingSessions] = await db.query(
         `SELECT id FROM session WHERE userId = ? AND isActive = 1`,
         [user.id]
       );
-      if (existingSessions.length > 0) {
-        // Mark displaced sessions with a reason so the client can show a targeted warning
-        await db.query(
-          `UPDATE session SET isActive = 0, displacedBy = ? WHERE userId = ? AND isActive = 1`,
-          [resolvedIP, user.id]
-        );
-        const count = existingSessions.length;
-        console.log(`[SECURITY] 🔒 Admin single-session: invalidated ${count} prior session(s) for ${user.email} — new trusted login from ${resolvedIP}`);
-
-        // Parse the incoming device for the alert message
-        const { parseDevice } = await import('../utils/sessionLogger.js');
-        const device = parseDevice(userAgent);
-
-        // Fire an immediate in-app + push notification so the real admin is alerted instantly
-        try {
-          await createAdminNotification({
-            title: '🔒 Admin Session Replaced',
-            message: `A new admin login for ${user.email} from trusted IP ${resolvedIP} (${device.summary}) has replaced your active session. If this was not you, change your Google account password immediately.`,
-            type: 'security'
-          });
-        } catch (_) {}
-
-        // Audit log
-        try {
-          await db.query(`
-            INSERT INTO activitylog (id, tenantId, userId, action, logName, details, ipAddress, createdAt)
-            VALUES (?, ?, ?, 'Admin Session Replaced', 'Security', ?, ?, NOW())
-          `, [
-            ulid(),
-            user.tenantId || 'SYSTEM',
-            user.id,
-            `New admin login for ${user.email} from trusted IP ${resolvedIP} (${device.summary}) invalidated ${count} prior active session(s).`,
-            resolvedIP
-          ]);
-        } catch (_) {}
-      }
+      priorAdminSessions = existingSessions || [];
     }
 
     let activeModules = [];
@@ -301,17 +244,49 @@ export const googleAuth = async (req, res) => {
       activeModules = ['POS'];
     }
 
-    const { accessToken, refreshToken, sessionId } = await issueTokens(user, res, userAgent, ipAddress);
+    const { accessToken, refreshToken, sessionId } = await issueTokens(user, res, userAgent, resolvedIP);
     
     // Real-Time Session Audit
     logSessionLogin({
       user,
       tenant: { id: user.tenantId, businessName: user.businessName },
-      ipAddress,
+      ipAddress: resolvedIP,
       userAgent,
       sessionId,
       isNew: false
     });
+
+    // Notify existing admin about concurrent session so they can kill it or leave it be
+    if (user.role === 'SUPER_ADMIN' && priorAdminSessions.length > 0) {
+      try {
+        const { parseDevice } = await import('../utils/sessionLogger.js');
+        const device = parseDevice(userAgent);
+
+        await createAdminNotification({
+          title: '⚠️ New Admin Session Active',
+          message: `A new admin login for ${user.email} from IP ${resolvedIP} (${device.summary}) was initiated. Your existing session is still active. Review or terminate this new session if unrecognized.`,
+          type: 'security',
+          data: {
+            url: '/admin/user-operations',
+            sessionId,
+            ip: resolvedIP
+          }
+        });
+
+        await db.query(`
+          INSERT INTO activitylog (id, tenantId, userId, action, logName, details, ipAddress, createdAt)
+          VALUES (?, ?, ?, 'Concurrent Admin Login Alert', 'Security', ?, ?, NOW())
+        `, [
+          ulid(),
+          user.tenantId || 'SYSTEM',
+          user.id,
+          `Concurrent admin login for ${user.email} from IP ${resolvedIP} (${device.summary}). Prior ${priorAdminSessions.length} active session(s) were kept alive.`,
+          resolvedIP
+        ]);
+      } catch (err) {
+        console.error('[SECURITY] Failed to dispatch concurrent session alert:', err.message);
+      }
+    }
 
     return res.json({ 
       success: true, 

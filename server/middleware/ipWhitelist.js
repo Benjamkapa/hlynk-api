@@ -79,16 +79,24 @@ export const isAdminIPAuthorized = (req) => {
     return { authorized: true, clientIP, whitelist: params.admin_whitelist_ips || [] };
   }
 
-  const whitelist = params.admin_whitelist_ips || [];
-
-  // Empty whitelist = open access (useful in LOCAL/dev mode)
-  if (whitelist.length === 0) {
-    return { authorized: true, clientIP, whitelist };
+  // 1. If admin IP whitelist is explicitly disabled, allow login from any network
+  if (params.admin_ip_whitelist_enabled === false) {
+    return { authorized: true, clientIP, whitelist: params.admin_whitelist_ips || [], disabled: true };
   }
 
-  const isAuthorized = whitelist.some(item => {
-    const entry = String(item).trim();
-    if (!entry || entry.startsWith('#')) return false;
+  const whitelist = params.admin_whitelist_ips || [];
+
+  // Filter out comments and whitespace
+  const activeEntries = whitelist
+    .map(item => String(item).trim())
+    .filter(entry => entry && !entry.startsWith('#'));
+
+  // 2. Empty whitelist or wildcard '*' = open access (dynamic networks supported)
+  if (activeEntries.length === 0 || activeEntries.includes('*')) {
+    return { authorized: true, clientIP, whitelist, disabled: true };
+  }
+
+  const isAuthorized = activeEntries.some(entry => {
     return clientIP === entry || clientIP.startsWith(entry) || rawIP === entry || rawIP.startsWith(entry);
   });
 

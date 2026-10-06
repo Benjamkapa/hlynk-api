@@ -89,10 +89,9 @@ export const requireAdmin = (req, res, next) => {
     return res.status(403).json({ success: false, message: 'Forbidden: Admin access required' });
   }
 
-  // Defense-in-depth: verify IP on every admin API call, not just at login.
-  // A stolen JWT used from an unrecognised network is rejected here.
-  const { authorized, clientIP } = isAdminIPAuthorized(req);
-  if (!authorized) {
+  // IP verification: only block if admin IP whitelist is explicitly enabled in configs/params.json
+  const { authorized, clientIP, disabled } = isAdminIPAuthorized(req);
+  if (!disabled && !authorized) {
     console.warn(`[SECURITY] 🚨 Blocked admin API call to ${req.method} ${req.path} from unauthorized IP: ${clientIP}`);
     return res.status(403).json({
       success: false,

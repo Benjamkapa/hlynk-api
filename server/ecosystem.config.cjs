@@ -2,7 +2,7 @@ module.exports = {
   apps: [{
     name: 'hlynk-server',
     script: 'index.js',
-    cwd: './',
+    cwd: __dirname,
     interpreter: 'node',
     wait_ready: true,
     listen_timeout: 10000,

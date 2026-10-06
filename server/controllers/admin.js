@@ -346,7 +346,8 @@ export const getSystemHealth = async (req, res) => {
         adminIpSecurity: {
           currentIP: req.clientIP || req.ip,
           isWhitelisted: true,
-          whitelist: params.admin_whitelist_ips || []
+          whitelist: params.admin_whitelist_ips || [],
+          enabled: params.admin_ip_whitelist_enabled !== false
         }
       }
     });

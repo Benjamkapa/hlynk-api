@@ -48,14 +48,9 @@
     "127.0.0.1",
     "::1"
   ],
+  "admin_ip_whitelist_enabled": false,
   "admin_whitelist_ips": [
-    "# Exact IPs or subnet prefixes allowed to log in as SUPER_ADMIN.",
-    "# A prefix like '197.248.112.' matches the entire /24 subnet.",
-    "197.248.112.175",
-    "105.160.27.242",
-    "104.28.211.149",
-    "127.0.0.1",
-    "::1"
+    "*"
   ],
   "blocked_ip_ranges": [
     "# ── .env probe / recon bots seen in logs (2026-10-05) ──",
