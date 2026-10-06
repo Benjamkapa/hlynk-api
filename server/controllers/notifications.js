@@ -9,7 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '../.env'), quiet: true });
 
 
-// Initialize web-push with VAPID keys
+// Initialize web-push with VAPID key
 const setupWebPush = () => {
     const publicKey = process.env.VAPID_PUBLIC_KEY;
     const privateKey = process.env.VAPID_PRIVATE_KEY;

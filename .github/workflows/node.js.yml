@@ -57,14 +57,10 @@ jobs:
       working-directory: server
       run: rm -f .env
 
-    - name: Stop existing PM2 process if it exists
-      run: pm2 delete hlynk-server || true
-
-    - name: Start PM2 process
+    - name: Restart PM2 process
       working-directory: server
+      shell: bash -i {0}
       run: |
-        source /etc/profile
-        pm2 start index.js --name hlynk-server --interpreter node --update-env
-
-    - name: Save PM2 process list
-      run: pm2 save
+        pm2 delete hlynk-server || true
+        pm2 start index.js --name hlynk-server --update-env
+        pm2 save
