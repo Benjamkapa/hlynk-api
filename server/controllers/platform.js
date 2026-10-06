@@ -88,12 +88,22 @@ export const markNotificationRead = async (req, res) => {
 export const clearNotifications = async (req, res) => {
   const { tenantId } = req.user;
   try {
-    // Hard delete to "clear space" as requested
     await db.query(`DELETE FROM notification WHERE tenantId = ?`, [tenantId]);
     return res.json({ success: true, message: 'All notifications permanently deleted' });
   } catch (err) {
     console.error('clearNotifications Error:', err);
     return res.status(500).json({ success: false, message: 'Failed to clear notifications' });
+  }
+};
+
+export const deleteNotification = async (req, res) => {
+  const { id } = req.params;
+  const { tenantId } = req.user;
+  try {
+    await db.query(`DELETE FROM notification WHERE id = ? AND (tenantId = ? OR tenantId IS NULL)`, [id, tenantId]);
+    return res.json({ success: true, message: 'Notification deleted' });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to delete notification' });
   }
 };
 export const getMyPlatformReview = async (req, res) => {

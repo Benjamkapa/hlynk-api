@@ -170,6 +170,8 @@ export const googleAuth = async (req, res) => {
         }
 
         const trialEndVal = `DATE_ADD(NOW(), INTERVAL ${trialDays} DAY)`;
+        // JS equivalent for the response payload (so frontend FeatureGate sees an active trial)
+        const trialEndDate = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000).toISOString();
 
         // Generate a new unique referral code for this tenant
         const newReferralCode = (registration.businessName.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase());
@@ -208,7 +210,7 @@ export const googleAuth = async (req, res) => {
             accessToken, 
             refreshToken, 
             referralApplied,
-            user: { ...newUser[0], activeModules: ['POS'], subscription: { planName: requestedPlan, status: subStatus } } 
+            user: { ...newUser[0], activeModules: ['POS'], subscription: { planName: requestedPlan, status: subStatus, trialEndDate } } 
           } 
         });
       } catch (err) {
