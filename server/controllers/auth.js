@@ -221,11 +221,16 @@ export const googleAuth = async (req, res) => {
 
     if (user.isActive === 0 || !user.tenantIsActive) return res.status(403).json({ success: false, message: 'Account inactive' });
 
-    // ENFORCE ADMIN IP RESTRICTION: SUPER_ADMIN must be on an authorized IP
+    // ENFORCE ADMIN IP WHITELIST + SINGLE-SESSION
+    // Gate 1: IP must be whitelisted — unknown IPs cannot log in as admin at all.
+    // Gate 2: Once the IP is confirmed as trusted, enforce one active session at a time.
+    //         Only a whitelisted IP can ever displace an existing session.
     if (user.role === 'SUPER_ADMIN') {
-      const { authorized, clientIP } = isAdminIPAuthorized(req);
+      const { authorized, clientIP: resolvedIP } = isAdminIPAuthorized(req);
+
       if (!authorized) {
-        console.warn(`[SECURITY] 🚨 Blocked SUPER_ADMIN login attempt for ${user.email} from unauthorized IP: ${clientIP}`);
+        // Log the blocked attempt
+        console.warn(`[SECURITY] 🚨 Blocked SUPER_ADMIN login for ${user.email} from unauthorized IP: ${resolvedIP}`);
         try {
           await db.query(`
             INSERT INTO activitylog (id, tenantId, userId, action, logName, details, ipAddress, createdAt)
@@ -234,15 +239,57 @@ export const googleAuth = async (req, res) => {
             ulid(),
             user.tenantId || 'SYSTEM',
             user.id,
-            `Admin login attempt for ${user.email} was blocked: IP address ${clientIP} is not in the authorized Admin IP Whitelist.`,
-            clientIP
+            `Admin login attempt for ${user.email} was blocked: IP address ${resolvedIP} is not in the authorized Admin IP Whitelist.`,
+            resolvedIP
           ]);
         } catch (_) {}
 
         return res.status(403).json({
           success: false,
-          message: `Access Denied: Your IP address (${clientIP}) is not authorized for Administrator access. Please connect via an approved network.`
+          message: `Access Denied: Your IP address (${resolvedIP}) is not authorized for Administrator access. Please connect via an approved network or update the whitelist in params.json.`
         });
+      }
+
+      // Gate 2: IP is trusted — enforce single active session (whitelisted IP replaces any prior session)
+      const [existingSessions] = await db.query(
+        `SELECT id FROM session WHERE userId = ? AND isActive = 1`,
+        [user.id]
+      );
+      if (existingSessions.length > 0) {
+        // Mark displaced sessions with a reason so the client can show a targeted warning
+        await db.query(
+          `UPDATE session SET isActive = 0, displacedBy = ? WHERE userId = ? AND isActive = 1`,
+          [resolvedIP, user.id]
+        );
+        const count = existingSessions.length;
+        console.log(`[SECURITY] 🔒 Admin single-session: invalidated ${count} prior session(s) for ${user.email} — new trusted login from ${resolvedIP}`);
+
+        // Parse the incoming device for the alert message
+        const { parseDevice } = await import('../utils/sessionLogger.js');
+        const device = parseDevice(userAgent);
+
+        // Fire an immediate in-app + push notification so the real admin is alerted instantly
+        try {
+          await createAdminNotification({
+            title: '🔒 Admin Session Replaced',
+            message: `A new admin login for ${user.email} from trusted IP ${resolvedIP} (${device.summary}) has replaced your active session. If this was not you, change your Google account password immediately.`,
+            type: 'security'
+          });
+        } catch (_) {}
+
+        // Audit log
+        try {
+          await db.query(`
+            INSERT INTO activitylog (id, tenantId, userId, action, logName, details, ipAddress, createdAt)
+            VALUES (?, ?, ?, 'Admin Session Replaced', 'Security', ?, ?, NOW())
+          `, [
+            ulid(),
+            user.tenantId || 'SYSTEM',
+            user.id,
+            `New admin login for ${user.email} from trusted IP ${resolvedIP} (${device.summary}) invalidated ${count} prior active session(s).`,
+            resolvedIP
+          ]);
+        } catch (_) {}
       }
     }
 

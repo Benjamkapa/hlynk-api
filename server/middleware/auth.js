@@ -25,7 +25,7 @@ export const authenticate = async (req, res, next) => {
 
     // Verify session and fetch LATEST user data (role/permissions)
     const [userRows] = await db.query(`
-      SELECT s.id as sessionId, s.isActive, u.role, u.permissions, u.name as userName, t.businessName as tenantName 
+      SELECT s.id as sessionId, s.isActive, s.displacedBy, u.role, u.permissions, u.name as userName, t.businessName as tenantName 
       FROM session s
       JOIN user u ON s.userId = u.id
       LEFT JOIN tenant t ON u.tenantId = t.id
@@ -35,6 +35,14 @@ export const authenticate = async (req, res, next) => {
     const sessionUser = userRows[0];
 
     if (!sessionUser || !sessionUser.isActive) {
+      // Distinguish a session killed by admin single-session enforcement from a regular expiry
+      if (sessionUser && sessionUser.displacedBy) {
+        return res.status(401).json({
+          success: false,
+          code: 'SESSION_DISPLACED',
+          message: 'Your admin session was terminated because a new login occurred. If this was not you, your Google account credentials may be compromised.'
+        });
+      }
       return res.status(401).json({ success: false, message: 'Session expired or terminated' });
     }
 
@@ -81,14 +89,17 @@ export const requireAdmin = (req, res, next) => {
     return res.status(403).json({ success: false, message: 'Forbidden: Admin access required' });
   }
 
+  // Defense-in-depth: verify IP on every admin API call, not just at login.
+  // A stolen JWT used from an unrecognised network is rejected here.
   const { authorized, clientIP } = isAdminIPAuthorized(req);
   if (!authorized) {
     console.warn(`[SECURITY] 🚨 Blocked admin API call to ${req.method} ${req.path} from unauthorized IP: ${clientIP}`);
     return res.status(403).json({
       success: false,
-      message: `Forbidden: Admin operations restricted to approved IP addresses (Current: ${clientIP})`
+      message: `Forbidden: Admin operations are restricted to approved IP addresses. Current IP (${clientIP}) is not in the whitelist.`
     });
   }
 
   next();
 };
+

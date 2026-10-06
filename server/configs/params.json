@@ -49,7 +49,9 @@
     "::1"
   ],
   "admin_whitelist_ips": [
-    "127.0.0.1", 
+    "# Exact IPs or subnet prefixes allowed to log in as SUPER_ADMIN.",
+    "# A prefix like '197.248.112.' matches the entire /24 subnet.",
+    "127.0.0.1",
     "::1",
     "197.248.112.175",
     "104.28.211.149"

@@ -57,9 +57,9 @@ export const validateMpesaIP = (req, res, next) => {
 
 /**
  * Helper to check whether a request comes from an authorized Admin IP.
- * Checks params.json's 'admin_whitelist_ips' list.
- * Supports exact IP matching and subnet prefixes (e.g. '197.248.112.').
- * Localhost / loopback is always permitted.
+ * Reads admin_whitelist_ips from params.json (hot-reloaded — no restart needed).
+ * Supports exact match and subnet prefixes (e.g. '197.248.112.' matches the whole /24).
+ * Loopback (127.0.0.1 / ::1) is always permitted.
  */
 export const isAdminIPAuthorized = (req) => {
   const paramsPath = path.join(__dirname, '../configs/params.json');
@@ -80,6 +80,8 @@ export const isAdminIPAuthorized = (req) => {
   }
 
   const whitelist = params.admin_whitelist_ips || [];
+
+  // Empty whitelist = open access (useful in LOCAL/dev mode)
   if (whitelist.length === 0) {
     return { authorized: true, clientIP, whitelist };
   }
@@ -92,4 +94,3 @@ export const isAdminIPAuthorized = (req) => {
 
   return { authorized: isAuthorized, clientIP, whitelist };
 };
-

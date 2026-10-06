@@ -83,6 +83,14 @@ export const runAutoMigrations = async () => {
       `);
       console.log(`✅ [DB] Backfill complete. Records updated: ${result.affectedRows}`);
     }
+    // 3. Session table: displacedBy column for admin single-session enforcement
+    const [sessionCols] = await pool.query("SHOW COLUMNS FROM session").catch(() => [[]]);
+    const sessionFieldNames = (sessionCols || []).map(c => c.Field);
+
+    if (sessionFieldNames.length && !sessionFieldNames.includes('displacedBy')) {
+      await pool.query('ALTER TABLE session ADD COLUMN displacedBy VARCHAR(64) NULL DEFAULT NULL;');
+      console.log('🔒 [DB] Added displacedBy to session table (admin single-session enforcement).');
+    }
   } catch (err) {
     console.warn('⚠️ [DB] Auto-migration notice:', err.message);
   }
