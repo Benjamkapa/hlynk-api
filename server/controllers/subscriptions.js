@@ -4,9 +4,9 @@ import { ulid } from 'ulid';
 import { createAdminNotification } from './notifications.js';
 
 export const PLAN_PRICES = {
-  LITE: 1, // Legacy Starter
-  PLUS: 1, // Starter
-  MAX:  1, // Business Pro
+  LITE: 4450, // Legacy Starter
+  PLUS: 4450, // Starter
+  MAX:  8200, // Business Pro
 };
 
 export const REFERRAL_BONUSES = {
