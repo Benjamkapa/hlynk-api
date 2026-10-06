@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { db } from '../dbms/mysql.js';
+import { isAdminIPAuthorized } from './ipWhitelist.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const params = JSON.parse(fs.readFileSync(path.join(__dirname, '../configs/params.json'), 'utf8'));
@@ -79,5 +80,15 @@ export const requireAdmin = (req, res, next) => {
   if (req.user?.role !== 'SUPER_ADMIN') {
     return res.status(403).json({ success: false, message: 'Forbidden: Admin access required' });
   }
+
+  const { authorized, clientIP } = isAdminIPAuthorized(req);
+  if (!authorized) {
+    console.warn(`[SECURITY] 🚨 Blocked admin API call to ${req.method} ${req.path} from unauthorized IP: ${clientIP}`);
+    return res.status(403).json({
+      success: false,
+      message: `Forbidden: Admin operations restricted to approved IP addresses (Current: ${clientIP})`
+    });
+  }
+
   next();
 };

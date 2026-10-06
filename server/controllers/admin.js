@@ -342,7 +342,12 @@ export const getSystemHealth = async (req, res) => {
         },
         diskCapacity: diskStats,
         performanceData,
-        nodes
+        nodes,
+        adminIpSecurity: {
+          currentIP: req.clientIP || req.ip,
+          isWhitelisted: true,
+          whitelist: params.admin_whitelist_ips || []
+        }
       }
     });
   } catch (err) {

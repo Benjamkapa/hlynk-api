@@ -54,3 +54,42 @@ export const validateMpesaIP = (req, res, next) => {
   req.clientIP = clientIP;
   next();
 };
+
+/**
+ * Helper to check whether a request comes from an authorized Admin IP.
+ * Checks params.json's 'admin_whitelist_ips' list.
+ * Supports exact IP matching and subnet prefixes (e.g. '197.248.112.').
+ * Localhost / loopback is always permitted.
+ */
+export const isAdminIPAuthorized = (req) => {
+  const paramsPath = path.join(__dirname, '../configs/params.json');
+  let params = {};
+  try {
+    params = JSON.parse(fs.readFileSync(paramsPath, 'utf8'));
+  } catch (err) {
+    console.error('[SECURITY] Failed to read params.json for admin whitelist:', err.message);
+  }
+
+  const forwarded = req.headers['x-forwarded-for'];
+  const rawIP = forwarded ? forwarded.split(',')[0].trim() : req.socket?.remoteAddress || '';
+  const clientIP = req.clientIP || (rawIP.startsWith('::ffff:') ? rawIP.slice(7) : rawIP);
+
+  // Always allow loopback
+  if (clientIP === '127.0.0.1' || clientIP === '::1' || rawIP === '127.0.0.1' || rawIP === '::1') {
+    return { authorized: true, clientIP, whitelist: params.admin_whitelist_ips || [] };
+  }
+
+  const whitelist = params.admin_whitelist_ips || [];
+  if (whitelist.length === 0) {
+    return { authorized: true, clientIP, whitelist };
+  }
+
+  const isAuthorized = whitelist.some(item => {
+    const entry = String(item).trim();
+    if (!entry || entry.startsWith('#')) return false;
+    return clientIP === entry || clientIP.startsWith(entry) || rawIP === entry || rawIP.startsWith(entry);
+  });
+
+  return { authorized: isAuthorized, clientIP, whitelist };
+};
+

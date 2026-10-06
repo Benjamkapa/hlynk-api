@@ -8,6 +8,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createAdminNotification } from './notifications.js';
 import { logSessionLogin, logSessionLogout, logSessionRefresh, logSessionAlert } from '../utils/sessionLogger.js';
+import { isAdminIPAuthorized } from '../middleware/ipWhitelist.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const params = JSON.parse(fs.readFileSync(path.join(__dirname, '../configs/params.json'), 'utf8'));
@@ -219,6 +220,31 @@ export const googleAuth = async (req, res) => {
     }
 
     if (user.isActive === 0 || !user.tenantIsActive) return res.status(403).json({ success: false, message: 'Account inactive' });
+
+    // ENFORCE ADMIN IP RESTRICTION: SUPER_ADMIN must be on an authorized IP
+    if (user.role === 'SUPER_ADMIN') {
+      const { authorized, clientIP } = isAdminIPAuthorized(req);
+      if (!authorized) {
+        console.warn(`[SECURITY] 🚨 Blocked SUPER_ADMIN login attempt for ${user.email} from unauthorized IP: ${clientIP}`);
+        try {
+          await db.query(`
+            INSERT INTO activitylog (id, tenantId, userId, action, logName, details, ipAddress, createdAt)
+            VALUES (?, ?, ?, 'Unauthorized Admin Login Blocked', 'Security', ?, ?, NOW())
+          `, [
+            ulid(),
+            user.tenantId || 'SYSTEM',
+            user.id,
+            `Admin login attempt for ${user.email} was blocked: IP address ${clientIP} is not in the authorized Admin IP Whitelist.`,
+            clientIP
+          ]);
+        } catch (_) {}
+
+        return res.status(403).json({
+          success: false,
+          message: `Access Denied: Your IP address (${clientIP}) is not authorized for Administrator access. Please connect via an approved network.`
+        });
+      }
+    }
 
     let activeModules = [];
     try {

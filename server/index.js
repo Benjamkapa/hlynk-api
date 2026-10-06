@@ -114,10 +114,11 @@ const paymentLimiter = rateLimit({
 
 const adminDestructiveLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 10,             // hard cap on destructive admin ops
+  max: 30,             // cap on state-changing admin ops per minute
   standardHeaders: true,
   legacyHeaders: false,
-  message: { success: false, message: 'Too many admin requests.' },
+  skip: (req) => req.method === 'GET' || req.method === 'HEAD',
+  message: { success: false, message: 'Too many admin requests. Please wait a moment.' },
 });
 
 app.use(cookieParser());

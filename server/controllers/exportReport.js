@@ -97,12 +97,12 @@ export const exportPlatformReport = async (req, res) => {
       db.query(`SELECT p.id,p.transactionType,p.amount,p.status,p.mpesaRequestId,p.reference,p.createdAt,
         t.businessName,t.slug FROM payment p LEFT JOIN tenant t ON p.tenantId=t.id
         ORDER BY p.createdAt DESC LIMIT 5000`),
-      db.query(`SELECT t.id,t.businessName,t.slug,t.email,t.phone,t.county,t.status,t.createdAt,t.plan,
-        s.endDate, u.name ownerName, u.email ownerEmail
+      db.query(`SELECT t.id,t.businessName,t.slug,t.isActive,t.createdAt,
+        s.planName AS plan, s.endDate, u.name AS ownerName, u.email AS ownerEmail, u.phone AS ownerPhone
         FROM tenant t LEFT JOIN subscription s ON s.tenantId=t.id AND s.status=0
         LEFT JOIN user u ON u.tenantId=t.id AND u.role='PROVIDER'
         ORDER BY t.createdAt DESC`),
-      db.query(`SELECT s.id,s.plan,s.status,s.startDate,s.endDate,s.amount,s.createdAt,t.businessName
+      db.query(`SELECT s.id,s.planName AS plan,s.status,s.startDate,s.endDate,0 AS amount,s.createdAt,t.businessName
         FROM subscription s LEFT JOIN tenant t ON s.tenantId=t.id
         ORDER BY s.createdAt DESC LIMIT 2000`),
       db.query(`SELECT m.id,m.type,m.phone,m.amount,m.resultCode,m.resultDesc,m.checkoutRequestId,m.createdAt,
@@ -123,8 +123,8 @@ export const exportPlatformReport = async (req, res) => {
       db.query(`SELECT DATE_FORMAT(createdAt,'%Y-%m') month, SUM(amount) revenue, COUNT(*) cnt
         FROM payment WHERE status=0 AND createdAt>=NOW()-INTERVAL 12 MONTH
         GROUP BY month ORDER BY month ASC`),
-      db.query(`SELECT plan, COUNT(*) cnt, SUM(amount) revenue FROM subscription WHERE status=0
-        GROUP BY plan ORDER BY revenue DESC`),
+      db.query(`SELECT planName AS plan, COUNT(*) cnt, 0 AS revenue FROM subscription WHERE status=0
+        GROUP BY planName ORDER BY cnt DESC`),
       db.query(`SELECT t.businessName,t.slug,SUM(p.amount) revenue,COUNT(p.id) paymentCount
         FROM payment p JOIN tenant t ON p.tenantId=t.id WHERE p.status=0
         GROUP BY p.tenantId,t.businessName,t.slug ORDER BY revenue DESC LIMIT 20`),
@@ -287,8 +287,8 @@ export const exportPlatformReport = async (req, res) => {
     fillDataRows(ws3, tenants.map(t => ({
       businessName: t.businessName || '', slug: t.slug || '',
       ownerName: t.ownerName || '', ownerEmail: t.ownerEmail || '',
-      email: t.email || '', phone: t.phone || '', county: t.county || '',
-      plan: t.plan || '', status: t.status === 1 ? 'Suspended' : 'Active',
+      email: t.ownerEmail || '', phone: t.ownerPhone || '', county: 'Kenya',
+      plan: t.plan || 'Free', status: t.isActive === 0 ? 'Suspended' : 'Active',
       createdAt: t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-KE') : '',
     })));
 
@@ -430,18 +430,24 @@ export const exportPlatformReport = async (req, res) => {
     });
 
     // ── Log the export ───────────────────────────────────────────────────────
-    await db.query(`INSERT INTO activitylog (id,tenantId,userId,action,logName,details,createdAt)
-      VALUES (?,'SYSTEM',?,'Platform Report Exported','Maintenance',?,NOW())`,
-      [ulid(), req.user.userId,
-       `Admin exported intelligence report (${transactions.length} tx, ${tenants.length} vendors, ${activityLog.length} activity entries)`]);
+    try {
+      const adminUserId = req.user?.userId || req.user?.id || 'SYSTEM';
+      await db.query(`INSERT INTO activitylog (id,tenantId,userId,action,logName,details,createdAt)
+        VALUES (?,'SYSTEM',?,'Platform Report Exported','Maintenance',?,NOW())`,
+        [ulid(), adminUserId,
+         `Admin exported intelligence report (${transactions.length} tx, ${tenants.length} vendors, ${activityLog.length} activity entries)`]);
+    } catch (logErr) {
+      console.warn('[EXPORT-REPORT] Warning logging export to activitylog:', logErr.message);
+    }
 
-    // ── Stream response ──────────────────────────────────────────────────────
+    // ── Send response buffer ─────────────────────────────────────────────────
+    const buffer = await wb.xlsx.writeBuffer();
     const d = new Date();
     const stamp = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="hlynk_report_${stamp}.xlsx"`);
-    await wb.xlsx.write(res);
-    res.end();
+    res.setHeader('Content-Length', buffer.byteLength);
+    return res.send(Buffer.from(buffer));
 
   } catch (err) {
     console.error('[EXPORT-REPORT]', err);
