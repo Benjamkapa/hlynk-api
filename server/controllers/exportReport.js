@@ -1,4 +1,4 @@
-import ExcelJS from 'exceljs';
+import ExcelJS from 'exceljs/dist/es5/exceljs.nodejs.js';
 import { db } from '../dbms/mysql.js';
 import { ulid } from 'ulid';
 
