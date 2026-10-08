@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { pool } from '../dbms/mysql.js';
+import { pool, runAutoMigrations } from '../dbms/mysql.js';
 import { minioClient, bucketName } from '../utils/storage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -78,6 +78,42 @@ async function runRestore() {
     // Normalize any legacy varchar(50) tenantId definitions in tables referencing tenant(id) (varchar(191))
     // to prevent MySQL FK incompatibility errors during restore
     sqlContent = sqlContent.replace(/(`?tenantId`?\s+varchar)\(50\)/gi, '$1(191)');
+    sqlContent = sqlContent.replace(/utf8mb4_0900_ai_ci/gi, 'utf8mb4_unicode_ci');
+    sqlContent = sqlContent.replace(/CREATE\s+DATABASE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?[a-zA-Z0-9_]+`?\s*;/gi, '');
+    sqlContent = sqlContent.replace(/USE\s+`?[a-zA-Z0-9_]+`?\s*;/gi, '');
+    sqlContent = sqlContent.replace(/`[a-zA-Z0-9_]+`\.(`[a-zA-Z0-9_]+`)/g, '$1');
+    sqlContent = sqlContent.replaceAll("'[object Object]'", 'NULL');
+
+    // Fix bare unquoted JSON column values (permissions, activeModules) that were exported as
+    // comma-separated SQL strings instead of a single JSON array string.
+    // Split by STATEMENT_BOUNDARY and apply targeted per-statement fixes.
+    const sqlParts = sqlContent.split('\n-- STATEMENT_BOUNDARY --\n');
+    const fixedParts = sqlParts.map(part => {
+      const trimmed = part.trimStart();
+      if (/^INSERT INTO `?tenant`?\s/i.test(trimmed)) {
+        // Fix bare activeModules value: e.g. 'POS') → '["POS"]')
+        return part.replace(/,\s*'([A-Za-z][A-Za-z0-9_]*)'\s*\)/g, (m, word) => `, '["${word}"]')`);
+      }
+      if (/^INSERT INTO `?user`?\s/i.test(trimmed)) {
+        // Step A: multi-value permissions → JSON array e.g. 'sales', 'customers' → '["sales","customers"]'
+        part = part.replace(
+          /(?<=[,\s])('(?:[a-zA-Z][a-zA-Z0-9_]*)'(?:,\s*'[a-zA-Z][a-zA-Z0-9_]*')+)(?=,\s*[01]\s*,)/g,
+          (match) => {
+            const perms = [...match.matchAll(/'([^']+)'/g)].map(m2 => m2[1]);
+            return `'${JSON.stringify(perms)}'`;
+          }
+        );
+        // Step B: single bare permission string → JSON array e.g. 'sales' → '["sales"]'
+        part = part.replace(
+          /(?<=[,\s])'([a-zA-Z][a-zA-Z0-9_]*)'(?=,\s*[01]\s*,)/g,
+          (match, word) => `'["${word}"]'`
+        );
+        return part;
+      }
+      return part;
+    });
+    sqlContent = fixedParts.join('\n-- STATEMENT_BOUNDARY --\n');
+
     const statements = sqlContent.split('\n-- STATEMENT_BOUNDARY --\n').filter(s => s.trim().length > 0);
     
     console.log(`Executing ${statements.length} sql statements...`);
@@ -102,6 +138,8 @@ async function runRestore() {
       }
       
       console.log(`✅ DB Restore completed successfully! (${executionCount} SQL statements executed)`);
+      console.log('🔄 Running auto-migrations to ensure schema compatibility...');
+      await runAutoMigrations().catch(e => console.warn('⚠️ Post-restore migration notice:', e.message));
     } catch (err) {
       console.error('❌ Database restoration failed!');
       process.exit(1);

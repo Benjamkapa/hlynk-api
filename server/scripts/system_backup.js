@@ -95,7 +95,19 @@ async function runBackup() {
             const valuesSql = chunk.map(row => {
               const values = insertableColumns.map(colName => {
                 const val = row[colName];
-                return dbConnection.escape(val);
+                let formattedVal = val;
+                // Convert parsed JSON objects/arrays back to strings safely.
+                // mysql2 auto-parses JSON columns; calling escape() on a JS array produces
+                // comma-separated SQL strings ('a', 'b', 'c') rather than a JSON array string,
+                // which corrupts the INSERT. Always serialize objects/arrays first.
+                if (typeof val === 'object' && val !== null && !(val instanceof Date) && !Buffer.isBuffer(val)) {
+                  try {
+                    formattedVal = JSON.stringify(val);
+                  } catch (e) {
+                    formattedVal = null;
+                  }
+                }
+                return dbConnection.escape(formattedVal);
               }).join(', ');
               return `(${values})`;
             }).join(',\n');

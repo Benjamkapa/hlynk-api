@@ -1,5 +1,5 @@
 import mysql from 'mysql2/promise';
-import { db } from '../dbms/mysql.js';
+import { db, runAutoMigrations } from '../dbms/mysql.js';
 import { minioClient, bucketName } from '../utils/storage.js';
 import { initiateB2C } from '../utils/mpesa.js';
 import { sendPushToTenant, createNotification, createAdminNotification } from './notifications.js';
@@ -468,10 +468,21 @@ export const impersonateUser = async (req, res) => {
 
     const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
 
-    await db.query(
-      `INSERT INTO session (id, userId, token, userAgent, ipAddress, isActive, isImpersonation, createdAt, lastActive) VALUES (?, ?, ?, ?, ?, 1, 1, NOW(), NOW())`,
-      [sessionId, targetUser.id, tokenHash, req.get('user-agent') || 'Admin Impersonation', req.ip || '0.0.0.0']
-    );
+    try {
+      await db.query(
+        `INSERT INTO session (id, userId, token, userAgent, ipAddress, isActive, isImpersonation, createdAt, lastActive) VALUES (?, ?, ?, ?, ?, 1, 1, NOW(), NOW())`,
+        [sessionId, targetUser.id, tokenHash, req.get('user-agent') || 'Admin Impersonation', req.ip || '0.0.0.0']
+      );
+    } catch (insertErr) {
+      if (insertErr.code === 'ER_BAD_FIELD_ERROR' && insertErr.message?.includes('isImpersonation')) {
+        await db.query(
+          `INSERT INTO session (id, userId, token, userAgent, ipAddress, isActive, createdAt, lastActive) VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())`,
+          [sessionId, targetUser.id, tokenHash, req.get('user-agent') || 'Admin Impersonation', req.ip || '0.0.0.0']
+        );
+      } else {
+        throw insertErr;
+      }
+    }
 
     logSessionImpersonate({ adminUser: req.user, targetUser, sessionId, ipAddress: req.ip || '0.0.0.0' });
 
@@ -1904,7 +1915,10 @@ export const downloadDatabaseBackup = async (req, res) => {
           const valuesSql = chunk.map(row => {
             const values = insertableColumns.map(colName => {
               let val = row[colName];
-              // Convert parsed JSON objects back to strings safely
+              // Convert parsed JSON objects/arrays back to strings safely.
+              // mysql2 auto-parses JSON columns; calling escape() on a JS array produces
+              // comma-separated SQL strings ('a', 'b', 'c') rather than a JSON array string,
+              // which corrupts the INSERT. Always serialize objects/arrays first.
               if (val !== null && typeof val === 'object' && !(val instanceof Date) && !(val instanceof Buffer)) {
                 val = JSON.stringify(val);
               }
@@ -1921,7 +1935,7 @@ export const downloadDatabaseBackup = async (req, res) => {
 
     statements.push("SET FOREIGN_KEY_CHECKS = 1;");
 
-    const sqlContent = statements.join('\n\n');
+    const sqlContent = statements.join('\n-- STATEMENT_BOUNDARY --\n');
 
     // Format a human-readable local timestamp: YYYY-MM-DD_HH-MM-SS-AM/PM
     const d = new Date();
@@ -1969,30 +1983,127 @@ export const restoreDatabaseBackup = async (req, res) => {
     // Remove BOM if present
     if (sqlString.charCodeAt(0) === 0xFEFF) sqlString = sqlString.slice(1);
 
-    // Normalize any legacy varchar(50) tenantId definitions in tables referencing tenant(id) (varchar(191))
-    // to prevent MySQL FK incompatibility errors during restore
+    // 0. Detect currently connected database to guarantee restore ONLY targets and overrides this active DB
+    const [dbRow] = await db.query('SELECT DATABASE() as currentDb');
+    const currentDb = dbRow[0]?.currentDb || process.env.DB_NAME || 'hlynk';
+
+    // Strip any hardcoded CREATE DATABASE or USE statements in the uploaded dump so it cannot divert to another database
+    sqlString = sqlString.replace(/CREATE\s+DATABASE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?[a-zA-Z0-9_]+`?\s*;/gi, '');
+    sqlString = sqlString.replace(/USE\s+`?[a-zA-Z0-9_]+`?\s*;/gi, '');
+
+    // Strip qualified table names like `some_db`.`user` -> `user`
+    sqlString = sqlString.replace(/`[a-zA-Z0-9_]+`\.(`[a-zA-Z0-9_]+`)/g, '$1');
+
+    // Preserve the current admin session so the administrator is not forcefully disconnected after restore
+    const adminSessionId = req.user?.sessionId;
+    let savedAdminSession = null;
+    if (adminSessionId) {
+      const [sessRows] = await db.query('SELECT * FROM session WHERE id = ?', [adminSessionId]).catch(() => [[]]);
+      if (sessRows.length > 0) savedAdminSession = sessRows[0];
+    }
+
+    // 1. Normalize legacy varchar(50) tenantId definitions in tables referencing tenant(id) (varchar(191))
     sqlString = sqlString.replace(/(`?tenantId`?\s+varchar)\(50\)/gi, '$1(191)');
 
-    // Instead of string splitting (which breaks on raw payloads with semi-colons/newlines),
-    // we spawn a dedicated raw connection that natively permits multipleStatements
+    // 2. Normalize collations: convert all utf8mb4_0900_ai_ci to utf8mb4_unicode_ci
+    // to prevent Foreign Key incompatibility (Error 3780) and "Illegal mix of collations"
+    sqlString = sqlString.replace(/utf8mb4_0900_ai_ci/gi, 'utf8mb4_unicode_ci');
+    sqlString = sqlString.replace(/CHARSET=utf8mb4(?!\s+COLLATE)/gi, 'CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+
+    // 3. Fix invalid stringified JS objects in JSON columns (e.g. '[object Object]') to NULL
+    sqlString = sqlString.replaceAll("'[object Object]'", 'NULL');
+
+    // 4. Split into individual SQL statements safely:
+    let rawStatements = [];
+    if (sqlString.includes('-- STATEMENT_BOUNDARY --')) {
+      rawStatements = sqlString.split('\n-- STATEMENT_BOUNDARY --\n');
+    } else {
+      rawStatements = sqlString.split(/;\s*(?:\r?\n|$)/);
+    }
+
+    const statements = rawStatements
+      .map(s => s.trim())
+      .filter(s => s.length > 0 && !s.startsWith('--') && !s.startsWith('/*'));
+
+    // Process each statement with precise per-statement JSON fixes
+    const cleanedStatements = statements.map(stmt => {
+      // Fix bare activeModules in tenant rows: e.g. 'POS') -> '["POS"]')
+      if (/^INSERT INTO `?tenant`?/i.test(stmt)) {
+        return stmt.replace(
+          /,\s*'([A-Za-z][A-Za-z0-9_]*)'\s*\)/g,
+          (m, word) => `, '["${word}"]')`
+        );
+      }
+
+      // Fix unbracketed permissions in user rows
+      if (/^INSERT INTO `?user`?/i.test(stmt)) {
+        // Step 1: multi-value permissions e.g. 'sales', 'customers'
+        stmt = stmt.replace(
+          /(?<=[,\s])('(?:[a-zA-Z][a-zA-Z0-9_]*)'(?:,\s*'[a-zA-Z][a-zA-Z0-9_]*')+)(?=,\s*[01]\s*,)/g,
+          (match) => {
+            const perms = [...match.matchAll(/'([^']+)'/g)].map(m2 => m2[1]);
+            return `'${JSON.stringify(perms)}'`;
+          }
+        );
+        // Step 2: single bare permission string e.g. 'sales'
+        stmt = stmt.replace(
+          /(?<=[,\s])'([a-zA-Z][a-zA-Z0-9_]*)'(?=,\s*[01]\s*,)/g,
+          (match, word) => `'["${word}"]'`
+        );
+        return stmt;
+      }
+
+      return stmt;
+    });
+
+    // Create a dedicated connection for execution
     restoreConn = await mysql.createConnection({
       uri: process.env.DATABASE_URL,
       host: process.env.DB_HOST,
       user: process.env.DB_USER,
       password: process.env.DB_PASSWORD,
-      database: process.env.DB_NAME,
-      multipleStatements: true // Critical for running large .sql exports securely
+      database: currentDb
     });
 
-    // We can confidently execute the entire batch as one transaction sequence natively
-    await restoreConn.query('SET FOREIGN_KEY_CHECKS = 0;\n' + sqlString + '\nSET FOREIGN_KEY_CHECKS = 1;');
+    await restoreConn.query('SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci;');
+    await restoreConn.query('SET FOREIGN_KEY_CHECKS = 0;');
+    await restoreConn.query(`USE \`${currentDb}\`;`);
+
+    for (let i = 0; i < cleanedStatements.length; i++) {
+      await restoreConn.query(cleanedStatements[i]);
+    }
+
+    await restoreConn.query('SET FOREIGN_KEY_CHECKS = 1;');
+
+    // Re-run auto migrations to ensure columns added to newer schema (e.g. isImpersonation, displacedBy) exist
+    await runAutoMigrations().catch(e => console.warn('⚠️ [RESTORE] Post-restore migration warning:', e.message));
+
+    // Restore the current admin's session so the UI continues working seamlessly
+    if (savedAdminSession) {
+      await db.query(`
+        INSERT INTO session (id, userId, token, userAgent, ipAddress, isActive, isImpersonation, createdAt, lastActive)
+        VALUES (?, ?, ?, ?, ?, 1, ?, NOW(), NOW())
+        ON DUPLICATE KEY UPDATE isActive = 1, lastActive = NOW()
+      `, [
+        savedAdminSession.id,
+        savedAdminSession.userId,
+        savedAdminSession.token,
+        savedAdminSession.userAgent || 'Admin Restore',
+        savedAdminSession.ipAddress || req.ip || '0.0.0.0',
+        savedAdminSession.isImpersonation ? 1 : 0
+      ]).catch(e => console.warn('⚠️ [RESTORE] Session preserve notice:', e.message));
+    }
 
     await db.query(`
       INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
-      VALUES (?, 'SYSTEM', ?, 'System Restored', 'Security', 'Admin executed raw .sql database file restore', NOW())
-    `, [ulid(), req.user.userId]);
+      VALUES (?, 'SYSTEM', ?, 'System Restored', 'Security', ?, NOW())
+    `, [ulid(), req.user.userId, `Admin restored database overriding ${currentDb}`]);
 
-    return res.json({ success: true, message: 'Database successfully restored natively from the backup file!' });
+    return res.json({ 
+      success: true, 
+      message: `Database '${currentDb}' successfully overwritten from backup file!`,
+      targetDb: currentDb
+    });
   } catch (err) {
     console.error('❌ LIVE SQL RESTORE API FAILED:', err);
     return res.status(500).json({ success: false, message: 'Restore failed: ' + err.message });

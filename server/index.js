@@ -352,7 +352,7 @@ const startServer = async () => {
         INDEX idx_resource_tenant_type (tenantId, type),
         INDEX idx_resource_tenant_title (tenantId, title),
         INDEX idx_resource_status (status)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
       await db.query(`CREATE TABLE IF NOT EXISTS event (
         id VARCHAR(50) PRIMARY KEY,
@@ -374,7 +374,7 @@ const startServer = async () => {
         INDEX idx_event_tenant_type (tenantId, eventType),
         INDEX idx_event_dates (startTime, endTime),
         INDEX idx_event_status (status)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
       await db.query(`CREATE TABLE IF NOT EXISTS operation (
         id VARCHAR(50) PRIMARY KEY,
@@ -392,12 +392,26 @@ const startServer = async () => {
         FOREIGN KEY (tenantId) REFERENCES tenant(id) ON DELETE CASCADE,
         FOREIGN KEY (resourceId) REFERENCES resource(id) ON DELETE CASCADE,
         INDEX idx_op_tenant_type (tenantId, opType)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
-      // Ensure tenantId column is VARCHAR(191) if tables were created earlier
-      await db.query("ALTER TABLE resource MODIFY tenantId VARCHAR(191) NOT NULL;").catch(() => { });
-      await db.query("ALTER TABLE event MODIFY tenantId VARCHAR(191) NOT NULL;").catch(() => { });
-      await db.query("ALTER TABLE operation MODIFY tenantId VARCHAR(191) NOT NULL;").catch(() => { });
+      // Ensure tenantId column is VARCHAR(191) with utf8mb4_unicode_ci if tables were created earlier
+      try {
+        await db.query("ALTER TABLE resource DROP FOREIGN KEY resource_ibfk_1").catch(() => { });
+        await db.query("ALTER TABLE resource MODIFY tenantId VARCHAR(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL");
+        await db.query("ALTER TABLE resource ADD CONSTRAINT resource_ibfk_1 FOREIGN KEY (tenantId) REFERENCES tenant(id) ON DELETE CASCADE").catch(() => { });
+      } catch (e) { }
+
+      try {
+        await db.query("ALTER TABLE event DROP FOREIGN KEY event_ibfk_1").catch(() => { });
+        await db.query("ALTER TABLE event MODIFY tenantId VARCHAR(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL");
+        await db.query("ALTER TABLE event ADD CONSTRAINT event_ibfk_1 FOREIGN KEY (tenantId) REFERENCES tenant(id) ON DELETE CASCADE").catch(() => { });
+      } catch (e) { }
+
+      try {
+        await db.query("ALTER TABLE operation DROP FOREIGN KEY operation_ibfk_1").catch(() => { });
+        await db.query("ALTER TABLE operation MODIFY tenantId VARCHAR(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL");
+        await db.query("ALTER TABLE operation ADD CONSTRAINT operation_ibfk_1 FOREIGN KEY (tenantId) REFERENCES tenant(id) ON DELETE CASCADE").catch(() => { });
+      } catch (e) { }
 
       // Remove UNIQUE restriction on user.phone & provider.phone to allow multiple signups with the same phone number
       try {
@@ -438,7 +452,13 @@ const startServer = async () => {
         createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
         updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (tenantId) REFERENCES tenant(id) ON DELETE CASCADE
-      )`);
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+      try {
+        await db.query("ALTER TABLE payout DROP FOREIGN KEY payout_ibfk_1").catch(() => { });
+        await db.query("ALTER TABLE payout MODIFY tenantId VARCHAR(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL");
+        await db.query("ALTER TABLE payout ADD CONSTRAINT payout_ibfk_1 FOREIGN KEY (tenantId) REFERENCES tenant(id) ON DELETE CASCADE").catch(() => { });
+      } catch (e) { }
 
       // Request / Incoming Public Orders Table
       await db.query(`CREATE TABLE IF NOT EXISTS request (
@@ -456,10 +476,9 @@ const startServer = async () => {
         FOREIGN KEY (tenantId) REFERENCES tenant(id) ON DELETE CASCADE,
         INDEX idx_req_tenant (tenantId),
         INDEX idx_req_status (status)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
-      await db.query("ALTER TABLE payout MODIFY tenantId VARCHAR(191) NOT NULL;").catch(() => { });
-      await db.query("ALTER TABLE request MODIFY tenantId VARCHAR(191) NOT NULL;").catch(() => { });
+      await db.query("ALTER TABLE request MODIFY tenantId VARCHAR(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL;").catch(() => { });
       await db.query("ALTER TABLE request MODIFY customerId VARCHAR(50) NULL DEFAULT NULL;").catch(() => { });
       await db.query("ALTER TABLE request MODIFY providerId VARCHAR(50) NULL DEFAULT NULL;").catch(() => { });
       await db.query("ALTER TABLE request MODIFY serviceId VARCHAR(50) NULL DEFAULT NULL;").catch(() => { });

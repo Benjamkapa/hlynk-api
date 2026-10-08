@@ -45,6 +45,28 @@ export const db = {
  */
 export const runAutoMigrations = async () => {
   try {
+    // 0. Harmonize collation across all tables to utf8mb4_unicode_ci to prevent "Illegal mix of collations" and FK incompatibilities
+    const [incompatibleTables] = await pool.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = DATABASE() 
+        AND table_type = 'BASE TABLE'
+        AND table_collation IS NOT NULL 
+        AND table_collation != 'utf8mb4_unicode_ci'
+    `).catch(() => [[]]);
+
+    if (incompatibleTables && incompatibleTables.length > 0) {
+      await pool.query('SET FOREIGN_KEY_CHECKS = 0;').catch(() => {});
+      for (const t of incompatibleTables) {
+        const tblName = t.TABLE_NAME || t.table_name;
+        await pool.query(`ALTER TABLE \`${tblName}\` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`).catch(e => {
+          console.warn(`⚠️ [DB] Collation harmonize warning for ${tblName}:`, e.message);
+        });
+      }
+      await pool.query('SET FOREIGN_KEY_CHECKS = 1;').catch(() => {});
+      console.log(`✅ [DB] Harmonized ${incompatibleTables.length} tables to utf8mb4_unicode_ci.`);
+    }
+
     // 1. Notification table columns
     const [notifCols] = await pool.query("SHOW COLUMNS FROM notification").catch(() => [[]]);
     const notifFieldNames = (notifCols || []).map(c => c.Field);
@@ -83,13 +105,17 @@ export const runAutoMigrations = async () => {
       `);
       console.log(`✅ [DB] Backfill complete. Records updated: ${result.affectedRows}`);
     }
-    // 3. Session table: displacedBy column for admin single-session enforcement
+    // 3. Session table: displacedBy and isImpersonation columns
     const [sessionCols] = await pool.query("SHOW COLUMNS FROM session").catch(() => [[]]);
     const sessionFieldNames = (sessionCols || []).map(c => c.Field);
 
     if (sessionFieldNames.length && !sessionFieldNames.includes('displacedBy')) {
       await pool.query('ALTER TABLE session ADD COLUMN displacedBy VARCHAR(64) NULL DEFAULT NULL;');
       // console.log('🔒 [DB] Added displacedBy to session table (admin single-session enforcement).');
+    }
+    if (sessionFieldNames.length && !sessionFieldNames.includes('isImpersonation')) {
+      await pool.query('ALTER TABLE session ADD COLUMN isImpersonation TINYINT(1) NOT NULL DEFAULT 0 AFTER isActive;');
+      console.log('🎭 [DB] Added isImpersonation to session table.');
     }
   } catch (err) {
     console.warn('⚠️ [DB] Auto-migration notice:', err.message);
