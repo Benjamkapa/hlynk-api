@@ -34,7 +34,7 @@ async function migrate() {
       await connection.query(`
         CREATE TABLE IF NOT EXISTS payout (
           id VARCHAR(50) PRIMARY KEY,
-          tenantId VARCHAR(50) NOT NULL,
+          tenantId VARCHAR(191) NOT NULL,
           amount DECIMAL(15, 2) NOT NULL,
           status VARCHAR(20) DEFAULT 'PENDING', -- PENDING, PAID, CANCELLED
           type VARCHAR(20) NOT NULL, -- REFERRAL, VENDOR_PAYOUT

@@ -1969,6 +1969,10 @@ export const restoreDatabaseBackup = async (req, res) => {
     // Remove BOM if present
     if (sqlString.charCodeAt(0) === 0xFEFF) sqlString = sqlString.slice(1);
 
+    // Normalize any legacy varchar(50) tenantId definitions in tables referencing tenant(id) (varchar(191))
+    // to prevent MySQL FK incompatibility errors during restore
+    sqlString = sqlString.replace(/(`?tenantId`?\s+varchar)\(50\)/gi, '$1(191)');
+
     // Instead of string splitting (which breaks on raw payloads with semi-colons/newlines),
     // we spawn a dedicated raw connection that natively permits multipleStatements
     restoreConn = await mysql.createConnection({

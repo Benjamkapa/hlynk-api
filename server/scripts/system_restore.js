@@ -74,7 +74,10 @@ async function runRestore() {
   // --------------------------------------------------
   if (fs.existsSync(dbDumpPath)) {
     console.log('📦 Restoring Database records...');
-    const sqlContent = fs.readFileSync(dbDumpPath, 'utf8');
+    let sqlContent = fs.readFileSync(dbDumpPath, 'utf8');
+    // Normalize any legacy varchar(50) tenantId definitions in tables referencing tenant(id) (varchar(191))
+    // to prevent MySQL FK incompatibility errors during restore
+    sqlContent = sqlContent.replace(/(`?tenantId`?\s+varchar)\(50\)/gi, '$1(191)');
     const statements = sqlContent.split('\n-- STATEMENT_BOUNDARY --\n').filter(s => s.trim().length > 0);
     
     console.log(`Executing ${statements.length} sql statements...`);

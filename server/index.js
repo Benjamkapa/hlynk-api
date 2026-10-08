@@ -338,7 +338,7 @@ const startServer = async () => {
       // Universal Tables: resource, event, operation
       await db.query(`CREATE TABLE IF NOT EXISTS resource (
         id VARCHAR(50) PRIMARY KEY,
-        tenantId VARCHAR(50) NOT NULL,
+        tenantId VARCHAR(191) NOT NULL,
         type VARCHAR(50) NOT NULL,
         title VARCHAR(255) NOT NULL,
         code VARCHAR(100),
@@ -356,7 +356,7 @@ const startServer = async () => {
 
       await db.query(`CREATE TABLE IF NOT EXISTS event (
         id VARCHAR(50) PRIMARY KEY,
-        tenantId VARCHAR(50) NOT NULL,
+        tenantId VARCHAR(191) NOT NULL,
         resourceId VARCHAR(50) NOT NULL,
         customerId VARCHAR(50),
         eventType VARCHAR(50) NOT NULL,
@@ -378,7 +378,7 @@ const startServer = async () => {
 
       await db.query(`CREATE TABLE IF NOT EXISTS operation (
         id VARCHAR(50) PRIMARY KEY,
-        tenantId VARCHAR(50) NOT NULL,
+        tenantId VARCHAR(191) NOT NULL,
         resourceId VARCHAR(50) NOT NULL,
         opType VARCHAR(50) NOT NULL,
         status VARCHAR(50) DEFAULT 'PENDING',
@@ -393,6 +393,11 @@ const startServer = async () => {
         FOREIGN KEY (resourceId) REFERENCES resource(id) ON DELETE CASCADE,
         INDEX idx_op_tenant_type (tenantId, opType)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+      // Ensure tenantId column is VARCHAR(191) if tables were created earlier
+      await db.query("ALTER TABLE resource MODIFY tenantId VARCHAR(191) NOT NULL;").catch(() => { });
+      await db.query("ALTER TABLE event MODIFY tenantId VARCHAR(191) NOT NULL;").catch(() => { });
+      await db.query("ALTER TABLE operation MODIFY tenantId VARCHAR(191) NOT NULL;").catch(() => { });
 
       // Remove UNIQUE restriction on user.phone & provider.phone to allow multiple signups with the same phone number
       try {
@@ -422,7 +427,7 @@ const startServer = async () => {
       // Payout table
       await db.query(`CREATE TABLE IF NOT EXISTS payout (
         id VARCHAR(50) PRIMARY KEY,
-        tenantId VARCHAR(50) NOT NULL,
+        tenantId VARCHAR(191) NOT NULL,
         amount DECIMAL(15, 2) NOT NULL,
         status VARCHAR(20) DEFAULT 'PENDING',
         type VARCHAR(20) NOT NULL,
@@ -438,7 +443,7 @@ const startServer = async () => {
       // Request / Incoming Public Orders Table
       await db.query(`CREATE TABLE IF NOT EXISTS request (
         id VARCHAR(50) PRIMARY KEY,
-        tenantId VARCHAR(50) NOT NULL,
+        tenantId VARCHAR(191) NOT NULL,
         customerId VARCHAR(50),
         providerId VARCHAR(50),
         serviceId VARCHAR(50),
@@ -453,6 +458,8 @@ const startServer = async () => {
         INDEX idx_req_status (status)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
 
+      await db.query("ALTER TABLE payout MODIFY tenantId VARCHAR(191) NOT NULL;").catch(() => { });
+      await db.query("ALTER TABLE request MODIFY tenantId VARCHAR(191) NOT NULL;").catch(() => { });
       await db.query("ALTER TABLE request MODIFY customerId VARCHAR(50) NULL DEFAULT NULL;").catch(() => { });
       await db.query("ALTER TABLE request MODIFY providerId VARCHAR(50) NULL DEFAULT NULL;").catch(() => { });
       await db.query("ALTER TABLE request MODIFY serviceId VARCHAR(50) NULL DEFAULT NULL;").catch(() => { });
