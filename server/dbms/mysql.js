@@ -64,7 +64,7 @@ export const runAutoMigrations = async () => {
         });
       }
       await pool.query('SET FOREIGN_KEY_CHECKS = 1;').catch(() => {});
-      console.log(`✅ [DB] Harmonized ${incompatibleTables.length} tables to utf8mb4_unicode_ci.`);
+      // console.log(`✅ [DB] Harmonized ${incompatibleTables.length} tables to utf8mb4_unicode_ci.`);
     }
 
     // 1. Notification table columns
@@ -115,7 +115,7 @@ export const runAutoMigrations = async () => {
     }
     if (sessionFieldNames.length && !sessionFieldNames.includes('isImpersonation')) {
       await pool.query('ALTER TABLE session ADD COLUMN isImpersonation TINYINT(1) NOT NULL DEFAULT 0 AFTER isActive;');
-      console.log('🎭 [DB] Added isImpersonation to session table.');
+      // console.log('🎭 [DB] Added isImpersonation to session table.');
     }
   } catch (err) {
     console.warn('⚠️ [DB] Auto-migration notice:', err.message);
