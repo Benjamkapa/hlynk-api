@@ -320,7 +320,7 @@ export const sessionActivityMiddleware = (req, res, next) => {
 
     // 1. MUTATING ACTIONS (POST, PUT, PATCH, DELETE) OR ERRORS (4xx, 5xx)
     if (isMutation || status >= 400) {
-      console.log(`${C.brightYellow}${C.bold}⚡ [USER ACTION]${C.reset} ${userLabel}`);
+      console.log(`${C.brightYellow}${C.bold} ⚡[USER ACTION]${C.reset} ${userLabel}`);
       console.log(`   🎯 ${C.bold}${actionTitle}${C.reset} ${C.dim}(${method} ${url})${C.reset}`);
       console.log(`   📊 ${C.dim}Status:${C.reset} ${statusColor}${status}${C.reset} | ${C.dim}Latency:${C.reset} ${duration}ms | ${C.dim}IP:${C.reset} ${ip}`);
 
