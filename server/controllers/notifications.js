@@ -80,6 +80,7 @@ export const sendTestNotification = async (req, res) => {
             title: 'Test Notification',
             body: 'This is a test push notification from hlynk!',
             icon: '/logo.png',
+            sound: '/assets/tone/loud.wav',
             data: { url: '/dashboard' }
         });
 
@@ -134,6 +135,7 @@ export const sendPushToTenant = async (tenantId, message) => {
             title: message.title || 'hlynk Alert',
             body: message.body,
             icon: message.icon || '/logo.png',
+            sound: message.sound || '/assets/tone/loud.wav',
             type: message.type || 'info',
             unreadCount,
             data: dataObj
@@ -191,6 +193,7 @@ export const sendPushToAdmins = async (message) => {
             title: message.title || 'hlynk System Alert',
             body: message.body,
             icon: message.icon || '/logo.png',
+            sound: message.sound || '/assets/tone/loud.wav',
             type: message.type || 'info',
             unreadCount,
             data: dataObj
