@@ -1,5 +1,5 @@
 import express from "express";
-import { getPublicStayListing, submitPublicOrder, publicMpesaStkPush, getPublicOrderStatus } from "../controllers/public.js";
+import { getPublicStayListing, submitPublicOrder, publicMpesaStkPush, getPublicOrderStatus, uploadPaymentReceipt } from "../controllers/public.js";
 
 const router = express.Router();
 
@@ -10,5 +10,6 @@ router.get("/store/:slug", getPublicStayListing);
 router.post("/order", submitPublicOrder);
 router.post("/mpesa-push", publicMpesaStkPush);
 router.get("/order-status/:saleId", getPublicOrderStatus);
+router.post("/receipt", uploadPaymentReceipt);
 
 export default router;

@@ -1,0 +1,211 @@
+[33m826d0a2[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m FIX
+[33md22505c[m icon
+[33m2094f98[m Updates
+[33me6932b7[m updated DB freq
+[33m12ad10b[m updated DB merge
+[33m3592c05[m Correction
+[33m00a463f[m Trial pay
+[33md2ae6f4[m Update Tweaks 1.2
+[33m4008a54[m Update Tweaks 1.2
+[33mf10a559[m Update Tweaks 1.2
+[33m3630b64[m Update Tweaks
+[33mca2d8e6[m backup DB & stuffs
+[33m9071d15[m IP Restrict .0
+[33m398ebb1[m IP Restrict
+[33m520fcc7[m Secure Admin stuffs 2.0
+[33m184bf6f[m Secure Admin stuffs
+[33m87561e5[m update banner
+[33m8869576[m Tighten security 2.1
+[33m480a3d8[m Tighten security 2.0
+[33ma187f95[m Tighten security 1.0
+[33md006feb[m Tighten security
+[33m13590a3[m final updates 1.0
+[33m026ac7b[m final updates
+[33m9735657[m logger 2.0
+[33m6d36d63[m logger 1.0
+[33m1f18564[m logger
+[33md7c6aa8[m resume changes after PC changes
+[33mc705fdc[m Last BE Update to leave
+[33m9daa943[m Another progress 1
+[33m6672cb2[m modal slide 1.1
+[33m822fd17[m update files
+[33m2c9d45e[m updates .0
+[33m870b016[m revert changes
+[33m60cdd47[m test
+[33mffa400f[m updated payment for staypage 1.0
+[33m5ff3991[m updated payment for staypage
+[33m1aee7dc[m sub skew
+[33m8f6d0f2[m Major Update
+[33m78e4047[m update settings section 1.0
+[33mee6c9d2[m update settings section
+[33m46f5de6[m update 6.2
+[33m4b36cf9[m update 1.2
+[33mf60daa1[m update
+[33m5168751[m update 1.0
+[33m171b89f[m update
+[33m567bb8c[m final update 1.0
+[33maab4ae6[m final update
+[33m06669b2[m updates files 2.3
+[33m8b963ca[m updates files 2.1
+[33m90122f1[m updates files 1.0
+[33m529903b[m updates files
+[33m53c3ca2[m fix minio
+[33mf22661c[m Refurbish
+[33m1129a97[m FIX
+[33m5487993[m attempt
+[33m83fb6b7[m reboot
+[33m84d0806[m Transform POC to public link
+[33m9a89e4f[m DB Updates
+[33m7aa47cb[m DB Updates
+[33mc520c96[m imaging for BnB
+[33m1d5e52b[m Neo
+[33mee5b7a9[m Updated bottom bar
+[33m7943559[m late-night changes
+[33m71b9228[m chore: add root .gitignore to permanently exclude .env
+[33m6b8609d[m Reverse Sales
+[33mb05438a[m Updates
+[33m3ed166e[m recover DB 1.1
+[33mf4d8e6e[m recover DB
+[33m6114b63[m recover DB
+[33m56ea2bb[m recover DB
+[33mc4b99e2[m DB Backup 1.0
+[33mbc725da[m DB Backup
+[33md0fe584[m updating notif"
+[33mfc38628[m Update files
+[33m99c0d47[m Update files
+[33mb681e82[m Update files
+[33mf7e6e13[m major updates
+[33meda8c8b[m major updates
+[33m716c618[m major updates
+[33md7cc190[m major update
+[33mffbc885[m updated updates
+[33m0f43b85[m updated extension script
+[33mf31af93[m Almost last
+[33m16f9f91[m setups
+[33m8535b7a[m settups
+[33m6459505[m auth improved BE
+[33m8a29388[m b2c certification config 1.1
+[33m94aa3f4[m b2c certification config 1.0
+[33m4680eb0[m b2c certification config 1.0
+[33m9163859[m b2c certification config 1.0
+[33ma279159[m b2c certification config
+[33m7ac9acf[m b2c certification config
+[33m5a5ca00[m b2c certification done
+[33mc74a189[m test B2B
+[33m739e8d3[m test B2B
+[33mcae183b[m test B2B
+[33m7b2a30c[m test B2B
+[33m3f63b27[m Restored request object: The 1.0.0 version often requires this specific nesting
+[33m5352dab[m Restored request object: The 1.0.0 version often requires this specific nesting
+[33mf00e293[m Restored request object: The 1.0.0 version often requires this specific nesting
+[33mfea3f9e[m Restored request object: The 1.0.0 version often requires this specific nesting
+[33mf188eaf[m buni test 1.8
+[33m3851c10[m buni test 1.7
+[33m3cb2ca6[m Restored request object: The 1.0.0 version often requires this specific nesting
+[33mf59c490[m Restored request object: The 1.0.0 version often requires this specific nesting
+[33mdc2d1ad[m Restored request object: The 1.0.0 version often requires this specific nesting
+[33m98988de[m buni test 1.7
+[33m92ee313[m buni test 1.7
+[33m02a87e2[m buni test 1.7
+[33ma1a246d[m buni test 1.7
+[33m0ae77f5[m buni test 1.6
+[33m119cb14[m buni test 1.4
+[33maa11efc[m buni test 1.3
+[33md3fca21[m buni test 1.2
+[33m933e15f[m buni test 1.1
+[33mb55bfb2[m buni test 1.0
+[33me78f357[m buni test
+[33m58f8a6e[m scripts 4.0
+[33m6083277[m rectify 1.0
+[33md35eeab[m scripts 2.0
+[33m710d88e[m scripts 3.0
+[33md0c5a5c[m scripts 2.0
+[33mb014852[m rectify
+[33m244808a[m scripts 1.0
+[33ma131eeb[m scripts
+[33mdef9af6[m scripts
+[33m8f74b97[m last touch 1.0
+[33me0ea599[m last touch
+[33m9e9f5ef[m ETIMs Integr 2.0
+[33mc8da2d7[m ETIMs Integr 1.0
+[33m3d2e13e[m ETIMs Integr
+[33m53c24b0[m security tight
+[33mf23321b[m Updated Business Logic
+[33mf916914[m Improved payment integration [Pochi and Till]
+[33m9eb9736[m Update Backend
+[33m2a8866b[m Improve server operation
+[33mad7181e[m Investigating a server looped server start
+[33m70cceaf[m Tightenning Google Auth Access
+[33mb84a2ac[m Tightenning Google Auth Access
+[33m3224eaa[m minio Afresh 3.0
+[33mee9bbd0[m minio Afresh 340
+[33md61f9e7[m minio Afresh last to prod
+[33mafd6377[m minio Afresh 3.0
+[33m2e8fd97[m minio Afresh 1.0
+[33mb6cc700[m minio Afresh 2.0
+[33m7989c39[m minio Afresh 1.0
+[33m6db2fd6[m minio Afresh 1.0
+[33mc06d616[m minio hopeful completion
+[33m09d3e9a[m minio Afresh
+[33m5e34e64[m minio Afresh
+[33m87a746a[m minio Afresh
+[33m99f5660[m Afresh
+[33md1fdd2f[m Update Security: IP whitelisting 1.0
+[33mf769c3e[m Update Security: IP whitelisting
+[33mabd956c[m Update X-perience 1.0
+[33m829904d[m Update X-perience
+[33m612aeeb[m Update X-perience
+[33m8d13441[m Updated scripts
+[33m3443f74[m Updated scripts
+[33m202d38f[m Added ecosystemconfig file 2.0
+[33maac3495[m Added ecosystemconfig file 2.0
+[33mc3761d6[m Added ecosystemconfig file 1.0
+[33mfec413e[m Added ecosystemconfig file
+[33m3acab36[m Added ecosystemconfig file
+[33m2b16bb1[m Added ecosystemconfig file
+[33mfec67c4[m Stop tracking env files 1.0
+[33m5ae96d4[m Stop tracking env files 1.0
+[33mf3efa81[m Stop tracking env files 1.0
+[33mf589085[m Stop tracking env files 1.0
+[33mfee4d3d[m Stop tracking env files
+[33m7f0398d[m fix scripts 2.0
+[33m2719df1[m Consistency
+[33m610c270[m fix script
+[33m0665b14[m Optimize system
+[33m85e0354[m global addition of customer number error fix
+[33m8115346[m align system with updated schema
+[33mc4d2124[m added prefferred plan script
+[33m8b49aeb[m 1st Prod situation nitty 1.0
+[33m8e974f4[m 1st Prod situation nitty
+[33mbf2486c[m 1st Prod situation 2.0
+[33m1d02b2f[m 1st Prod situation 2.0
+[33m8cf6dbc[m 1st Prod situation 1.0
+[33m1ed283e[m 1st Prod situation
+[33mf60a79e[m affirmative update 2.0
+[33m96e2869[m affirmative update 1.0
+[33md96b288[m affirmative update
+[33mf158bb2[m last touches to Pro 2.0
+[33mc01cfc8[m last touches to Pro 1.0
+[33m6594495[m last commit to Pro 2.0
+[33m1f8d7e7[m last commit to Pro 1.0
+[33m02a5a71[m 1st Move to prod with real paybill
+[33m9ccbe41[m 1st Move to prod with real paybill
+[33mb896baa[m Complete M-Pesa and Inventory stabilization 2.0
+[33m65bc1de[m Complete M-Pesa and Inventory stabilization
+[33m527599f[m CallBack Fix
+[33m8f45937[m last touches on neo 2.0
+[33m350233f[m last touches on neo
+[33mdeb7720[m Force switch from Bun to Node interpreter
+[33m54652df[m First Debug after ovehaul2.0
+[33m70b78f8[m First Debug after ovehaul
+[33m8ac5f45[m First Debug after ovehaul
+[33mb5c5463[m updated yml file
+[33m3261cf9[m updated yml file
+[33m1a92d98[m another update
+[33m1564e07[m Initial Debugg of new repo content
+[33m51460ea[m Initial commit on /api
+[33m78e82cc[m Initial commit on /api
+[33ma1c2786[m Initial commit on /api
+[33md8e0d24[m[33m ([m[1;31morigin/master[m[33m)[m Initial commit on /api
+[33m77756d0[m Initial commit on /api
+[33m0695bc5[m Initial commit on /api

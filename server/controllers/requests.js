@@ -60,6 +60,31 @@ export const updateRequestStatus = async (req, res) => {
 
   try {
     await db.query(`UPDATE request SET status = ?, updatedAt = NOW() WHERE id = ? AND tenantId = ?`, [status, id, tenantId]);
+
+    // If marked as COMPLETED upon collection, reconcile linked sale and mark as PAID (status 0)
+    if (status === 'COMPLETED') {
+      try {
+        const [rRows] = await db.query(`SELECT message FROM request WHERE id = ? AND tenantId = ? LIMIT 1`, [id, tenantId]);
+        if (rRows.length > 0 && rRows[0].message) {
+          const parsed = JSON.parse(rRows[0].message);
+          const saleId = parsed.saleId;
+          const txCode = parsed.transactionCode || parsed.paymentEvidence?.transactionCode || null;
+          if (saleId) {
+            await db.query(
+              `UPDATE sale SET status = 0, mpesaReceipt = COALESCE(?, mpesaReceipt), updatedAt = NOW() WHERE id = ? AND tenantId = ?`,
+              [txCode, saleId, tenantId]
+            );
+            await db.query(
+              `UPDATE payment SET status = 0, mpesaReceipt = COALESCE(?, mpesaReceipt), updatedAt = NOW() WHERE (reference = ? OR reference = ?) AND tenantId = ?`,
+              [txCode, saleId, id, tenantId]
+            );
+          }
+        }
+      } catch (recErr) {
+        console.warn('[REQUEST RECONCILE] Warning:', recErr.message);
+      }
+    }
+
     return res.json({ success: true, data: { id, status } });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Status update failed' });

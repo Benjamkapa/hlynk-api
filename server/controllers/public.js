@@ -3,6 +3,7 @@ import { ulid } from "ulid";
 import { createNotification, createAdminNotification } from "./notifications.js";
 import { initiateStkPush, queryStkPush } from "../utils/mpesa.js";
 import { decrypt } from "../utils/encryption.js";
+import { uploadFile } from "../utils/storage.js";
 
 /**
  * Public endpoint — no auth required.
@@ -143,13 +144,36 @@ export const getPublicStayListing = async (req, res) => {
       }
     }
 
-    // Extract bannerUrl stored inside operationalSettings (set via /providers/me/banner)
+    // Extract bannerUrl and direct payment settings stored inside operationalSettings
     let bannerUrl = null;
+    let directPayment = null;
+    let sanitizedOperationalSettings = {};
     try {
       const ops = typeof tenant.operationalSettings === "string"
         ? JSON.parse(tenant.operationalSettings || "{}")
         : (tenant.operationalSettings || {});
       bannerUrl = ops?.bannerUrl || null;
+
+      if (ops.directPayment) {
+        directPayment = ops.directPayment;
+      } else if (ops.manualMpesa && (ops.manualMpesa.instructions || ops.manualMpesa.shortcode || ops.manualMpesa.businessNumber)) {
+        directPayment = {
+          enabled: ops.manualMpesa.enabled !== false,
+          methodType: ops.manualMpesa.methodType || "MPESA_PAYBILL",
+          businessNumber: ops.manualMpesa.shortcode || ops.manualMpesa.businessNumber || "",
+          accountNumber: ops.manualMpesa.accountNumber || "Order ID",
+          accountName: tenant.businessName || tenant.providerName,
+          instructions: ops.manualMpesa.instructions || ""
+        };
+      }
+
+      // Sanitize operational settings to protect sensitive keys
+      sanitizedOperationalSettings = {
+        bannerUrl: bannerUrl,
+        directPayment: directPayment,
+        taxInclusive: ops.taxInclusive,
+        autoPrint: ops.autoPrint,
+      };
     } catch (_) {}
 
     return res.json({
@@ -164,9 +188,8 @@ export const getPublicStayListing = async (req, res) => {
         businessType: tenant.businessType,
         bannerUrl,
         hasMpesaGateway: Boolean(hasMpesaGateway),
-        operationalSettings: typeof tenant.operationalSettings === "string"
-          ? (() => { try { return JSON.parse(tenant.operationalSettings); } catch (e) { return {}; } })()
-          : (tenant.operationalSettings || {}),
+        directPayment,
+        operationalSettings: sanitizedOperationalSettings,
         properties: formattedProperties,
         rooms: formattedRooms,
         products: allProductsAndServices,
@@ -313,7 +336,8 @@ export const submitPublicOrder = async (req, res) => {
     notes,
     items,
     paymentOption = "PAY_ON_DELIVERY",
-    checkoutRequestId
+    checkoutRequestId,
+    paymentEvidence,
   } = req.body;
 
   if (!slug || !customerName || !customerPhone || !items || !Array.isArray(items) || items.length === 0) {
@@ -356,6 +380,77 @@ export const submitPublicOrder = async (req, res) => {
 
     const totalAmount = items.reduce((acc, item) => acc + (Number(item.price || 0) * (Number(item.quantity || 1))), 0);
 
+    let txCode = paymentEvidence?.transactionCode?.trim() || null;
+    const receiptProof = paymentEvidence?.receiptUrl || null;
+
+    let isAutoVerified = false;
+
+    // Direct Payment Validation & DB / Log Consolidation
+    if (paymentOption === 'PAY_DIRECT') {
+      if (!txCode) {
+        return res.status(400).json({
+          success: false,
+          message: "Please enter your M-Pesa transaction code before submitting."
+        });
+      }
+
+      txCode = txCode.toUpperCase().replace(/\s+/g, '');
+      const mpesaRegex = /^[A-Z0-9]{8,12}$/;
+      if (!mpesaRegex.test(txCode)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid M-Pesa transaction code format. A valid M-Pesa code is 8 to 12 alphanumeric characters (e.g. TK74ABC910)."
+        });
+      }
+
+      // Check for duplicate transaction codes in database (cannot reuse an already claimed transaction code)
+      const [existingSales] = await db.query(
+        `SELECT id, status, createdAt FROM sale WHERE tenantId = ? AND mpesaReceipt = ? LIMIT 1`,
+        [tenantId, txCode]
+      );
+      if (existingSales.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: "This M-Pesa transaction code has already been recorded for another order. Each payment transaction can only be used once."
+        });
+      }
+
+      // Cross-check with mpesalog if automated C2B / STK logs exist for this transaction
+      try {
+        const [logMatch] = await db.query(
+          `SELECT amount, status, resultCode, resultDesc FROM mpesalog 
+           WHERE (tenantId = ? OR tenantId IS NULL) AND (reference = ? OR merchantRequestId = ? OR JSON_UNQUOTE(JSON_EXTRACT(rawPayload, '$.TransID')) = ?)
+           ORDER BY createdAt DESC LIMIT 1`,
+          [tenantId, txCode, txCode, txCode]
+        );
+        if (logMatch.length > 0) {
+          const log = logMatch[0];
+          if (log.resultCode && log.resultCode !== '0') {
+            return res.status(400).json({
+              success: false,
+              message: `This M-Pesa transaction failed or was cancelled (${log.resultDesc || 'M-Pesa error'}). Please make a valid payment.`
+            });
+          }
+          if (log.amount && Number(log.amount) < totalAmount) {
+            return res.status(400).json({
+              success: false,
+              message: `The amount received in this transaction (KES ${Number(log.amount).toLocaleString()}) does not match the order total (KES ${totalAmount.toLocaleString()}).`
+            });
+          }
+          isAutoVerified = true;
+        }
+      } catch (logErr) {
+        console.warn('[PUBLIC ORDER] mpesalog consolidation check warning:', logErr.message);
+      }
+    }
+
+    let computedPaymentMethod = 'CASH_ON_DELIVERY';
+    if (paymentOption === 'PAY_UPFRONT') {
+      computedPaymentMethod = 'ONLINE_MPESA';
+    } else if (paymentOption === 'PAY_DIRECT') {
+      computedPaymentMethod = paymentEvidence?.methodType || 'DIRECT_MPESA';
+    }
+
     const messageData = JSON.stringify({
       orderId,
       saleId,
@@ -371,8 +466,11 @@ export const submitPublicOrder = async (req, res) => {
       notes: notes || null,
       customerEmail: customerEmail || null,
       paymentOption,
-      paymentMethod: paymentOption === 'PAY_UPFRONT' ? 'ONLINE_MPESA' : 'CASH_ON_DELIVERY',
+      paymentMethod: computedPaymentMethod,
       checkoutRequestId: checkoutRequestId || null,
+      paymentEvidence: paymentEvidence || null,
+      transactionCode: txCode,
+      receiptUrl: receiptProof,
       source: 'PUBLIC_LINK'
     });
 
@@ -420,14 +518,14 @@ export const submitPublicOrder = async (req, res) => {
     );
 
     // 2. Record as a sale so it flows into revenue reports and customer transaction history
-    const dbPaymentMethod = paymentOption === 'PAY_UPFRONT' ? 'ONLINE_MPESA' : 'CASH_ON_DELIVERY';
-    const saleStatus = paymentOption === 'PAY_UPFRONT' ? 2 : 1; // 2 = Pending Payment (M-Pesa STK), 1 = Pay on Delivery
+    // Status: 0=PAID (if auto-verified via log match), 1=Pay on delivery, 2=Pending M-Pesa STK/Awaiting verification
+    const saleStatus = isAutoVerified ? 0 : ((paymentOption === 'PAY_UPFRONT' || (paymentOption === 'PAY_DIRECT' && txCode)) ? 2 : 1);
 
     try {
       await db.query(
-        `INSERT INTO sale (id, tenantId, userId, customerId, customerName, totalAmount, paymentMethod, status, mpesaRequestId, source, createdAt, updatedAt)
-           VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'Online Store', NOW(), NOW())`,
-        [saleId, tenantId, customerId, customerName.trim(), totalAmount, dbPaymentMethod, saleStatus, checkoutRequestId || null]
+        `INSERT INTO sale (id, tenantId, userId, customerId, customerName, totalAmount, paymentMethod, status, mpesaReceipt, mpesaRequestId, source, createdAt, updatedAt)
+           VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'Online Store', NOW(), NOW())`,
+        [saleId, tenantId, customerId, customerName.trim(), totalAmount, computedPaymentMethod, saleStatus, txCode, checkoutRequestId || null]
       );
 
       for (const item of items) {
@@ -447,7 +545,7 @@ export const submitPublicOrder = async (req, res) => {
       }
 
       // Record in Master Payment Table (matching createSale pattern in sales.js)
-      if (paymentOption === 'PAY_UPFRONT' || checkoutRequestId) {
+      if (paymentOption === 'PAY_UPFRONT' || paymentOption === 'PAY_DIRECT' || checkoutRequestId) {
         try {
           let isRented = 0;
           if (checkoutRequestId) {
@@ -456,9 +554,9 @@ export const submitPublicOrder = async (req, res) => {
           }
 
           await db.query(`
-              INSERT INTO payment (id, tenantId, amount, status, reference, mpesaRequestId, transactionType, isRented, createdAt)
-              VALUES (?, ?, ?, ?, ?, ?, 'SALE', ?, NOW())
-            `, [ulid(), tenantId, totalAmount, saleStatus, saleId, checkoutRequestId || null, isRented]);
+              INSERT INTO payment (id, tenantId, amount, status, reference, mpesaReceipt, mpesaRequestId, transactionType, isRented, createdAt)
+              VALUES (?, ?, ?, ?, ?, ?, ?, 'SALE', ?, NOW())
+            `, [ulid(), tenantId, totalAmount, saleStatus, saleId, txCode, checkoutRequestId || null, isRented]);
         } catch (payErr) {
           console.error('[PUBLIC ORDER] Master payment link warning:', payErr.message);
         }
@@ -467,10 +565,11 @@ export const submitPublicOrder = async (req, res) => {
       console.error('[PUBLIC ORDER] Sale recording skipped:', saleErr.message);
     }
 
-    // 3. Send notification to tenant & Super Admin ONLY IF Pay on Delivery
-    // For Pay Upfront (M-Pesa STK), notification is deferred until STK push callback completes (Success, Cancelled, or Failed)
+    // 3. Send notification to tenant & Super Admin ONLY IF NOT automated STK push (which notifies on STK callback)
     if (paymentOption !== 'PAY_UPFRONT') {
-      const payLabel = 'Pay on Delivery / Arrival';
+      const payLabel = paymentOption === 'PAY_DIRECT'
+        ? `Direct Payment${txCode ? ` - Ref: ${txCode}` : ''}`
+        : 'Pay on Delivery / Arrival';
 
       await createNotification({
         tenantId,
@@ -483,7 +582,7 @@ export const submitPublicOrder = async (req, res) => {
       });
 
       createAdminNotification({
-        title: `🛒 Client Purchase: KES ${totalAmount.toLocaleString()} (Pay on Delivery)`,
+        title: `🛒 Client Purchase: KES ${totalAmount.toLocaleString()} (${payLabel})`,
         message: `${customerName.trim()} (${customerPhone.trim()}) bought ${items.length} item(s) from vendor '${tenantRows[0].businessName}'. Payment: ${payLabel}.`,
         type: 'order',
         relatedTenantId: tenantId,
@@ -493,12 +592,55 @@ export const submitPublicOrder = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: "Order placed successfully! The business owner will contact you shortly.",
-      data: { orderId, saleId, totalAmount, paymentOption, checkoutRequestId }
+      message: saleStatus === 0
+        ? "Payment verified! Order placed successfully."
+        : (paymentOption === 'PAY_DIRECT'
+          ? "Order placed! Direct payment is awaiting provider verification."
+          : "Order placed successfully! The business owner will contact you shortly."),
+      data: {
+        orderId,
+        saleId,
+        totalAmount,
+        paymentOption,
+        checkoutRequestId,
+        transactionCode: txCode,
+        paymentStatus: saleStatus === 0 ? "PAID" : (paymentOption === 'PAY_DIRECT' ? "AWAITING_VERIFICATION" : "PENDING_DELIVERY"),
+        verified: saleStatus === 0
+      }
     });
   } catch (err) {
     console.error("[PUBLIC ORDER] Error:", err);
     return res.status(500).json({ success: false, message: "Failed to submit order" });
+  }
+};
+
+/**
+ * Public Payment Receipt Upload Endpoint — no auth required.
+ * Allows customers checking out on Stay/Shop page to upload proof-of-payment receipt screenshot.
+ */
+export const uploadPaymentReceipt = async (req, res) => {
+  if (!req.files || !req.files.file) {
+    return res.status(400).json({ success: false, message: 'No receipt file provided' });
+  }
+
+  try {
+    const file = req.files.file;
+    if (!file.mimetype.startsWith('image/')) {
+      return res.status(400).json({ success: false, message: 'Please upload an image file (PNG, JPG, etc.)' });
+    }
+
+    try {
+      const url = await uploadFile(file, 'receipts');
+      return res.json({ success: true, data: { url } });
+    } catch (storageErr) {
+      // Fallback if MinIO is not available: convert to base64 Data URL
+      console.warn('[PUBLIC RECEIPT] Storage fallback to Data URL:', storageErr.message);
+      const dataUrl = `data:${file.mimetype};base64,${file.data.toString('base64')}`;
+      return res.json({ success: true, data: { url: dataUrl } });
+    }
+  } catch (err) {
+    console.error('[PUBLIC RECEIPT] Upload error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to upload receipt' });
   }
 };
 
