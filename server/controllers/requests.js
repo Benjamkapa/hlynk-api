@@ -56,7 +56,7 @@ export const createRequest = async (req, res) => {
 export const updateRequestStatus = async (req, res) => {
   const { tenantId } = req.user;
   const { id } = req.params;
-  const { status } = req.body;
+  const { status, voidSale: shouldVoidSale } = req.body;
 
   try {
     await db.query(`UPDATE request SET status = ?, updatedAt = NOW() WHERE id = ? AND tenantId = ?`, [status, id, tenantId]);
@@ -82,6 +82,37 @@ export const updateRequestStatus = async (req, res) => {
         }
       } catch (recErr) {
         console.warn('[REQUEST RECONCILE] Warning:', recErr.message);
+      }
+    }
+
+    // If CANCELLED and the provider chose to also void the linked sale, cancel it and restore stock
+    if (status === 'CANCELLED' && shouldVoidSale) {
+      try {
+        const [rRows] = await db.query(`SELECT message FROM request WHERE id = ? AND tenantId = ? LIMIT 1`, [id, tenantId]);
+        if (rRows.length > 0 && rRows[0].message) {
+          const parsed = JSON.parse(rRows[0].message);
+          const saleId = parsed.saleId;
+          if (saleId) {
+            // Mark the sale as cancelled (status 3)
+            await db.query(
+              `UPDATE sale SET status = 3, updatedAt = NOW() WHERE id = ? AND tenantId = ? AND status != 3`,
+              [saleId, tenantId]
+            );
+            // Restore stock for all physical goods in the sale
+            const [saleItems] = await db.query(`SELECT * FROM saleitem WHERE saleId = ?`, [saleId]);
+            for (const item of saleItems) {
+              if (item.productId) {
+                await db.query(
+                  `UPDATE product SET stockLevel = stockLevel + ? WHERE id = ? AND tenantId = ? AND type != 'SERVICE'`,
+                  [item.quantity, item.productId, tenantId]
+                );
+              }
+            }
+            console.log(`[REQUEST CANCEL] Voided sale ${saleId} and restored stock for cancelled order ${id}`);
+          }
+        }
+      } catch (cancelErr) {
+        console.warn('[REQUEST CANCEL] Warning voiding linked sale:', cancelErr.message);
       }
     }
 
