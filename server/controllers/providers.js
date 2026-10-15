@@ -27,7 +27,7 @@ export const getMyProfile = async (req, res) => {
     const [rows] = await db.query(`
       SELECT 
         u.id as userId, u.name, u.phone, u.email, u.role, u.photoUrl,
-        p.id as providerId, p.businessName, p.category, p.location,
+        p.id as providerId, p.businessName, p.category, p.location, p.photoUrl as providerPhotoUrl,
         p.notificationSettings, p.operationalSettings,
         t.activeModules, t.businessType, t.slug
       FROM user u
@@ -61,7 +61,8 @@ export const getMyProfile = async (req, res) => {
         activeModules,
         businessType: p.businessType,
         notificationSettings: typeof p.notificationSettings === 'string' ? JSON.parse(p.notificationSettings) : p.notificationSettings,
-        operationalSettings: typeof p.operationalSettings === 'string' ? JSON.parse(p.operationalSettings) : p.operationalSettings
+        operationalSettings: typeof p.operationalSettings === 'string' ? JSON.parse(p.operationalSettings) : (p.operationalSettings || {}),
+        logoUrl: (typeof p.operationalSettings === 'string' ? JSON.parse(p.operationalSettings || '{}')?.logoUrl : p.operationalSettings?.logoUrl) || p.providerPhotoUrl || null
       }
     });
   } catch (err) {
@@ -563,5 +564,86 @@ export const uploadBanner = async (req, res) => {
     } catch (err) {
         console.error('[BANNER] Upload error:', err);
         return res.status(500).json({ success: false, message: 'Banner upload failed' });
+    }
+};
+
+/**
+ * Upload business logo / sidebar brand icon.
+ * Available only in Business Pro (MAX) package and the Free Trial tier (not in Starter KES 4,450).
+ */
+export const uploadLogo = async (req, res) => {
+    const { tenantId } = req.user;
+    if (!req.files || !req.files.file) {
+        return res.status(400).json({ success: false, message: 'No file uploaded' });
+    }
+
+    try {
+        // Enforce subscription gating on backend
+        const [subRows] = await db.query(
+            `SELECT planName, status FROM subscription WHERE tenantId = ?`,
+            [tenantId]
+        );
+        const sub = subRows[0] || {};
+        const isTrial = Number(sub.status) === 2 || String(sub.status || '').toUpperCase() === 'TRIAL';
+        const plan = String(sub.planName || '').toUpperCase();
+        const isSuperior = plan === 'MAX' || req.user?.role === 'SUPER_ADMIN';
+
+        if (!isTrial && !isSuperior) {
+            return res.status(403).json({
+                success: false,
+                message: 'Custom sidebar branding is exclusively available on Business Pro and Free Trial tiers. Upgrade from Starter (KES 4,450) to unlock.'
+            });
+        }
+
+        const url = await uploadFile(req.files.file, 'logos');
+
+        // Merge logoUrl into operationalSettings JSON & update provider.photoUrl
+        const [[row]] = await db.query(`SELECT operationalSettings FROM provider WHERE tenantId = ?`, [tenantId]);
+        let ops = {};
+        try {
+            ops = typeof row?.operationalSettings === 'string'
+                ? JSON.parse(row.operationalSettings || '{}')
+                : (row?.operationalSettings || {});
+        } catch (_) {}
+
+        ops.logoUrl = url;
+
+        await db.query(
+            `UPDATE provider SET operationalSettings = ?, photoUrl = ?, updatedAt = NOW() WHERE tenantId = ?`,
+            [JSON.stringify(ops), url, tenantId]
+        );
+
+        return res.json({ success: true, data: { url } });
+    } catch (err) {
+        console.error('[LOGO] Upload error:', err);
+        return res.status(500).json({ success: false, message: 'Logo upload failed' });
+    }
+};
+
+/**
+ * Remove custom business logo / sidebar icon, reverting to the default hlynk platform icon.
+ */
+export const deleteLogo = async (req, res) => {
+    const { tenantId } = req.user;
+    try {
+        const [[row]] = await db.query(`SELECT operationalSettings FROM provider WHERE tenantId = ?`, [tenantId]);
+        let ops = {};
+        try {
+            ops = typeof row?.operationalSettings === 'string'
+                ? JSON.parse(row.operationalSettings || '{}')
+                : (row?.operationalSettings || {});
+        } catch (_) {}
+
+        delete ops.logoUrl;
+
+        await db.query(
+            `UPDATE provider SET operationalSettings = ?, photoUrl = NULL, updatedAt = NOW() WHERE tenantId = ?`,
+            [JSON.stringify(ops), tenantId]
+        );
+
+        return res.json({ success: true, message: 'Sidebar icon reset to default hlynk logo' });
+    } catch (err) {
+        console.error('[LOGO] Delete error:', err);
+        return res.status(500).json({ success: false, message: 'Failed to reset logo' });
     }
 };

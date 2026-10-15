@@ -94,9 +94,11 @@ export const googleAuth = async (req, res) => {
 
     const [userRows] = await db.query(`
       SELECT u.*, t.isActive as tenantIsActive, t.slug as tenantSlug, t.businessName, t.businessType, t.activeModules, t.referralCode,
+             p.category, p.operationalSettings, p.photoUrl as providerPhotoUrl,
              s.planName, s.status, s.trialEndDate, s.endDate
       FROM user u
       JOIN tenant t ON u.tenantId = t.id
+      LEFT JOIN provider p ON p.tenantId = t.id
       LEFT JOIN subscription s ON s.tenantId = t.id
       WHERE u.email = ?
     `, [email]);
@@ -290,6 +292,17 @@ export const googleAuth = async (req, res) => {
       }
     }
 
+    let logoUrl = null;
+    if (user.operationalSettings) {
+      try {
+        const ops = typeof user.operationalSettings === 'string' ? JSON.parse(user.operationalSettings) : user.operationalSettings;
+        logoUrl = ops?.logoUrl || null;
+      } catch (_) {}
+    }
+    if (!logoUrl && user.providerPhotoUrl) {
+      logoUrl = user.providerPhotoUrl;
+    }
+
     return res.json({ 
       success: true, 
       data: { 
@@ -297,6 +310,7 @@ export const googleAuth = async (req, res) => {
         refreshToken,         // still in body for backwards-compat during transition
         user: {
           ...user,
+          logoUrl,
           activeModules,
           subscription: {
             planName: user.planName,
@@ -332,7 +346,7 @@ export const me = async (req, res) => {
       SELECT 
         u.id, u.name, u.phone, u.email, u.role, u.photoUrl, u.permissions,
         t.id as tenantId, t.slug as tenantSlug, t.businessName, t.businessType, t.activeModules, t.referralCode,
-        p.category,
+        p.category, p.operationalSettings, p.photoUrl as providerPhotoUrl,
         s.planName, s.status, s.trialEndDate, s.endDate,
         (SELECT COUNT(*) FROM payment WHERE tenantId = t.id AND isRented = 1 LIMIT 1) as isRented
       FROM user u
@@ -370,10 +384,22 @@ export const me = async (req, res) => {
       activeModules = ['POS'];
     }
 
+    let logoUrl = null;
+    if (user.operationalSettings) {
+      try {
+        const ops = typeof user.operationalSettings === 'string' ? JSON.parse(user.operationalSettings) : user.operationalSettings;
+        logoUrl = ops?.logoUrl || null;
+      } catch (_) {}
+    }
+    if (!logoUrl && user.providerPhotoUrl) {
+      logoUrl = user.providerPhotoUrl;
+    }
+
     return res.json({
       success: true,
       data: {
         ...user,
+        logoUrl,
         activeModules,
         subscription: {
           planName: user.planName,

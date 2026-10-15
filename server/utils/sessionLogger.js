@@ -213,7 +213,9 @@ export const getActionDescription = (method, url) => {
   if (cleanUrl === '/api/v1/subscriptions/change-plan' && method === 'POST') return { title: '⭐ Change Subscription Plan', category: 'Billing', isMutation: true };
 
   if (cleanUrl === '/api/v1/providers/me' && (method === 'PUT' || method === 'PATCH')) return { title: '⚙️ Update Business Profile', category: 'Profile', isMutation: true };
-  if (cleanUrl === '/api/v1/providers/me/photo' && method === 'POST') return { title: '📷 Upload Logo / Photo', category: 'Profile', isMutation: true };
+  if (cleanUrl === '/api/v1/providers/me/photo' && method === 'POST') return { title: '📷 Upload Profile Photo', category: 'Profile', isMutation: true };
+  if (cleanUrl === '/api/v1/providers/me/logo' && method === 'POST') return { title: '🎨 Upload Brand / Sidebar Logo', category: 'Profile', isMutation: true };
+  if (cleanUrl === '/api/v1/providers/me/logo' && method === 'DELETE') return { title: '🗑️ Reset Sidebar Logo', category: 'Profile', isMutation: true };
 
   if (cleanUrl.startsWith('/api/v1/etims/invoices') && method === 'POST') return { title: '🧾 Transmit E-TIMS Invoice', category: 'eTIMS', isMutation: true };
   if (cleanUrl === '/api/v1/etims/credentials' && method === 'POST') return { title: '🧾 Save E-TIMS Credentials', category: 'eTIMS', isMutation: true };
