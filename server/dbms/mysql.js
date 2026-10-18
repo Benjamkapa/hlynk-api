@@ -10,10 +10,12 @@ dotenv.config({ path: path.join(__dirname, '../.env'), quiet: true });
 // Priority: DATABASE_URL > individual env vars > defaults
 const connectionString = process.env.DATABASE_URL;
 
+const connectionLimit = parseInt(process.env.DB_CONNECTION_LIMIT || '25', 10);
+
 const dbConfig = connectionString ? {
   uri: connectionString,
   waitForConnections: true,
-  connectionLimit: 10,
+  connectionLimit,
   queueLimit: 0,
   enableKeepAlive: true,
   keepAliveInitialDelay: 0
@@ -23,13 +25,21 @@ const dbConfig = connectionString ? {
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
   waitForConnections: true,
-  connectionLimit: 10,
+  connectionLimit,
   queueLimit: 0,
   enableKeepAlive: true,
   keepAliveInitialDelay: 0
 };
 
 export const pool = mysql.createPool(dbConfig);
+
+// Handle idle connection drops & transient disconnects without unhandled process termination
+pool.on('error', (err) => {
+  console.error('[MySQL Pool Error]', err?.code || err?.message || err);
+  if (err?.code === 'PROTOCOL_CONNECTION_LOST' || err?.code === 'ECONNRESET') {
+    console.warn('[MySQL Pool] Connection lost/reset, pool will reconnect automatically.');
+  }
+});
 
 export const db = {
   query: async (sql, params) => {

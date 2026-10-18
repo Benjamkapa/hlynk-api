@@ -66,12 +66,6 @@ const PORT = params.port || 3000;
 // Trust exactly 1 reverse-proxy hop (Nginx). Prevents IP spoofing via X-Forwarded-For.
 app.set('trust proxy', 1);
 
-// Start background tasks
-startSubscriptionDaemon();
-startEtimsDaemon();
-startPayoutDaemon();
-startBackupDaemon();
-
 // —— IP Blocklist (first line of defence) ————————————————————————————
 // Drops requests from known malicious IPs/ranges before any processing.
 app.use(ipBlocklistMiddleware);
@@ -631,6 +625,16 @@ const startServer = async () => {
       // console.log(`📡 Real-Time Session & Activity Monitoring: ACTIVE`);
       if (process.send) {
         process.send('ready');
+      }
+
+      // Start background tasks safely once the HTTP server is up and listening
+      try {
+        startSubscriptionDaemon();
+        startEtimsDaemon();
+        startPayoutDaemon();
+        startBackupDaemon();
+      } catch (daemonErr) {
+        console.error('⚠️ [Daemon Startup Error]:', daemonErr.message);
       }
     });
   } catch (err) {

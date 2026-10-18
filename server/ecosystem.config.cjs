@@ -5,7 +5,12 @@ module.exports = {
     cwd: __dirname,
     interpreter: 'node',
     wait_ready: true,
-    listen_timeout: 10000,
+    listen_timeout: 30000,
+    max_memory_restart: '1G',
+    min_uptime: '10s',
+    max_restarts: 50,
+    restart_delay: 2000,
+    exp_backoff_restart_delay: 200,
 
     // ── Logging ──────────────────────────────────────────────────
     out_file: '/var/log/hlynk/hlynk-out.log',    // stdout only

@@ -10,10 +10,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ── Config ─────────────────────────────────────────────────────────────────
 const BACKUP_DIR   = path.join(__dirname, '..', 'backups');
-const MAX_COPIES   = 3;                    // keep N most recent copies (12 x 30 min = ~6 hours)
+const MAX_COPIES   = 4;                    // keep 4 most recent copies (4 x 6 hours = 24 hours)
 const MINIO_BUCKET = 'hlynk-backups';       // dedicated private bucket for DB backups
 const MINIO_PREFIX = 'db/';                 // object prefix inside the bucket
-const CRON_SCHEDULE = '*/30 * * * *';       // every 30 minutes (at :00 and :30)
+const CRON_SCHEDULE = process.env.BACKUP_CRON_SCHEDULE || '0 */6 * * *'; // every 6 hours (00:00, 06:00, 12:00, 18:00)
 const LOCK_NAME    = 'hlynk_backup_lock';   // MySQL named lock: blocks overlapping backups
 
 // ── Ensure the private backup bucket exists (private policy — no public read) ──
@@ -228,12 +228,13 @@ async function runBackup() {
 
 // ── Daemon entry point ──────────────────────────────────────────────────────
 export const startBackupDaemon = async () => {
-  await ensureBackupBucket();
+  try {
+    await ensureBackupBucket();
+  } catch (err) {
+    console.error('[Backup Daemon] Bucket check warning:', err.message);
+  }
 
-  // Run once immediately at startup
-  runBackup().catch(err => console.error('[Backup Daemon] Initial backup failed:', err.message));
-
-  // Then every 30 minutes: */30 * * * *
+  // Schedule regular backups (e.g. every 6 hours) without blocking server startup
   cron.schedule(CRON_SCHEDULE, async () => {
     try {
       await runBackup();
@@ -242,7 +243,7 @@ export const startBackupDaemon = async () => {
     }
   });
 
-  // console.log(`💾 DB Backup Daemon started — every 30m → MinIO only, keeping last ${MAX_COPIES} copies.`);
+  console.log(`💾 DB Backup Daemon started — schedule: ${CRON_SCHEDULE}, keeping last ${MAX_COPIES} copies.`);
 };
 
 // import cron from 'node-cron';
