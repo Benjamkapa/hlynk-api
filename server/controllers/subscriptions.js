@@ -390,6 +390,10 @@ export const submitManualPayment = async (req, res) => {
       VALUES (?, ?, ?, ?, ?, 2, ?, 'SUBSCRIPTION', ?, 'Manual submission awaiting verification', NOW())
     `, [paymentId, tenantId, amount || PLAN_PRICES[planName], phone || 'MANUAL', planName, reference, mpesaCode.toUpperCase()]);
 
+    // Fetch tenant name for the admin notification
+    const [tenantRows] = await db.query(`SELECT businessName FROM tenant WHERE id = ?`, [tenantId]);
+    const tenantName = tenantRows[0]?.businessName || 'Tenant';
+
     // Notify Admins (DB + Push)
     await createAdminNotification({
       title: 'Manual Payment Submitted',
