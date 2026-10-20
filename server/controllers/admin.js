@@ -742,8 +742,8 @@ export const getUserFinancialValue = async (req, res) => {
         IFNULL(SUM(buyingPrice * stockLevel), 0) as costValue,
         IFNULL(SUM(price * stockLevel), 0) as retailValue,
         IFNULL(SUM((price - buyingPrice) * stockLevel), 0) as potentialProfit,
-        COUNT(CASE WHEN stockLevel <= IFNULL(minLevel, 5) THEN 1 END) as lowStockCount,
-        COUNT(CASE WHEN stockLevel = 0 THEN 1 END) as outOfStockCount
+        COUNT(CASE WHEN IFNULL(trackStock, 0) = 1 AND stockLevel > 0 AND stockLevel <= IFNULL(minLevel, 5) THEN 1 END) as lowStockCount,
+        COUNT(CASE WHEN IFNULL(trackStock, 0) = 1 AND stockLevel <= 0 THEN 1 END) as outOfStockCount
       FROM product
       WHERE tenantId = ? AND IFNULL(type, 'GOOD') != 'SERVICE'
     `, [tenantId]);

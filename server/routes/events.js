@@ -5,6 +5,7 @@ import {
   createEvent,
   recordEventPayment,
   updateEventStatus,
+  updateEvent,
   deleteEvent
 } from "../controllers/events.js";
 import { authenticate } from "../middleware/auth.js";
@@ -16,6 +17,7 @@ router.use(authenticate);
 router.get("/", getEvents);
 router.get("/:id", getEventById);
 router.post("/", createEvent);
+router.put("/:id", updateEvent);
 router.post("/:id/payments", recordEventPayment);
 router.patch("/:id/status", updateEventStatus);
 router.delete("/:id", deleteEvent);

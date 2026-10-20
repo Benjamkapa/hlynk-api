@@ -204,21 +204,30 @@ export const createSale = async (req, res) => {
         }
       }
 
-      // Update inventory (Physical Goods only)
+      // Update inventory (Physical Goods with trackStock only)
       if (item.productId) {
-        await connection.query(`UPDATE product SET stockLevel = stockLevel - ? WHERE id = ? AND tenantId = ? AND type != 'SERVICE'`, [item.quantity, item.productId, tenantId]);
+        await connection.query(
+          `UPDATE product SET stockLevel = stockLevel - ? WHERE id = ? AND tenantId = ? AND type != 'SERVICE' AND IFNULL(trackStock, 0) = 1`,
+          [item.quantity, item.productId, tenantId]
+        );
         
-        // Low Stock Check (Skip for Services)
+        // Low Stock / Out of Stock Check (Skip for untracked / services)
         const [[prod]] = await connection.query(`
           SELECT p.name, p.stockLevel, p.type, pr.operationalSettings 
           FROM product p 
           JOIN provider pr ON p.tenantId = pr.tenantId 
-          WHERE p.id = ? AND IFNULL(p.type, 'GOOD') != 'SERVICE'
+          WHERE p.id = ? AND IFNULL(p.type, 'GOOD') != 'SERVICE' AND IFNULL(p.trackStock, 0) = 1
         `, [item.productId]);
         if (prod) {
           const ops = typeof prod.operationalSettings === 'string' ? JSON.parse(prod.operationalSettings) : prod.operationalSettings;
           const threshold = ops?.lowStockThreshold || 5;
-          if (prod.stockLevel > 0 && prod.stockLevel <= threshold) {
+          if (prod.stockLevel <= 0) {
+            sendPushToTenant(tenantId, {
+              title: 'Out of Stock Alert! 🚨',
+              body: `"${prod.name}" is now out of stock following recent sales.`,
+              data: { url: '/dashboard/products' }
+            }).catch(e => console.error('[PUSH] Out of stock alert failed:', e.message));
+          } else if (prod.stockLevel <= threshold) {
             sendPushToTenant(tenantId, {
               title: 'Low Stock Alert! ⚠️',
               body: `Only ${prod.stockLevel} left of "${prod.name}". Time to restock!`,
@@ -351,7 +360,7 @@ export const voidSale = async (req, res) => {
     for (const item of items) {
       if (item.productId) {
         await connection.query(
-          `UPDATE product SET stockLevel = stockLevel + ? WHERE id = ? AND tenantId = ? AND type != 'SERVICE'`,
+          `UPDATE product SET stockLevel = stockLevel + ? WHERE id = ? AND tenantId = ? AND type != 'SERVICE' AND IFNULL(trackStock, 0) = 1`,
           [item.quantity, item.productId, tenantId]
         );
       }

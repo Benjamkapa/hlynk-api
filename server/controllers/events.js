@@ -298,6 +298,60 @@ export const updateEventStatus = async (req, res) => {
   }
 };
 
+// Update event dates / amounts (extend stay, early checkout, rate change)
+export const updateEvent = async (req, res) => {
+  try {
+    const tenantId = req.user.tenantId;
+    const userId = req.user.id;
+    const { id } = req.params;
+    const { startTime, endTime, totalAmount, paidAmount, paymentMethod, meta, notes } = req.body;
+
+    const [events] = await db.query("SELECT * FROM event WHERE id = ? AND tenantId = ?", [id, tenantId]);
+    if (!events.length) {
+      return res.status(404).json({ success: false, message: "Event not found" });
+    }
+
+    const event = events[0];
+    const newTotal = totalAmount !== undefined ? parseFloat(totalAmount) : parseFloat(event.totalAmount);
+    const newPaid  = paidAmount  !== undefined ? parseFloat(paidAmount)  : parseFloat(event.paidAmount);
+    const newBalance = Math.max(0, newTotal - newPaid);
+    const mergedMeta = meta ? JSON.stringify({ ...(typeof event.meta === 'string' ? JSON.parse(event.meta || '{}') : event.meta || {}), ...meta }) : event.meta;
+
+    await db.query(
+      `UPDATE event SET startTime = ?, endTime = ?, totalAmount = ?, paidAmount = ?, balance = ?, meta = ?, updatedAt = NOW() WHERE id = ? AND tenantId = ?`,
+      [
+        startTime !== undefined ? startTime : event.startTime,
+        endTime   !== undefined ? endTime   : event.endTime,
+        newTotal,
+        newPaid,
+        newBalance,
+        mergedMeta,
+        id,
+        tenantId
+      ]
+    );
+
+    // If additional payment was recorded on this update, log it to Core
+    const extraPaid = newPaid - parseFloat(event.paidAmount);
+    if (extraPaid > 0) {
+      const paymentId = `pay_${uuidv4().replace(/-/g, '').slice(0, 16)}`;
+      await db.query(
+        `INSERT INTO payment (id, tenantId, amount, status, referenceType, referenceId, meta) VALUES (?, ?, ?, 1, 'EVENT', ?, ?)`,
+        [paymentId, tenantId, extraPaid, id, JSON.stringify({ userId, paymentMethod: paymentMethod || 'MPESA', notes: notes || 'Booking update payment', eventType: event.eventType })]
+      );
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Booking updated successfully",
+      data: { totalAmount: newTotal, paidAmount: newPaid, balance: newBalance }
+    });
+  } catch (error) {
+    console.error("Error updating event:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // Delete event
 export const deleteEvent = async (req, res) => {
   try {

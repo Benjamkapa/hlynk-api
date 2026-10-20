@@ -107,13 +107,18 @@ export const createProduct = async (req, res) => {
       return res.status(403).json({ success: false, message: msg });
     }
 
+    const isService = data.type === 'SERVICE';
+    const hasExplicitStock = data.stock !== undefined && data.stock !== null && String(data.stock).trim() !== '';
+    const shouldTrackStock = !isService && (data.trackStock !== undefined ? Boolean(data.trackStock) : hasExplicitStock);
+    const initialStock = shouldTrackStock ? (parseInt(data.stock) || 0) : 0;
+
     await db.query(
-      `INSERT INTO product (id, tenantId, name, category, price, buyingPrice, stockLevel, sku, imageUrl, description, minLevel, isPerishable, type, expiryDate, isActive, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`,
+      `INSERT INTO product (id, tenantId, name, category, price, buyingPrice, stockLevel, trackStock, sku, imageUrl, description, minLevel, isPerishable, type, expiryDate, isActive, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`,
       [
         id, tenantId, data.name, data.category || 'General', Number(data.price), 
-        data.type === 'SERVICE' ? 0 : (Number(data.buyingPrice) || 0), 
-        (data.stock !== undefined && data.stock !== null && String(data.stock).trim() !== '') ? parseInt(data.stock) : 0, sku, data.imageUrl || null, data.description || null, 
+        isService ? 0 : (Number(data.buyingPrice) || 0), 
+        initialStock, shouldTrackStock ? 1 : 0, sku, data.imageUrl || null, data.description || null, 
         parseInt(data.minLevel) || 5, data.isPerishable ? 1 : 0, 
         data.type || 'GOOD', data.expiryDate || null
       ]
@@ -139,10 +144,18 @@ export const updateProduct = async (req, res) => {
 
     if (data.name) { updateQuery += ', name = ?'; updateParams.push(data.name); }
     if (data.price !== undefined) { updateQuery += ', price = ?'; updateParams.push(Number(data.price)); }
+    if (data.trackStock !== undefined) { 
+      updateQuery += ', trackStock = ?'; 
+      updateParams.push(data.trackStock ? 1 : 0); 
+    }
     if (data.stock !== undefined) { 
-      const parsedStock = String(data.stock).trim() === '' ? 0 : parseInt(data.stock);
+      const stockStr = String(data.stock).trim();
+      const parsedStock = stockStr === '' ? 0 : parseInt(stockStr);
       updateQuery += ', stockLevel = ?'; 
       updateParams.push(isNaN(parsedStock) ? 0 : parsedStock); 
+      if (data.trackStock === undefined && stockStr !== '') {
+        updateQuery += ', trackStock = 1';
+      }
     }
     if (data.minLevel !== undefined) { updateQuery += ', minLevel = ?'; updateParams.push(parseInt(data.minLevel) || 0); }
     if (data.category) { updateQuery += ', category = ?'; updateParams.push(data.category); }

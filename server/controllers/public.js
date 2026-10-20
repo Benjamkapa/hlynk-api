@@ -17,7 +17,7 @@ export const getPublicStayListing = async (req, res) => {
     // 1. Find tenant by slug along with subscription details
     const [tenantRows] = await db.query(
       `SELECT t.id, t.businessName, t.slug, t.businessType,
-              p.category, p.location, p.phone as providerPhone, p.businessName as providerName, p.operationalSettings,
+              p.category, p.location, p.phone as providerPhone, p.businessName as providerName, p.operationalSettings, p.photoUrl as providerPhotoUrl,
               s.planName, s.status as subStatus, s.trialEndDate, s.endDate
        FROM tenant t
        LEFT JOIN provider p ON p.tenantId = t.id
@@ -82,7 +82,7 @@ export const getPublicStayListing = async (req, res) => {
 
     // 4. Fetch retail products from `product` table
     const [dbProducts] = await db.query(
-      `SELECT id, name, category, price, stockLevel, imageUrl, description, type
+      `SELECT id, name, category, price, stockLevel, IFNULL(trackStock, 0) as trackStock, imageUrl, description, type
        FROM product
        WHERE tenantId = ? AND (isActive = 1 OR isActive IS NULL)
        ORDER BY category ASC, name ASC`,
@@ -91,7 +91,7 @@ export const getPublicStayListing = async (req, res) => {
 
     // 5. Fetch services from `service` table
     const [dbServices] = await db.query(
-      `SELECT id, name, 'Services' as category, price, 999 as stockLevel, NULL as imageUrl, description, 'SERVICE' as type
+      `SELECT id, name, 'Services' as category, price, 999 as stockLevel, 0 as trackStock, NULL as imageUrl, description, 'SERVICE' as type
        FROM service
        WHERE tenantId = ? AND (isActive = 1 OR isActive IS NULL)
        ORDER BY name ASC`,
@@ -114,6 +114,7 @@ export const getPublicStayListing = async (req, res) => {
         category: meta.category || "Inventory",
         price: Number(r.price || 0),
         stockLevel: meta.stockLevel || 999,
+        trackStock: 0,
         imageUrl: meta.imageUrl || null,
         description: meta.description || null,
         type: r.type || "PRODUCT"
@@ -122,8 +123,18 @@ export const getPublicStayListing = async (req, res) => {
 
     // Combine all products, services, and inventory items
     const allProductsAndServices = [
-      ...(dbProducts || []).map(p => ({ ...p, price: Number(p.price || 0) })),
-      ...(dbServices || []).map(s => ({ ...s, price: Number(s.price || 0) })),
+      ...(dbProducts || []).map(p => ({ 
+        ...p, 
+        price: Number(p.price || 0),
+        stockLevel: Number(p.stockLevel || 0),
+        trackStock: Boolean(p.trackStock)
+      })),
+      ...(dbServices || []).map(s => ({ 
+        ...s, 
+        price: Number(s.price || 0),
+        stockLevel: 999,
+        trackStock: false
+      })),
       ...formattedResourceProds
     ];
 
@@ -144,7 +155,8 @@ export const getPublicStayListing = async (req, res) => {
       }
     }
 
-    // Extract bannerUrl and direct payment settings stored inside operationalSettings
+    // Extract logoUrl, bannerUrl and direct payment settings stored inside operationalSettings or provider table
+    let logoUrl = null;
     let bannerUrl = null;
     let directPayment = null;
     let sanitizedOperationalSettings = {};
@@ -152,6 +164,8 @@ export const getPublicStayListing = async (req, res) => {
       const ops = typeof tenant.operationalSettings === "string"
         ? JSON.parse(tenant.operationalSettings || "{}")
         : (tenant.operationalSettings || {});
+      
+      logoUrl = ops?.logoUrl || tenant.providerPhotoUrl || null;
       bannerUrl = ops?.bannerUrl || null;
 
       if (ops.directPayment) {
@@ -169,6 +183,7 @@ export const getPublicStayListing = async (req, res) => {
 
       // Sanitize operational settings to protect sensitive keys
       sanitizedOperationalSettings = {
+        logoUrl: logoUrl,
         bannerUrl: bannerUrl,
         directPayment: directPayment,
         taxInclusive: ops.taxInclusive,
@@ -186,6 +201,7 @@ export const getPublicStayListing = async (req, res) => {
         phone: tenant.providerPhone,
         slug: tenant.slug,
         businessType: tenant.businessType,
+        logoUrl,
         bannerUrl,
         hasMpesaGateway: Boolean(hasMpesaGateway),
         directPayment,

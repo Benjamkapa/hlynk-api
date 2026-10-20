@@ -180,8 +180,8 @@ export const getStats = async (req, res) => {
     const threshold = ops?.lowStockThreshold || 5;
 
     const [[stockRes]] = await db.query(`
-      SELECT COUNT(*) as total FROM product WHERE tenantId = ? AND stockLevel <= IFNULL(minLevel, ?) AND IFNULL(type, 'GOOD') != 'SERVICE'
-    `, [tenantId, threshold]);
+      SELECT COUNT(*) as total FROM product WHERE tenantId = ? AND IFNULL(trackStock, 0) = 1 AND stockLevel <= 0 AND IFNULL(type, 'GOOD') != 'SERVICE'
+    `, [tenantId]);
 
     // 4. Daily Profit (Revenue - Buying Price, EAT-aware)
     let profit = 0;
