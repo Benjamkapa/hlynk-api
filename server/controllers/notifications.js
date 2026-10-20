@@ -153,8 +153,8 @@ export const sendPushToTenant = async (tenantId, message) => {
             try {
                 await webPush.sendNotification(pushSubscription, payload);
             } catch (err) {
-                console.error(`sendPushToTenant worker error for ${sub.endpoint}:`, err);
-                if (err.statusCode === 410 || err.statusCode === 404) {
+                console.error(`sendPushToTenant worker error for ${sub.endpoint}:`, err?.message || err);
+                if (err.statusCode === 410 || err.statusCode === 404 || err.statusCode === 403) {
                     await db.query('DELETE FROM push_subscriptions WHERE id = ?', [sub.id]);
                 }
             }
@@ -211,8 +211,8 @@ export const sendPushToAdmins = async (message) => {
             try {
                 await webPush.sendNotification(pushSubscription, payload);
             } catch (err) {
-                console.error(`sendPushToAdmins worker error for ${sub.endpoint}:`, err);
-                if (err.statusCode === 410 || err.statusCode === 404) {
+                console.error(`sendPushToAdmins worker error for ${sub.endpoint}:`, err?.message || err);
+                if (err.statusCode === 410 || err.statusCode === 404 || err.statusCode === 403) {
                     await db.query('DELETE FROM push_subscriptions WHERE id = ?', [sub.id]);
                 }
             }

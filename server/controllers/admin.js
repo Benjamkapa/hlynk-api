@@ -690,9 +690,14 @@ export const getUserFinancialValue = async (req, res) => {
     // 1. Fetch user & associated tenant
     const [[user]] = await db.query(`
       SELECT u.id, u.tenantId, u.name, u.email, u.phone, u.role, u.photoUrl, u.createdAt,
-             t.id as businessId, t.businessName, t.slug as tenantSlug, t.category, t.planName, t.isActive as tenantIsActive
+             t.id as businessId, t.businessName, t.slug as tenantSlug, 
+             IFNULL(pr.category, t.businessType) as category, 
+             s.planName, 
+             t.isActive as tenantIsActive
       FROM user u
       LEFT JOIN tenant t ON u.tenantId = t.id
+      LEFT JOIN provider pr ON t.id = pr.tenantId
+      LEFT JOIN subscription s ON t.id = s.tenantId
       WHERE u.id = ?
     `, [id]);
 
@@ -702,9 +707,14 @@ export const getUserFinancialValue = async (req, res) => {
     // Fallback: If not found by user id, check if id is actually a tenantId (for provider business views)
     if (!targetUser) {
       const [[tenant]] = await db.query(`
-        SELECT t.id as businessId, t.id as tenantId, t.businessName, t.slug as tenantSlug, t.category, t.planName, t.isActive as tenantIsActive,
+        SELECT t.id as businessId, t.id as tenantId, t.businessName, t.slug as tenantSlug, 
+               IFNULL(pr.category, t.businessType) as category, 
+               s.planName, 
+               t.isActive as tenantIsActive,
                u.id, u.name, u.email, u.phone, u.role, u.photoUrl, u.createdAt
         FROM tenant t
+        LEFT JOIN provider pr ON t.id = pr.tenantId
+        LEFT JOIN subscription s ON t.id = s.tenantId
         LEFT JOIN user u ON (u.tenantId = t.id AND u.role = 'PROVIDER')
         WHERE t.id = ?
         LIMIT 1
