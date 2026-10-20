@@ -10,7 +10,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ── Config ─────────────────────────────────────────────────────────────────
 const BACKUP_DIR   = path.join(__dirname, '..', 'backups');
-const MAX_COPIES   = 3``;                    // keep 4 most recent copies (4 x 6 hours = 24 hours)
+const MAX_COPIES   = 3;                    // keep 3 most recent copies
 const MINIO_BUCKET = 'hlynk-backups';       // dedicated private bucket for DB backups
 const MINIO_PREFIX = 'db/';                 // object prefix inside the bucket
 const CRON_SCHEDULE = process.env.BACKUP_CRON_SCHEDULE || '0 */6 * * *'; // every 6 hours (00:00, 06:00, 12:00, 18:00)
@@ -37,7 +37,7 @@ async function uploadToMinio(backupName, sqlFilePath) {
       'Content-Type': 'application/sql',
       'x-amz-meta-source': 'auto-backup-daemon',
     });
-    // console.log(`[Backup Daemon] Uploaded to MinIO: ${MINIO_BUCKET}/${objectName}`);
+    console.log(`[Backup Daemon] Uploaded to MinIO: ${MINIO_BUCKET}/${objectName}`);
     return objectName;
   } catch (err) {
     console.error('[Backup Daemon] MinIO upload failed:', err.message);

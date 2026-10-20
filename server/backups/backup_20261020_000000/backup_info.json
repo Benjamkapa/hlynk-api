@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-10-13T14:30:00.293Z",
+  "timestamp": "2026-10-19T21:00:00.736Z",
   "source": "auto-backup-daemon",
   "databaseName": "hlynk",
   "databaseBackup": {
     "success": true,
     "tablesCount": 36,
-    "rowsCount": 1790,
+    "rowsCount": 1711,
     "file": "db_dump.sql"
   }
 }
