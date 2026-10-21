@@ -133,8 +133,9 @@ app.use(fileUpload({
   responseOnLimit: 'File size limit exceeded (max 25MB)',
 }));
 
-// Serve static files from the 'uploads' directory
+// Serve static files from the 'uploads' and 'public/assets' directories
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/assets', express.static(path.join(__dirname, 'public/assets')));
 
 import { sessionActivityMiddleware } from "./utils/sessionLogger.js";
 
