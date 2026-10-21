@@ -1,3 +1,7 @@
+// Load secrets from .env so we never hardcode credentials here.
+// .env is gitignored — this file is safe to commit.
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
+
 module.exports = {
   apps: [
     {
@@ -12,8 +16,8 @@ module.exports = {
       merge_logs: true,
       log_date_format: 'DD/MM/YYYY, HH:mm:ss',
       env: {
-        MINIO_ROOT_USER: 'benjamkapa',
-        MINIO_ROOT_PASSWORD: 'fortjesus@G2026!'
+        MINIO_ROOT_USER:     process.env.MINIO_ROOT_USER,
+        MINIO_ROOT_PASSWORD: process.env.MINIO_ROOT_PASSWORD,
       }
     },
     {
