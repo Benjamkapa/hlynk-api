@@ -14,7 +14,7 @@ async function migrate() {
   } catch (e) {
     console.log('referenceType:', e.message);
   }
-  console.log('Migration complete.');
+  console.log('Migration is complete.');
   process.exit();
 }
 migrate();
