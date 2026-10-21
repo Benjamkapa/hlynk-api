@@ -133,11 +133,11 @@ export const runAutoMigrations = async () => {
     const productFieldNames = (productCols || []).map(c => c.Field);
 
     if (productFieldNames.length && !productFieldNames.includes('trackStock')) {
-      console.log('📦 [DB] Adding trackStock column to product table...');
+      // console.log('📦 [DB] Adding trackStock column to product table...');
       await pool.query('ALTER TABLE product ADD COLUMN trackStock TINYINT(1) NOT NULL DEFAULT 0 AFTER stockLevel;');
       // Backfill: set trackStock = 1 for any product that currently has stockLevel > 0
       await pool.query('UPDATE product SET trackStock = 1 WHERE stockLevel > 0;');
-      console.log('✅ [DB] Successfully added trackStock column and backfilled active stock items.');
+      // console.log('✅ [DB] Successfully added trackStock column and backfilled active stock items.');
     }
   } catch (err) {
     console.warn('⚠️ [DB] Auto-migration notice:', err.message);
