@@ -2,6 +2,7 @@ import { db } from '../dbms/mysql.js';
 import { ulid } from 'ulid';
 import { uploadFile } from '../utils/storage.js';
 import { createAdminNotification } from './notifications.js';
+import { validateKenyanPhone } from '../utils/phone.js';
 
 const slugify = (name) => (name || 'stay').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
@@ -85,9 +86,22 @@ export const updateProfile = async (req, res) => {
       if (!name) {
         return res.status(400).json({ success: false, message: 'Name is required' });
       }
+      let normalizedPhone = null;
+      if (phone !== undefined && phone !== null && String(phone).trim() !== '') {
+        const phoneCheck = validateKenyanPhone(phone);
+        if (!phoneCheck.isValid) {
+          return res.status(400).json({ success: false, message: phoneCheck.error || 'A valid 10-digit Kenyan phone number (07xx or 01xx) is required.' });
+        }
+        normalizedPhone = phoneCheck.normalized;
+      }
       await db.query(`
         UPDATE user SET name = ?, phone = ?, updatedAt = NOW() WHERE id = ?
-      `, [name, phone || null, userId]);
+      `, [name, normalizedPhone, userId]);
+      if (normalizedPhone) {
+        await db.query(`
+          UPDATE provider SET phone = ?, updatedAt = NOW() WHERE tenantId = ?
+        `, [normalizedPhone, tenantId]);
+      }
     }
 
     // 2. Update Provider Details — only if provider fields were actually sent

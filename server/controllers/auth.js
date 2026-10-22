@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { createAdminNotification } from './notifications.js';
 import { logSessionLogin, logSessionLogout, logSessionRefresh, logSessionAlert } from '../utils/sessionLogger.js';
 import { isAdminIPAuthorized } from '../middleware/ipWhitelist.js';
+import { validateKenyanPhone } from '../utils/phone.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const params = JSON.parse(fs.readFileSync(path.join(__dirname, '../configs/params.json'), 'utf8'));
@@ -118,6 +119,56 @@ export const googleAuth = async (req, res) => {
       user.referralCode = newRef;
     }
 
+    // ENFORCE COMPLETE INFO FOR EXISTING PROVIDERS
+    if (user && user.role === 'PROVIDER') {
+      const phoneCheck = validateKenyanPhone(user.phone);
+      if (!phoneCheck.isValid) {
+        if (!registration) {
+          return res.json({ 
+            success: true,
+            data: {
+              action: 'REQUIRES_REGISTRATION', 
+              googleDetails: { email, name: user.name || payload.name, picture: user.photoUrl || payload.picture, credential },
+              existingDetails: {
+                businessName: user.businessName || '',
+                ownerName: user.name || payload.name || '',
+                category: user.category || '',
+                county: user.county || '',
+                location: user.location || '',
+                phone: ''
+              },
+              message: 'Please provide a valid and complete M-Pesa phone number to get started.'
+            }
+          });
+        }
+
+        // Provider submitted info to complete their profile
+        const regPhoneCheck = validateKenyanPhone(registration.phone);
+        if (!regPhoneCheck.isValid) {
+          return res.status(400).json({ 
+            success: false, 
+            message: regPhoneCheck.error || 'A valid and complete 10-digit Kenyan phone number (07xx or 01xx) is required.' 
+          });
+        }
+
+        const validName = (registration.ownerName || user.name || payload.name || '').trim();
+        const validBusiness = (registration.businessName || user.businessName || '').trim();
+        const validCounty = (registration.county || user.county || 'Nairobi').trim();
+        const validLocation = (registration.location || user.location || '').trim();
+        const validCategory = (registration.category || user.category || 'Other').trim();
+
+        await db.query(`UPDATE user SET phone = ?, name = ?, updatedAt = NOW() WHERE id = ?`, [regPhoneCheck.normalized, validName, user.id]);
+        await db.query(`UPDATE provider SET phone = ?, businessName = COALESCE(NULLIF(?, ''), businessName), category = COALESCE(NULLIF(?, ''), category), county = COALESCE(NULLIF(?, ''), county), location = COALESCE(NULLIF(?, ''), location), updatedAt = NOW() WHERE tenantId = ?`, [regPhoneCheck.normalized, validBusiness, validCategory, validCounty, validLocation, user.tenantId]);
+        if (validBusiness) {
+          await db.query(`UPDATE tenant SET businessName = ?, updatedAt = NOW() WHERE id = ?`, [validBusiness, user.tenantId]);
+        }
+
+        user.phone = regPhoneCheck.normalized;
+        user.name = validName;
+        user.businessName = validBusiness || user.businessName;
+      }
+    }
+
     if (!user) {
       if (!registration) {
         return res.json({ 
@@ -129,22 +180,59 @@ export const googleAuth = async (req, res) => {
         });
       }
 
-      // Registration logic here
-      if (
-        !registration.businessName?.trim() || 
-        !registration.ownerName?.trim() || 
-        !registration.phone?.trim() || 
-        !email
-      ) {
+      // Registration logic here - Enforce complete information
+      const businessName = (registration.businessName || '').trim();
+      const ownerName = (registration.ownerName || payload.name || '').trim();
+      const county = (registration.county || '').trim();
+      const location = (registration.location || '').trim();
+      const category = (registration.category || '').trim();
+
+      if (!businessName || businessName.length < 2) {
         return res.status(400).json({ 
           success: false, 
-          message: 'All registration fields (Business Name, Owner Name, and Phone) are required.' 
+          message: 'Biashara / Business name is required (at least 2 characters).' 
+        });
+      }
+
+      if (!ownerName) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Owner name is required.' 
+        });
+      }
+
+      const phoneCheck = validateKenyanPhone(registration.phone);
+      if (!phoneCheck.isValid) {
+        return res.status(400).json({ 
+          success: false, 
+          message: phoneCheck.error || 'A valid and complete 10-digit Kenyan M-Pesa phone number (07xx or 01xx) is required to get started.' 
+        });
+      }
+
+      if (!county) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'County location is required.' 
+        });
+      }
+
+      if (!location) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Town / specific area is required.' 
+        });
+      }
+
+      if (!category) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Biashara category is required.' 
         });
       }
 
       const tenantId = ulid();
       const userId = ulid();
-      const slug = await uniqueSlug(registration.businessName);
+      const slug = await uniqueSlug(businessName);
 
       const connection = await db.getConnection();
       try {
@@ -176,11 +264,11 @@ export const googleAuth = async (req, res) => {
         const trialEndDate = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000).toISOString();
 
         // Generate a new unique referral code for this tenant
-        const newReferralCode = (registration.businessName.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase());
+        const newReferralCode = (businessName.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase());
 
-        await connection.query(`INSERT INTO tenant (id, slug, businessName, referralCode, referredById, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())`, [tenantId, slug, registration.businessName.trim(), newReferralCode, referredById]);
-        await connection.query(`INSERT INTO user (id, tenantId, name, phone, email, role, photoUrl, eulaAcceptedAt, passwordHash, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 'PROVIDER', ?, NOW(), 'GOOGLE_AUTH', 1, NOW(), NOW())`, [userId, tenantId, registration.ownerName.trim() || payload.name, registration.phone.trim(), email, payload.picture || null]);
-        await connection.query(`INSERT INTO provider (id, tenantId, userId, businessName, phone, category, county, location, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`, [ulid(), tenantId, userId, registration.businessName.trim(), registration.phone.trim(), registration.category || 'Other', registration.county || 'Nairobi', registration.location || 'Unknown']);
+        await connection.query(`INSERT INTO tenant (id, slug, businessName, referralCode, referredById, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())`, [tenantId, slug, businessName, newReferralCode, referredById]);
+        await connection.query(`INSERT INTO user (id, tenantId, name, phone, email, role, photoUrl, eulaAcceptedAt, passwordHash, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 'PROVIDER', ?, NOW(), 'GOOGLE_AUTH', 1, NOW(), NOW())`, [userId, tenantId, ownerName, phoneCheck.normalized, email, payload.picture || null]);
+        await connection.query(`INSERT INTO provider (id, tenantId, userId, businessName, phone, category, county, location, isActive, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`, [ulid(), tenantId, userId, businessName, phoneCheck.normalized, category, county, location]);
         await connection.query(`INSERT INTO subscription (id, tenantId, planName, status, trialEndDate, createdAt, updatedAt) VALUES (?, ?, ?, ?, ${trialEndVal}, NOW(), NOW())`, [ulid(), tenantId, requestedPlan, subStatus]);
         
         

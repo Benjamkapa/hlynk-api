@@ -2,6 +2,7 @@ import mysql from 'mysql2/promise';
 import { db, runAutoMigrations } from '../dbms/mysql.js';
 import { minioClient, bucketName } from '../utils/storage.js';
 import { initiateB2C } from '../utils/mpesa.js';
+import { validateKenyanPhone } from '../utils/phone.js';
 import { sendPushToTenant, createNotification, createAdminNotification } from './notifications.js';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
@@ -973,7 +974,7 @@ export const suspendTenant = async (req, res) => {
     await createNotification({
       tenantId,
       title: '⚠️ Account Suspended',
-      message: 'Your account has been temporarily suspended by hlynk Support. Contact us if you believe this is an error.',
+      message: 'Your account has been temporarily suspended by hlynk. Contact us if you believe this is an error.',
       type: 'warning',
       data: { url: '/dashboard/subscription' }
     });
@@ -1512,11 +1513,18 @@ async function uniqueSlug(base) {
 
 export const registerTenant = async (req, res) => {
   const { businessName, ownerName, phone, email, category, planName = 'LITE' } = req.body;
+
+  const phoneCheck = validateKenyanPhone(phone);
+  if (!phoneCheck.isValid) {
+    return res.status(400).json({ success: false, message: phoneCheck.error || 'A valid 10-digit Kenyan phone number (07xx or 01xx) is required.' });
+  }
+  const normalizedPhone = phoneCheck.normalized;
+
   const connection = await db.getConnection();
 
   try {
     // 0. Check if phone already exists
-    const [existing] = await connection.query(`SELECT id FROM user WHERE phone = ? LIMIT 1`, [phone]);
+    const [existing] = await connection.query(`SELECT id FROM user WHERE phone = ? LIMIT 1`, [normalizedPhone]);
     if (existing.length > 0) {
       return res.status(409).json({ success: false, message: 'This phone number is already registered' });
     }
@@ -1538,14 +1546,14 @@ export const registerTenant = async (req, res) => {
     await connection.query(
       `INSERT INTO user (id, tenantId, name, phone, email, role, passwordHash, isActive, createdAt, updatedAt) 
        VALUES (?, ?, ?, ?, ?, 'PROVIDER', 'ADMIN_CREATED', 1, NOW(), NOW())`,
-      [userId, tenantId, ownerName, phone, email]
+      [userId, tenantId, ownerName, normalizedPhone, email]
     );
 
     // 3. Create provider record
     await connection.query(
       `INSERT INTO provider (id, tenantId, userId, businessName, phone, category, isActive, createdAt, updatedAt) 
        VALUES (?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`,
-      [ulid(), tenantId, userId, businessName, phone, category || 'Other']
+      [ulid(), tenantId, userId, businessName, normalizedPhone, category || 'Other']
     );
 
     // 4. Initialize subscription (FORCE MAX for 14-day trial experience)
