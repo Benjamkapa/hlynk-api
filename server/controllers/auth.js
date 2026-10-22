@@ -16,8 +16,8 @@ const params = JSON.parse(fs.readFileSync(path.join(__dirname, '../configs/param
 
 const JWT_SECRET = params.jwt_secret || 'default_secret';
 const REFRESH_SECRET = (params.refresh_secret || JWT_SECRET) + '_refresh';   // separate secret for refresh tokens
-const JWT_EXPIRES_IN = '15m';    // hardened: 15 minutes (was 360m / 6 hours)
-const REFRESH_EXPIRES_IN = '30d';
+const JWT_EXPIRES_IN = params.jwt_expires_in || '7d';   // 7 days for stable, persisted sessions (was 15m)
+const REFRESH_EXPIRES_IN = params.refresh_expires_in || '60d'; // 60 days
 
 const IS_PROD = params.env !== 'LOCAL';
 
@@ -38,25 +38,33 @@ async function uniqueSlug(base) {
 
 /**
  * Set refresh token as an httpOnly cookie.
- * The cookie is NOT accessible via JavaScript — prevents XSS theft.
+ * Supports cross-subdomain sharing (.hlynk.co.ke) in production.
  */
 const setRefreshCookie = (res, token) => {
-  res.cookie('__hlynk_rt', token, {
+  const cookieOpts = {
     httpOnly: true,
-    secure: IS_PROD,           // HTTPS-only in production
-    sameSite: IS_PROD ? 'strict' : 'lax',
-    path: '/api/v1/auth',      // only sent to auth endpoints
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days in ms
-  });
+    secure: IS_PROD,
+    sameSite: IS_PROD ? 'none' : 'lax',
+    path: '/',
+    maxAge: 60 * 24 * 60 * 60 * 1000, // 60 days in ms
+  };
+  if (IS_PROD && !process.env.COOKIE_NO_DOMAIN) {
+    cookieOpts.domain = '.hlynk.co.ke';
+  }
+  res.cookie('__hlynk_rt', token, cookieOpts);
 };
 
 const clearRefreshCookie = (res) => {
-  res.clearCookie('__hlynk_rt', {
+  const cookieOpts = {
     httpOnly: true,
     secure: IS_PROD,
-    sameSite: IS_PROD ? 'strict' : 'lax',
-    path: '/api/v1/auth',
-  });
+    sameSite: IS_PROD ? 'none' : 'lax',
+    path: '/',
+  };
+  if (IS_PROD && !process.env.COOKIE_NO_DOMAIN) {
+    cookieOpts.domain = '.hlynk.co.ke';
+  }
+  res.clearCookie('__hlynk_rt', cookieOpts);
 };
 
 const issueTokens = async (user, res, userAgent = 'Unknown', ipAddress = 'Unknown') => {
@@ -504,7 +512,7 @@ export const me = async (req, res) => {
 };
 
 export const refresh = async (req, res) => {
-  // Support both: httpOnly cookie (preferred) and body fallback (legacy clients)
+  // Support both: httpOnly cookie (preferred) and body fallback (localStorage persistence)
   const refreshToken = req.cookies?.__hlynk_rt || req.body?.refreshToken;
   
   if (!refreshToken) {
@@ -515,25 +523,30 @@ export const refresh = async (req, res) => {
     const decoded = jwt.verify(refreshToken, REFRESH_SECRET);
     const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
     
+    // Look up active session
     const [sessions] = await db.query(
-      `SELECT * FROM session WHERE id = ? AND isActive = 1 AND token = ?`, 
-      [decoded.sessionId, tokenHash]
+      `SELECT * FROM session WHERE id = ? AND isActive = 1`, 
+      [decoded.sessionId]
     );
+
     if (sessions.length === 0) {
-      // Possible token reuse attack — invalidate ALL sessions for this user
-      await db.query(`UPDATE session SET isActive = 0 WHERE userId = ?`, [decoded.userId]);
-      clearRefreshCookie(res);
-      logSessionAlert({
-        title: 'Token Reuse Attack Detected',
-        message: `Invalid or reused token for user ${decoded.userId}. All active sessions invalidated.`,
-        ipAddress: req.ip,
-        userId: decoded.userId,
-        tenantId: decoded.tenantId
-      });
-      return res.status(401).json({ success: false, message: 'Session invalidated. Please log in again.' });
+      return res.status(401).json({ success: false, message: 'Session expired or invalidated' });
     }
 
-    // HARDENING: Verify user + tenant are still active before issuing new tokens
+    const session = sessions[0];
+
+    // Concurrency grace period: if concurrent requests refresh at the exact same second,
+    // allow the request if the session was refreshed within the last 60 seconds.
+    if (session.token !== tokenHash) {
+      const lastActiveDiff = session.lastActive ? (Date.now() - new Date(session.lastActive).getTime()) / 1000 : 999;
+      if (lastActiveDiff > 60) {
+        await db.query(`UPDATE session SET isActive = 0 WHERE id = ?`, [decoded.sessionId]);
+        clearRefreshCookie(res);
+        return res.status(401).json({ success: false, message: 'Session invalidated. Please log in again.' });
+      }
+    }
+
+    // Verify user + tenant are still active before issuing new tokens
     const [userCheck] = await db.query(
       `SELECT u.isActive as userActive, t.isActive as tenantActive 
        FROM user u JOIN tenant t ON u.tenantId = t.id 
@@ -547,7 +560,7 @@ export const refresh = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Account deactivated' });
     }
 
-    // ROTATION: Issue a new refresh token and invalidate the old one
+    // ROTATION: Issue new access token (7d) and refresh token (60d)
     const newAccessToken = jwt.sign(
       { userId: decoded.userId, tenantId: decoded.tenantId, role: decoded.role, sessionId: decoded.sessionId }, 
       JWT_SECRET, 
@@ -567,9 +580,14 @@ export const refresh = async (req, res) => {
 
     logSessionRefresh({ user: decoded, sessionId: decoded.sessionId, ipAddress: req.ip });
 
-    return res.json({ success: true, data: { accessToken: newAccessToken, refreshToken: newRefreshToken } });
+    return res.json({ 
+      success: true, 
+      data: { 
+        accessToken: newAccessToken, 
+        refreshToken: newRefreshToken 
+      } 
+    });
   } catch (err) {
-    clearRefreshCookie(res);
     return res.status(401).json({ success: false, message: 'Invalid refresh token' });
   }
 };
