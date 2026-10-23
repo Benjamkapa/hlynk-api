@@ -1,6 +1,7 @@
 import { UAParser } from 'ua-parser-js';
 import { db } from '../dbms/mysql.js';
 import { ulid } from 'ulid';
+import axios from 'axios';
 
 // Standard ANSI Terminal Color Codes (compatible with PM2, PowerShell, Bash, Docker)
 export const C = {
@@ -87,6 +88,27 @@ export const recordActivityDb = async ({
 };
 
 /**
+ * Resolves an IP address to a human-readable location string (e.g. "Nairobi, Nairobi County, KE").
+ * Returns null silently for private/loopback IPs or on network failure.
+ */
+const resolveIpLocation = async (ip) => {
+  // Skip private & loopback ranges — they won't resolve to a real location
+  if (!ip || ip === 'Unknown' || /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1$|localhost)/.test(ip)) {
+    return null;
+  }
+  try {
+    const { data } = await axios.get(`http://ip-api.com/json/${ip}?fields=status,city,regionName,country,countryCode`, { timeout: 3000 });
+    if (data?.status === 'success') {
+      const parts = [data.city, data.regionName, data.countryCode].filter(Boolean);
+      return parts.join(', ');
+    }
+  } catch (_) {
+    // Non-blocking — never crash login flow due to geo lookup
+  }
+  return null;
+};
+
+/**
  * Real-time logger for User Login events (Console + DB)
  */
 export const logSessionLogin = async ({ user, tenant, ipAddress, userAgent, sessionId, isNew = false }) => {
@@ -98,11 +120,17 @@ export const logSessionLogin = async ({ user, tenant, ipAddress, userAgent, sess
   const business = tenant?.businessName || user?.businessName || 'Platform Vendor';
   const tenantId = tenant?.id || user?.tenantId || 'SYSTEM';
 
+  // Resolve location from IP (non-blocking, best-effort)
+  const location = await resolveIpLocation(ipAddress);
+
   // Live Terminal Stream for PM2
   console.log(`${C.brightGreen}${C.bold}🟢 [SESSION:LOGIN]${C.reset} ${C.bold}${userName}${C.reset} [${C.brightYellow}${role}${C.reset}]`);
   console.log(`   🏢 ${C.dim}Business:${C.reset} ${business} ${C.dim}(Tenant: ${tenantId.slice(-8).toUpperCase()})${C.reset}`);
   console.log(`   📱 ${C.dim}Device:${C.reset} ${device.summary} ${C.dim}(${device.deviceType})${C.reset}`);
   console.log(`   🌐 ${C.dim}IP:${C.reset} ${ipAddress} | ${C.dim}Session:${C.reset} ${sessionId} | ${C.dim}Auth:${C.reset} ${isNew ? 'Google Signup' : 'Google OAuth'}`);
+  if (location) {
+    console.log(`   📍 ${C.dim}Location:${C.reset} ${C.cyan}${location}${C.reset}`);
+  }
 
   // Persist to Activity Log
   await recordActivityDb({
@@ -110,7 +138,7 @@ export const logSessionLogin = async ({ user, tenant, ipAddress, userAgent, sess
     userId: user?.id,
     action: actionTitle,
     logName: 'Auth',
-    details: `${userName} (${userEmail}) logged in from ${ipAddress} on ${device.summary}`,
+    details: `${userName} (${userEmail}) logged in from ${ipAddress}${location ? ` (${location})` : ''} on ${device.summary}`,
     ipAddress,
     actionId: sessionId
   });
