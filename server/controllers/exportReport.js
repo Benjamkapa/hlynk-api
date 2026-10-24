@@ -98,17 +98,19 @@ export const exportPlatformReport = async (req, res) => {
         t.businessName,t.slug FROM payment p LEFT JOIN tenant t ON p.tenantId=t.id
         ORDER BY p.createdAt DESC LIMIT 5000`),
       db.query(`SELECT t.id,t.businessName,t.slug,t.isActive,t.createdAt,
-        s.planName AS plan, s.endDate, u.name AS ownerName, u.email AS ownerEmail, u.phone AS ownerPhone
+        s.planName AS plan, s.endDate, u.name AS ownerName, u.email AS ownerEmail, u.phone AS ownerPhone,
+        pr.county AS county
         FROM tenant t LEFT JOIN subscription s ON s.tenantId=t.id AND s.status=0
         LEFT JOIN user u ON u.tenantId=t.id AND u.role='PROVIDER'
+        LEFT JOIN provider pr ON pr.tenantId=t.id
         ORDER BY t.createdAt DESC`),
       db.query(`SELECT s.id,s.planName AS plan,s.status,s.startDate,s.endDate,0 AS amount,s.createdAt,t.businessName
         FROM subscription s LEFT JOIN tenant t ON s.tenantId=t.id
         ORDER BY s.createdAt DESC LIMIT 2000`),
       db.query(`SELECT m.id,m.type,m.phone,m.amount,m.resultCode,m.resultDesc,m.checkoutRequestId,m.createdAt,
-        t.businessName FROM mpesalog m
-        LEFT JOIN payment p ON p.mpesaRequestId=m.checkoutRequestId
-        LEFT JOIN tenant t ON p.tenantId=t.id
+        COALESCE(t.businessName, m.tenantName) AS businessName
+        FROM mpesalog m
+        LEFT JOIN tenant t ON m.tenantId=t.id
         ORDER BY m.createdAt DESC LIMIT 5000`),
       db.query(`SELECT p.id,p.tenantId,p.amount,p.status,p.createdAt,p.updatedAt,t.businessName
         FROM payout p LEFT JOIN tenant t ON p.tenantId=t.id ORDER BY p.createdAt DESC`),
@@ -287,7 +289,7 @@ export const exportPlatformReport = async (req, res) => {
     fillDataRows(ws3, tenants.map(t => ({
       businessName: t.businessName || '', slug: t.slug || '',
       ownerName: t.ownerName || '', ownerEmail: t.ownerEmail || '',
-      email: t.ownerEmail || '', phone: t.ownerPhone || '', county: 'Kenya',
+      email: t.ownerEmail || '', phone: t.ownerPhone || '', county: t.county || '',
       plan: t.plan || 'Free', status: t.isActive === 0 ? 'Suspended' : 'Active',
       createdAt: t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-KE') : '',
     })));
