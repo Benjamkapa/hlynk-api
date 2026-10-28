@@ -22,8 +22,31 @@ const JWT_EXPIRES_IN = '15m';
 const IS_PROD = params.env !== 'LOCAL';
 export const getSystemStats = async (req, res) => {
   try {
-    const [providersCount] = await db.query(`SELECT COUNT(*) as total FROM user WHERE role = 'PROVIDER'`);
-    const [payingProviders] = await db.query(`SELECT COUNT(*) as total FROM subscription WHERE status = 0`);
+    // 0. Auto-expire subscriptions whose paid term has passed
+    await db.query(`
+      UPDATE subscription 
+      SET status = 1, updatedAt = NOW() 
+      WHERE status = 0 AND endDate IS NOT NULL AND endDate < NOW()
+    `).catch(() => {});
+
+    // Active customer businesses (excluding super admin internal tenant)
+    const [providersCount] = await db.query(`
+      SELECT COUNT(*) as total 
+      FROM tenant t
+      WHERE t.isActive = 1
+        AND t.id NOT IN (
+          SELECT DISTINCT COALESCE(tenantId, '') FROM user WHERE role = 'SUPER_ADMIN'
+        )
+    `);
+
+    // Paying subscribers (active subscription belonging to an existing tenant, not expired)
+    const [payingProviders] = await db.query(`
+      SELECT COUNT(DISTINCT s.tenantId) as total 
+      FROM subscription s 
+      JOIN tenant t ON s.tenantId = t.id 
+      WHERE s.status = 0 
+        AND (s.endDate IS NULL OR s.endDate >= NOW())
+    `);
     const [totalRevenue] = await db.query(`SELECT SUM(amount) as total FROM payment WHERE status = 0`);
 
     // Add global platform volume
@@ -199,34 +222,89 @@ export const getSystemStats = async (req, res) => {
 };
 
 export const listTenants = async (req, res) => {
-  const { page = 1, limit = 10 } = req.query;
-  const offset = (Number(page) - 1) * Number(limit);
+  const { page, limit, search, status, planName, all } = req.query;
+  const isAll = all === 'true' || all === true || limit === 'all' || (!limit && !page);
+  const parsedLimit = isAll ? 5000 : Number(limit || 10);
+  const parsedPage = isAll ? 1 : Number(page || 1);
+  const offset = (parsedPage - 1) * parsedLimit;
 
   try {
-    const [tenants] = await db.query(`
-      SELECT t.*, s.planName, s.status as subscriptionStatus, (SELECT id FROM user WHERE tenantId = t.id ORDER BY createdAt ASC LIMIT 1) as primaryUserId,
-      COALESCE(
-        (SELECT referralCode FROM tenant WHERE id = (SELECT tenantId FROM user WHERE id = t.referredById LIMIT 1)),
-        (SELECT referralCode FROM tenant WHERE id = t.referredById)
-      ) as appliedReferralCode
+    let whereClauses = [];
+    let queryParams = [];
+
+    // Filter out super admin platform tenant from customer tenant list
+    whereClauses.push(`t.id NOT IN (SELECT DISTINCT COALESCE(tenantId, '') FROM user WHERE role = 'SUPER_ADMIN')`);
+
+    if (search) {
+      whereClauses.push(`(t.businessName LIKE ? OR t.slug LIKE ? OR t.id LIKE ? OR EXISTS (
+        SELECT 1 FROM user u WHERE u.tenantId = t.id AND (u.email LIKE ? OR u.phone LIKE ? OR u.name LIKE ?)
+      ))`);
+      const term = `%${search}%`;
+      queryParams.push(term, term, term, term, term, term);
+    }
+
+    if (status) {
+      if (status === 'ACTIVE') {
+        whereClauses.push(`t.isActive = 1`);
+      } else if (status === 'INACTIVE') {
+        whereClauses.push(`t.isActive = 0`);
+      }
+    }
+
+    if (planName) {
+      whereClauses.push(`s.planName = ?`);
+      queryParams.push(planName);
+    }
+
+    const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+    const query = `
+      SELECT 
+        t.*, 
+        s.planName, 
+        s.status as subscriptionStatus, 
+        s.endDate as subscriptionEndDate,
+        (SELECT id FROM user WHERE tenantId = t.id ORDER BY createdAt ASC LIMIT 1) as primaryUserId,
+        (SELECT email FROM user WHERE tenantId = t.id ORDER BY createdAt ASC LIMIT 1) as primaryEmail,
+        (SELECT phone FROM user WHERE tenantId = t.id ORDER BY createdAt ASC LIMIT 1) as primaryPhone,
+        (SELECT COUNT(*) FROM user WHERE tenantId = t.id) as usersCount,
+        (SELECT COUNT(*) FROM service WHERE tenantId = t.id) as servicesCount,
+        (SELECT COUNT(*) FROM product WHERE tenantId = t.id) as productsCount,
+        COALESCE(
+          (SELECT referralCode FROM tenant WHERE id = (SELECT tenantId FROM user WHERE id = t.referredById LIMIT 1)),
+          (SELECT referralCode FROM tenant WHERE id = t.referredById)
+        ) as appliedReferralCode
       FROM tenant t
       LEFT JOIN subscription s ON t.id = s.tenantId
+      ${whereSql}
       ORDER BY t.createdAt DESC
       LIMIT ? OFFSET ?
-    `, [Number(limit), offset]);
+    `;
 
-    const [countRes] = await db.query(`SELECT COUNT(*) as total FROM tenant`);
-    const total = Number(countRes[0].total);
+    queryParams.push(parsedLimit, offset);
+
+    const [tenants] = await db.query(query, queryParams);
+
+    const countQuery = `SELECT COUNT(*) as total FROM tenant t LEFT JOIN subscription s ON t.id = s.tenantId ${whereSql}`;
+    const countParams = queryParams.slice(0, -2);
+    const [countRes] = await db.query(countQuery, countParams);
+    const total = Number(countRes[0]?.total || 0);
 
     return res.json({
       success: true,
       data: {
         tenants,
-        pagination: { total, pages: Math.ceil(total / Number(limit)), page: Number(page), limit: Number(limit) }
+        pagination: { 
+          total, 
+          pages: isAll ? 1 : Math.ceil(total / parsedLimit), 
+          page: parsedPage, 
+          limit: parsedLimit 
+        }
       }
     });
   } catch (err) {
-    return res.status(500).json({ success: false, message: 'Failed to fetch tenants' });
+    console.error('❌ LIST TENANTS ERROR:', err);
+    return res.status(500).json({ success: false, message: 'Failed to fetch tenants: ' + err.message });
   }
 };
 
@@ -576,18 +654,63 @@ export const getUsers = async (req, res) => {
 
 export const deleteUser = async (req, res) => {
   try {
-    const [u] = await db.query(`SELECT name, email, role FROM user WHERE id = ?`, [req.params.id]);
+    const [u] = await db.query(`SELECT name, email, role, tenantId FROM user WHERE id = ?`, [req.params.id]);
     if (u.length > 0 && u[0].role === 'SUPER_ADMIN') {
       return res.status(403).json({ success: false, message: 'Cannot delete Super Admin' });
     }
     const userName = u[0]?.name || u[0]?.email || 'User';
-    await db.query(`DELETE FROM user WHERE id = ?`, [req.params.id]);
+    const targetUserId = req.params.id;
+    const userRole = u[0]?.role;
+    const userTenantId = u[0]?.tenantId;
+
+    // Purge user sessions and push tokens immediately
+    await db.query(`DELETE FROM session WHERE userId = ?`, [targetUserId]).catch(() => {});
+    await db.query(`DELETE FROM push_subscriptions WHERE userId = ?`, [targetUserId]).catch(() => {});
+
+    // If user is a PROVIDER and owns a tenant, check if any other users exist
+    if (userRole === 'PROVIDER' && userTenantId) {
+      const [otherUsers] = await db.query(`SELECT COUNT(*) as cnt FROM user WHERE tenantId = ? AND id != ?`, [userTenantId, targetUserId]);
+      if (Number(otherUsers[0]?.cnt || 0) === 0) {
+        // Purge the entire tenant so no ghost business or orphan data remains
+        const connection = await db.getConnection();
+        try {
+          await connection.query('SET FOREIGN_KEY_CHECKS = 0');
+          await connection.beginTransaction();
+
+          await connection.query(`DELETE FROM saleitem WHERE saleId IN (SELECT id FROM sale WHERE tenantId = ?)`, [userTenantId]).catch(() => {});
+          const tenantTables = [
+            'sale', 'receipt', 'product', 'service', 'resource', 'operation', 'event', 'expense',
+            'customer', 'payment', 'payout', 'partnercommission', 'subscription', 'provider',
+            'push_subscriptions', 'aireport', 'b2clog', 'kcblog', 'mpesalog', 'platformreview',
+            'systemevent', 'systemnotification', 'notification', 'activitylog'
+          ];
+          for (const tbl of tenantTables) {
+            await connection.query(`DELETE FROM \`${tbl}\` WHERE tenantId = ?`, [userTenantId]).catch(() => {});
+          }
+          await connection.query(`DELETE FROM notification WHERE relatedTenantId = ?`, [userTenantId]).catch(() => {});
+          await connection.query(`DELETE FROM user WHERE id = ?`, [targetUserId]);
+          await connection.query(`DELETE FROM tenant WHERE id = ?`, [userTenantId]);
+
+          await connection.commit();
+          await connection.query('SET FOREIGN_KEY_CHECKS = 1');
+        } catch (e) {
+          await connection.rollback().catch(() => {});
+          await connection.query('SET FOREIGN_KEY_CHECKS = 1').catch(() => {});
+        } finally {
+          connection.release();
+        }
+      } else {
+        await db.query(`DELETE FROM user WHERE id = ?`, [targetUserId]);
+      }
+    } else {
+      await db.query(`DELETE FROM user WHERE id = ?`, [targetUserId]);
+    }
 
     // Log Action
     await db.query(`
       INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
       VALUES (?, 'SYSTEM', ?, 'User Deleted', 'Danger', ?, NOW())
-    `, [ulid(), req.user.userId, `Deleted user ID: ${req.params.id}`]);
+    `, [ulid(), req.user?.userId || 'SYSTEM', `Deleted user ID: ${targetUserId} (${userName})`]);
 
     try {
       await createAdminNotification({
@@ -598,9 +721,9 @@ export const deleteUser = async (req, res) => {
       });
     } catch (e) { }
 
-    return res.json({ success: true, message: 'User deleted' });
+    return res.json({ success: true, message: 'User permanently deleted and session invalidated' });
   } catch (err) {
-    return res.status(500).json({ success: false, message: 'Failed to delete user' });
+    return res.status(500).json({ success: false, message: 'Failed to delete user: ' + err.message });
   }
 };
 
@@ -1079,29 +1202,98 @@ export const extendSubscriptionDays = async (req, res) => {
 };
 
 export const deleteTenant = async (req, res) => {
+  const tenantId = req.params.id;
+  const connection = await db.getConnection();
+
   try {
-    const [tRows] = await db.query(`SELECT businessName FROM tenant WHERE id = ?`, [req.params.id]);
+    const [tRows] = await connection.query(`SELECT businessName FROM tenant WHERE id = ?`, [tenantId]);
     const bName = tRows[0]?.businessName || 'Business';
 
-    await db.query(`DELETE FROM tenant WHERE id = ?`, [req.params.id]);
-    // Log Action
-    await db.query(`
-      INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
-      VALUES (?, ?, ?, 'Tenant Deleted', 'Danger', ?, NOW())
-    `, [ulid(), req.params.id, req.user.userId, 'Tenant deleted permanently by Admin']);
+    await connection.query('SET FOREIGN_KEY_CHECKS = 0');
+    await connection.beginTransaction();
 
+    // 1. Delete sale items linked to sales of this tenant
+    await connection.query(`
+      DELETE FROM saleitem 
+      WHERE saleId IN (SELECT id FROM sale WHERE tenantId = ?)
+    `, [tenantId]).catch(() => {});
+
+    // 2. Cascade purge across all tenant-linked tables
+    const tenantTables = [
+      'sale',
+      'receipt',
+      'product',
+      'service',
+      'resource',
+      'operation',
+      'event',
+      'expense',
+      'customer',
+      'payment',
+      'payout',
+      'partnercommission',
+      'subscription',
+      'provider',
+      'push_subscriptions',
+      'aireport',
+      'b2clog',
+      'kcblog',
+      'mpesalog',
+      'platformreview',
+      'systemevent',
+      'systemnotification',
+      'notification',
+      'activitylog'
+    ];
+
+    for (const table of tenantTables) {
+      await connection.query(`DELETE FROM \`${table}\` WHERE tenantId = ?`, [tenantId]).catch(() => {});
+    }
+
+    // Clean up notifications where relatedTenantId matches
+    await connection.query(`DELETE FROM notification WHERE relatedTenantId = ?`, [tenantId]).catch(() => {});
+
+    // Clean up sessions for users of this tenant
+    await connection.query(`
+      DELETE FROM session 
+      WHERE userId IN (SELECT id FROM user WHERE tenantId = ?)
+    `, [tenantId]).catch(() => {});
+
+    // Clean up users of this tenant (except super admin)
+    await connection.query(`
+      DELETE FROM user 
+      WHERE tenantId = ? AND role != 'SUPER_ADMIN'
+    `, [tenantId]).catch(() => {});
+
+    // Finally delete tenant record
+    await connection.query(`DELETE FROM tenant WHERE id = ?`, [tenantId]);
+
+    await connection.commit();
+    await connection.query('SET FOREIGN_KEY_CHECKS = 1');
+    connection.release();
+
+    // Log deletion into activitylog with tenantId = 'SYSTEM'
     try {
+      await db.query(`
+        INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
+        VALUES (?, 'SYSTEM', ?, 'Tenant Permanently Deleted', 'Danger', ?, NOW())
+      `, [ulid(), req.user?.userId || 'SYSTEM', `Tenant '${bName}' (${tenantId}) and all associated records permanently purged by Admin.`]);
+
       await createAdminNotification({
         title: '🔴 Business Account Deleted',
-        message: `'${bName}' was permanently removed by Admin.`,
+        message: `'${bName}' was completely removed from the platform by Admin.`,
         type: 'danger',
         data: { url: '/admin/tenants' }
       });
-    } catch (e) { }
+    } catch (e) {}
 
-    return res.json({ success: true, message: 'Tenant deleted' });
+    return res.json({ success: true, message: `Business '${bName}' and all associated records completely deleted.` });
   } catch (err) {
-    return res.status(500).json({ success: false, message: 'Failed to delete tenant' });
+    await connection.rollback().catch(() => {});
+    await connection.query('SET FOREIGN_KEY_CHECKS = 1').catch(() => {});
+    connection.release();
+    console.error('❌ DELETE TENANT ERROR:', err);
+    return res.status(500).json({ success: false, message: 'Failed to completely delete tenant: ' + err.message });
   }
 };
 

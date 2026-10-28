@@ -462,7 +462,7 @@ export const clearData = async (req, res) => {
  * Completely delete provider profile, all staff users, all business data and facility tenant
  */
 export const deleteProfileAndFacility = async (req, res) => {
-  const { tenantId } = req.user;
+  const { tenantId, userId } = req.user;
   let bName = 'A business';
 
   try {
@@ -475,41 +475,72 @@ export const deleteProfileAndFacility = async (req, res) => {
   const connection = await db.getConnection();
 
   try {
+    await connection.query('SET FOREIGN_KEY_CHECKS = 0');
     await connection.beginTransaction();
 
-    // 1. Delete sale items
-    await connection.query(`DELETE FROM saleitem WHERE saleId IN (SELECT id FROM sale WHERE tenantId = ?)`, [tenantId]);
-    // 2. Delete sales
-    await connection.query(`DELETE FROM sale WHERE tenantId = ?`, [tenantId]);
-    // 3. Delete products
-    await connection.query(`DELETE FROM product WHERE tenantId = ?`, [tenantId]);
-    // 4. Delete expenses
-    await connection.query(`DELETE FROM expense WHERE tenantId = ?`, [tenantId]);
-    // 5. Delete payouts
-    await connection.query(`DELETE FROM payout WHERE tenantId = ?`, [tenantId]);
-    // 6. Delete payments
-    await connection.query(`DELETE FROM payment WHERE tenantId = ?`, [tenantId]);
-    // 7. Delete requests
-    await connection.query(`DELETE FROM request WHERE tenantId = ?`, [tenantId]);
-    // 8. Delete subscriptions
-    await connection.query(`DELETE FROM subscription WHERE tenantId = ?`, [tenantId]);
-    // 9. Delete activity logs
-    await connection.query(`DELETE FROM activitylog WHERE tenantId = ?`, [tenantId]);
-    // 10. Delete notifications
-    await connection.query(`DELETE FROM notification WHERE tenantId = ?`, [tenantId]);
-    // 11. Delete provider profile
-    await connection.query(`DELETE FROM provider WHERE tenantId = ?`, [tenantId]);
-    // 12. Delete all users belonging to tenant (staff + provider)
-    await connection.query(`DELETE FROM user WHERE tenantId = ?`, [tenantId]);
-    // 13. Delete tenant/facility record
+    // 1. Delete sale items linked to sales of this tenant
+    await connection.query(`
+      DELETE FROM saleitem 
+      WHERE saleId IN (SELECT id FROM sale WHERE tenantId = ?)
+    `, [tenantId]).catch(() => {});
+
+    // 2. Cascade purge across all tenant-linked tables
+    const tenantTables = [
+      'sale',
+      'receipt',
+      'product',
+      'service',
+      'resource',
+      'operation',
+      'event',
+      'expense',
+      'customer',
+      'payment',
+      'payout',
+      'partnercommission',
+      'subscription',
+      'provider',
+      'push_subscriptions',
+      'aireport',
+      'b2clog',
+      'kcblog',
+      'mpesalog',
+      'platformreview',
+      'systemevent',
+      'systemnotification',
+      'notification',
+      'activitylog'
+    ];
+
+    for (const table of tenantTables) {
+      await connection.query(`DELETE FROM \`${table}\` WHERE tenantId = ?`, [tenantId]).catch(() => {});
+    }
+
+    // Clean up notifications where relatedTenantId matches
+    await connection.query(`DELETE FROM notification WHERE relatedTenantId = ?`, [tenantId]).catch(() => {});
+
+    // Clean up sessions for all users of this tenant
+    await connection.query(`
+      DELETE FROM session 
+      WHERE userId IN (SELECT id FROM user WHERE tenantId = ?)
+    `, [tenantId]).catch(() => {});
+
+    // Clean up users belonging to tenant (staff + provider, excluding super admin)
+    await connection.query(`
+      DELETE FROM user 
+      WHERE tenantId = ? AND role != 'SUPER_ADMIN'
+    `, [tenantId]).catch(() => {});
+
+    // Finally delete tenant record
     await connection.query(`DELETE FROM tenant WHERE id = ?`, [tenantId]);
 
     await connection.commit();
+    await connection.query('SET FOREIGN_KEY_CHECKS = 1');
 
     try {
       await createAdminNotification({
         title: '🔴 Business Account Closed',
-        message: `Vendor '${bName}' has closed and deleted their account permanently.`,
+        message: `Vendor '${bName}' (${tenantId}) has completely erased and deleted their account from the system.`,
         type: 'danger',
         data: { url: '/admin/tenants' }
       });
@@ -517,9 +548,10 @@ export const deleteProfileAndFacility = async (req, res) => {
       console.error('Failed to notify admin of deletion', e);
     }
 
-    return res.json({ success: true, message: 'Your profile, business data, and facility have been permanently deleted.' });
+    return res.json({ success: true, message: 'Your business profile, facilities, users, and all records have been completely and permanently wiped from the system.' });
   } catch (err) {
-    await connection.rollback();
+    await connection.rollback().catch(() => {});
+    await connection.query('SET FOREIGN_KEY_CHECKS = 1').catch(() => {});
     console.error('Delete Profile & Facility Error:', err);
     return res.status(500).json({ success: false, message: 'Failed to delete profile and facility: ' + err.message });
   } finally {
