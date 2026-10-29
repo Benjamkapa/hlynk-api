@@ -10,9 +10,9 @@ export const PLAN_PRICES = {
 };
 
 export const REFERRAL_BONUSES = {
-  LITE: 1200,
-  PLUS: 1200,
-  MAX: 2300
+  LITE: 1000,
+  PLUS: 1000,
+  MAX: 2000
 };
 
 export const getMySubscription = async (req, res) => {
@@ -290,8 +290,8 @@ export const handlePaymentCallback = async (reference, transactionId, success, m
           if (isRenewal) {
             // Season Rule: If renewal, check if they referred at least 1 new vendor in the last 180 days
             const [newRefs] = await connection.query(
-              `SELECT COUNT(*) as cnt FROM tenant WHERE referredById = ? AND createdAt > DATE_SUB(NOW(), INTERVAL 180 DAY)`,
-              [referredById]
+              `SELECT COUNT(*) as cnt FROM tenant WHERE (referredById = ? OR referredById IN (SELECT id FROM user WHERE tenantId = ?) OR referredById IN (SELECT tenantId FROM user WHERE id = ?)) AND createdAt > DATE_SUB(NOW(), INTERVAL 180 DAY)`,
+              [referredById, referredById, referredById]
             );
             if (newRefs[0].cnt === 0) {
               shouldPayBonus = false;
@@ -532,10 +532,21 @@ export const getMyReferrals = async (req, res) => {
     `, [userId, tenantId, tenantId, userId, tenantId, tenantId]);
 
     // Format the output
-    const formatted = rows.map(r => ({
-      ...r,
-      payouts: typeof r.payouts === 'string' ? JSON.parse(r.payouts) : (r.payouts || [])
-    }));
+    const formatted = rows.map(r => {
+      let payouts = [];
+      try {
+        payouts = typeof r.payouts === 'string' ? JSON.parse(r.payouts) : (r.payouts || []);
+        if (!Array.isArray(payouts)) payouts = [];
+        payouts = payouts.filter(Boolean);
+        payouts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      } catch (e) {
+        payouts = [];
+      }
+      return {
+        ...r,
+        payouts
+      };
+    });
 
     return res.json({ success: true, data: formatted });
   } catch (err) {

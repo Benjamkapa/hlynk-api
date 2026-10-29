@@ -127,7 +127,7 @@ export const logSessionLogin = async ({ user, tenant, ipAddress, userAgent, sess
   console.log(`${C.brightGreen}${C.bold}🟢 [SESSION:LOGIN]${C.reset} ${C.bold}${userName}${C.reset} [${C.brightYellow}${role}${C.reset}]`);
   console.log(`   🏢 ${C.dim}Business:${C.reset} ${business} ${C.dim}(Tenant: ${tenantId.slice(-8).toUpperCase()})${C.reset}`);
   console.log(`   📱 ${C.dim}Device:${C.reset} ${device.summary} ${C.dim}(${device.deviceType})${C.reset}`);
-  console.log(`   🌐 ${C.dim}IP:${C.reset} ${ipAddress} | ${C.dim}Session:${C.reset} ${sessionId} | ${C.dim}Auth:${C.reset} ${isNew ? 'Google Signup' : 'Google OAuth'}`);
+  console.log(`   🌐 ${C.dim}IP:${C.reset} ${ipAddress} | ${C.dim}Auth:${C.reset} ${isNew ? 'Google Signup' : 'Google OAuth'}`);
   if (location) {
     console.log(`   📍 ${C.dim}Location:${C.reset} ${C.cyan}${location}${C.reset}`);
   }
