@@ -3,10 +3,16 @@ import { initiateStkPush, queryStkPush } from '../utils/mpesa.js';
 import { ulid } from 'ulid';
 import { createAdminNotification } from './notifications.js';
 
+// export const PLAN_PRICES = {
+//   LITE: 4450, // Legacy Starter
+//   PLUS: 4450, // Starter
+//   MAX:  8200, // Business Pro
+// };
+
 export const PLAN_PRICES = {
-  LITE: 4450, // Legacy Starter
-  PLUS: 4450, // Starter
-  MAX:  8200, // Business Pro
+  LITE: 1, // Legacy Starter
+  PLUS: 1, // Starter
+  MAX:  1, // Business Pro
 };
 
 export const REFERRAL_BONUSES = {
@@ -301,6 +307,12 @@ export const handlePaymentCallback = async (reference, transactionId, success, m
 
           if (shouldPayBonus) {
             const payoutId = ulid();
+            const [subTenants] = await connection.query(
+              `SELECT businessName FROM tenant WHERE id = ? LIMIT 1`,
+              [payment.tenantId]
+            );
+            const subBusinessName = subTenants[0]?.businessName || 'New Shop';
+
             await connection.query(`
               INSERT INTO payout (id, tenantId, amount, status, type, refereeId, sourceId, message, createdAt)
               VALUES (?, ?, ?, 'PENDING', 'REFERRAL', ?, ?, ?, NOW())
@@ -310,7 +322,7 @@ export const handlePaymentCallback = async (reference, transactionId, success, m
               bonusAmount,
               referredById,
               payment.id,
-              `Referral bonus for ${displayPlanName} (${payment.tenantId})`
+              `Referral bonus for ${displayPlanName} (${subBusinessName})`
             ]);
             console.log(`[REFERRAL] Payout ${payoutId} logged for ${referredById} (Amount: ${bonusAmount})`);
           }

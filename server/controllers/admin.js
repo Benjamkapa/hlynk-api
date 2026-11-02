@@ -1785,15 +1785,57 @@ export const getPayouts = async (req, res) => {
 
     // 1. Fetch ACTUAL Payout Records (Already batched or triggered)
     // Using GROUP BY p.id to avoid duplicates if multiple users have the PROVIDER role
-    const [payoutRecords] = await db.query(`
-      SELECT p.*, t.businessName, ANY_VALUE(u.phone) as tenantPhone, t.payoutAccount
+    const [rawPayoutRecords] = await db.query(`
+      SELECT 
+        p.*,
+        t.businessName as subscriberBusinessName,
+        ANY_VALUE(u.name) as subscriberContactName,
+        ANY_VALUE(u.phone) as subscriberPhone,
+        ANY_VALUE(u.email) as subscriberEmail,
+        ANY_VALUE(COALESCE(refU.name, refU2.name)) as referrerName,
+        ANY_VALUE(COALESCE(refU.phone, refU2.phone)) as referrerPhone,
+        ANY_VALUE(COALESCE(refU.email, refU2.email)) as referrerEmail,
+        ANY_VALUE(COALESCE(refT.businessName, refT2.businessName)) as referrerBusinessName,
+        ANY_VALUE(COALESCE(refT.payoutAccount, refT2.payoutAccount, refU.phone, refU2.phone)) as referrerPayoutPhone,
+        ANY_VALUE(COALESCE(refT.payoutMethod, refT2.payoutMethod, 'MPESA')) as referrerPayoutMethod,
+        ANY_VALUE(COALESCE(refT.referralCode, refT2.referralCode)) as referrerCode,
+        t.businessName,
+        ANY_VALUE(u.phone) as tenantPhone,
+        t.payoutAccount
       FROM payout p
       JOIN tenant t ON p.tenantId = t.id
-      JOIN user u ON t.id = u.tenantId AND u.role = 'PROVIDER'
-      WHERE p.status = 'PENDING'
+      LEFT JOIN user u ON t.id = u.tenantId AND u.role = 'PROVIDER'
+      LEFT JOIN user refU ON COALESCE(p.refereeId, t.referredById) = refU.id
+      LEFT JOIN tenant refT ON refU.tenantId = refT.id
+      LEFT JOIN tenant refT2 ON COALESCE(p.refereeId, t.referredById) = refT2.id
+      LEFT JOIN user refU2 ON refT2.id = refU2.tenantId AND refU2.role = 'PROVIDER'
+      WHERE p.status IN ('PENDING', 'FAILED')
       GROUP BY p.id
       ORDER BY p.createdAt DESC
     `);
+
+    const payoutRecords = rawPayoutRecords.map((p) => {
+      // Strip any raw UUID / ULID from message (e.g. (01M6DX...) or (a7b8c...))
+      const cleanMessage = (p.message || '')
+        .replace(/\([0-9A-Za-z-]{20,}\)/g, p.subscriberBusinessName ? `(${p.subscriberBusinessName})` : '')
+        .trim();
+
+      // For REFERRAL: only use the referrer's own phone — never fall back to subscriber's account
+      const destinationPhone = p.type === 'REFERRAL'
+        ? (p.referrerPayoutPhone || p.referrerPhone || null)
+        : (p.payoutAccount || p.tenantPhone || null);
+
+      const recipientName = p.type === 'REFERRAL'
+        ? (p.referrerName || p.referrerBusinessName || 'Referrer')
+        : (p.businessName || 'Vendor');
+
+      return {
+        ...p,
+        message: cleanMessage,
+        destinationPhone,
+        recipientName
+      };
+    });
 
     // 2. Fetch ACCRUED (Unbatched) Volume for Rented Paybill
     // Uses UNION to catch:
@@ -1880,12 +1922,24 @@ export const markPayoutPaid = async (req, res) => {
       let payoutType = '';
 
       if (payoutId) {
-        // Mark specific payout as PAID
+        // Mark specific payout as PAID (resolves referrer for REFERRAL payouts)
         const [pRows] = await connection.query(`
-          SELECT p.*, t.payoutAccount, ANY_VALUE(u.phone) as tenantPhone 
+          SELECT 
+            p.*,
+            t.businessName as subscriberBusinessName,
+            ANY_VALUE(u.phone) as subscriberPhone,
+            ANY_VALUE(COALESCE(refT.payoutAccount, refT2.payoutAccount, refU.phone, refU2.phone)) as referrerPayoutPhone,
+            ANY_VALUE(COALESCE(refU.name, refU2.name)) as referrerName,
+            ANY_VALUE(COALESCE(refT.businessName, refT2.businessName)) as referrerBusinessName,
+            t.payoutAccount, 
+            ANY_VALUE(u.phone) as tenantPhone 
           FROM payout p 
           JOIN tenant t ON p.tenantId = t.id 
-          JOIN user u ON t.id = u.tenantId AND u.role = 'PROVIDER'
+          LEFT JOIN user u ON t.id = u.tenantId AND u.role = 'PROVIDER'
+          LEFT JOIN user refU ON COALESCE(p.refereeId, t.referredById) = refU.id
+          LEFT JOIN tenant refT ON refU.tenantId = refT.id
+          LEFT JOIN tenant refT2 ON COALESCE(p.refereeId, t.referredById) = refT2.id
+          LEFT JOIN user refU2 ON refT2.id = refU2.tenantId AND refU2.role = 'PROVIDER'
           WHERE p.id = ?
           GROUP BY p.id
         `, [payoutId]);
@@ -1893,8 +1947,11 @@ export const markPayoutPaid = async (req, res) => {
         if (pRows.length === 0) throw new Error('Payout record not found');
         const payout = pRows[0];
         payoutAmount = payout.amount;
-        payoutPhone = payout.payoutAccount || payout.tenantPhone;
         payoutType = payout.type;
+        // For REFERRAL: always send to the referrer — never the subscriber's account
+        payoutPhone = payout.type === 'REFERRAL'
+          ? (payout.referrerPayoutPhone || null)
+          : (payout.payoutAccount || payout.tenantPhone || null);
 
         if (disburse) {
           // Trigger automated disburse via M-Pesa B2C
