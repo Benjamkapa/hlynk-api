@@ -1716,10 +1716,10 @@ export const registerTenant = async (req, res) => {
 
   try {
     // 0. Check if phone already exists
-    const [existing] = await connection.query(`SELECT id FROM user WHERE phone = ? LIMIT 1`, [normalizedPhone]);
-    if (existing.length > 0) {
-      return res.status(409).json({ success: false, message: 'This phone number is already registered' });
-    }
+    // const [existing] = await connection.query(`SELECT id FROM user WHERE phone = ? LIMIT 1`, [normalizedPhone]);
+    // if (existing.length > 0) {
+    //   return res.status(409).json({ success: false, message: 'This phone number is already registered' });
+    // }
 
     await connection.beginTransaction();
 

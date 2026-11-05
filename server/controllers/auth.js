@@ -319,7 +319,7 @@ export const googleAuth = async (req, res) => {
       }
     }
 
-    if (user.isActive === 0 || !user.tenantIsActive) return res.status(403).json({ success: false, message: 'Account inactive' });
+    if (user.isActive === 0 || !user.tenantIsActive) return res.status(403).json({ success: false, message: 'Account inactive, contact admin for assistance.' });
 
     // ADMIN CONCURRENT SESSION HANDLING
     // IP Whitelist blocking is disabled to support roaming/dynamic networks.
