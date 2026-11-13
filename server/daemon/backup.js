@@ -4,7 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { pool } from '../dbms/mysql.js';
 import { minioClient } from '../utils/storage.js';
-
+import * as Minio from 'minio';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -16,16 +16,49 @@ const MINIO_PREFIX = 'db/';                 // object prefix inside the bucket
 const CRON_SCHEDULE = process.env.BACKUP_CRON_SCHEDULE || '0 */6 * * *'; // every 6 hours (00:00, 06:00, 12:00, 18:00)
 const LOCK_NAME    = 'hlynk_backup_lock';   // MySQL named lock: blocks overlapping of backups
 
+// ── Cloudflare R2 Config (Offsite Cloud Storage) ───────────────────────────
+// Cloudflare R2 is 100% S3 compatible, so we reuse the minio/S3 client directly!
+let r2Client = null;
+let R2_BUCKET = process.env.R2_BUCKET || 'hlynk-backups';
+
+try {
+  const params = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'configs', 'params.json'), 'utf8'));
+  const accountId = process.env.R2_ACCOUNT_ID || params.r2_account_id;
+  const accessKey = process.env.R2_ACCESS_KEY_ID || params.r2_access_key_id;
+  const secretKey = process.env.R2_SECRET_ACCESS_KEY || params.r2_secret_access_key;
+  if (params.r2_bucket) R2_BUCKET = params.r2_bucket;
+
+  if (accountId && accessKey && secretKey) {
+    r2Client = new Minio.Client({
+      endPoint: `${accountId}.r2.cloudflarestorage.com`,
+      port: 443,
+      useSSL: true,
+      accessKey: accessKey,
+      secretKey: secretKey,
+    });
+  }
+} catch (_) {}
+
 // ── Ensure the private backup bucket exists (private policy — no public read) ──
 async function ensureBackupBucket() {
   try {
     const exists = await minioClient.bucketExists(MINIO_BUCKET);
     if (!exists) {
       await minioClient.makeBucket(MINIO_BUCKET, 'us-east-1');
-      // console.log(`[Backup Daemon] Created private MinIO bucket: ${MINIO_BUCKET}`);
     }
   } catch (err) {
     console.error('[Backup Daemon] Could not ensure MinIO bucket:', err.message);
+  }
+
+  if (r2Client) {
+    try {
+      const r2Exists = await r2Client.bucketExists(R2_BUCKET);
+      if (!r2Exists) {
+        await r2Client.makeBucket(R2_BUCKET, 'us-east-1');
+      }
+    } catch (err) {
+      console.error('[Backup Daemon] Cloudflare R2 bucket check:', err.message);
+    }
   }
 }
 
@@ -45,6 +78,23 @@ async function uploadToMinio(backupName, sqlFilePath) {
   }
 }
 
+// ── Upload raw .sql file to Cloudflare R2 ──────────────────────────────────
+async function uploadToCloudflareR2(backupName, sqlFilePath) {
+  if (!r2Client) return null;
+  try {
+    const objectName = `${MINIO_PREFIX}${backupName}.sql`;
+    await r2Client.fPutObject(R2_BUCKET, objectName, sqlFilePath, {
+      'Content-Type': 'application/sql',
+      'x-amz-meta-source': 'auto-backup-daemon',
+    });
+    console.log(`[Backup Daemon] 🚀 Uploaded to Cloudflare R2 (Offsite Cloud): ${R2_BUCKET}/${objectName}`);
+    return objectName;
+  } catch (err) {
+    console.error('[Backup Daemon] Cloudflare R2 upload failed:', err.message);
+    return null;
+  }
+}
+
 // ── Prune MinIO: keep only MAX_COPIES newest backup objects ────────────────
 async function pruneMinioBackups() {
   try {
@@ -56,16 +106,36 @@ async function pruneMinioBackups() {
       stream.on('end', resolve);
     });
 
-    // Sort newest first by lastModified
     objects.sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
-
     const toDelete = objects.slice(MAX_COPIES);
     for (const obj of toDelete) {
       await minioClient.removeObject(MINIO_BUCKET, obj.name);
-      // console.log(`[Backup Daemon] Pruned MinIO backup: ${obj.name}`);
     }
   } catch (err) {
     console.error('[Backup Daemon] MinIO prune failed:', err.message);
+  }
+}
+
+// ── Prune Cloudflare R2: keep only MAX_COPIES newest backup objects ───────
+async function pruneCloudflareR2Backups() {
+  if (!r2Client) return;
+  try {
+    const objects = [];
+    const stream = r2Client.listObjectsV2(R2_BUCKET, MINIO_PREFIX, true);
+    await new Promise((resolve, reject) => {
+      stream.on('data', obj => { if (obj.name) objects.push(obj); });
+      stream.on('error', reject);
+      stream.on('end', resolve);
+    });
+
+    objects.sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
+    const toDelete = objects.slice(MAX_COPIES);
+    for (const obj of toDelete) {
+      await r2Client.removeObject(R2_BUCKET, obj.name);
+      console.log(`[Backup Daemon] Pruned old Cloudflare R2 backup: ${obj.name}`);
+    }
+  } catch (err) {
+    console.error('[Backup Daemon] Cloudflare R2 prune failed:', err.message);
   }
 }
 
@@ -200,17 +270,20 @@ async function runBackup() {
     // const sizeMB = (fs.statSync(sqlFilePath).size / (1024 * 1024)).toFixed(2);
     // console.log(`[Backup Daemon] Local backup saved: ${tables.length} tables, ${totalRows} rows, ${sizeMB} MB`);
 
-    // Upload to MinIO — the only persistent copy (lock is still held during upload)
-    const uploaded = await uploadToMinio(backupName, sqlFilePath);
+    // Upload to MinIO (Local Object Storage)
+    const uploadedMinio = await uploadToMinio(backupName, sqlFilePath);
 
-    if (uploaded) {
-      // MinIO is the source of truth — delete local staging folder to free disk
+    // Upload to Cloudflare R2 (Offsite Cloud Snapshot)
+    const uploadedR2 = await uploadToCloudflareR2(backupName, sqlFilePath);
+
+    if (uploadedMinio || uploadedR2) {
+      // At least one persistent remote copy succeeded — delete local staging folder to free disk
       deleteLocalBackup(backupName);
-      // Prune MinIO to keep only MAX_COPIES newest
-      await pruneMinioBackups();
+      if (uploadedMinio) await pruneMinioBackups();
+      if (uploadedR2) await pruneCloudflareR2Backups();
     } else {
-      // Upload failed — leave local copy as emergency fallback, warn loudly
-      console.error(`[Backup Daemon] ⚠️  MinIO upload failed — local copy kept at backups/${backupName}`);
+      // Both uploads failed — leave local copy as emergency fallback, warn loudly
+      console.error(`[Backup Daemon] ⚠️  Remote uploads failed — local copy kept at backups/${backupName}`);
     }
 
   } catch (err) {
@@ -225,6 +298,69 @@ async function runBackup() {
     backupRunning = false;
   }
 }
+
+// ── Get Status of Backups in MinIO & Cloudflare R2 ──────────────────────────
+export async function getBackupStatus() {
+  const result = {
+    minio: { connected: false, files: [], error: null },
+    cloudflareR2: { configured: !!r2Client, connected: false, files: [], error: null },
+    lastBackupTime: null,
+  };
+
+  // Check MinIO
+  try {
+    const minioFiles = [];
+    const stream = minioClient.listObjectsV2(MINIO_BUCKET, MINIO_PREFIX, true);
+    await new Promise((resolve, reject) => {
+      stream.on('data', obj => { if (obj.name) minioFiles.push(obj); });
+      stream.on('error', reject);
+      stream.on('end', resolve);
+    });
+    minioFiles.sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
+    result.minio.connected = true;
+    result.minio.files = minioFiles.map(f => ({
+      name: f.name.replace(MINIO_PREFIX, ''),
+      size: f.size,
+      lastModified: f.lastModified,
+    }));
+  } catch (err) {
+    result.minio.error = err.message;
+  }
+
+  // Check Cloudflare R2
+  if (r2Client) {
+    try {
+      const r2Files = [];
+      const stream = r2Client.listObjectsV2(R2_BUCKET, MINIO_PREFIX, true);
+      await new Promise((resolve, reject) => {
+        stream.on('data', obj => { if (obj.name) r2Files.push(obj); });
+        stream.on('error', reject);
+        stream.on('end', resolve);
+      });
+      r2Files.sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
+      result.cloudflareR2.connected = true;
+      result.cloudflareR2.files = r2Files.map(f => ({
+        name: f.name.replace(MINIO_PREFIX, ''),
+        size: f.size,
+        lastModified: f.lastModified,
+      }));
+    } catch (err) {
+      result.cloudflareR2.error = err.message;
+    }
+  }
+
+  // Determine latest overall timestamp
+  const allFiles = [...result.minio.files, ...result.cloudflareR2.files];
+  if (allFiles.length > 0) {
+    allFiles.sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
+    result.lastBackupTime = allFiles[0].lastModified;
+  }
+
+  return result;
+}
+
+// ── Export runBackup for manual/test invocation ─────────────────────────────
+export { runBackup };
 
 // ── Daemon entry point ──────────────────────────────────────────────────────
 export const startBackupDaemon = async () => {

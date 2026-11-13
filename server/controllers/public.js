@@ -4,6 +4,7 @@ import { createNotification, createAdminNotification } from "./notifications.js"
 import { initiateStkPush, queryStkPush } from "../utils/mpesa.js";
 import { decrypt } from "../utils/encryption.js";
 import { uploadFile } from "../utils/storage.js";
+import { generatePickupCode } from "../utils/pickupCode.js";
 
 /**
  * Public endpoint — no auth required.
@@ -393,6 +394,7 @@ export const submitPublicOrder = async (req, res) => {
     const tenantId = tenant.id;
     const orderId = ulid();
     const saleId = ulid();
+    const pickupCode = generatePickupCode(orderId);
 
     const totalAmount = items.reduce((acc, item) => acc + (Number(item.price || 0) * (Number(item.quantity || 1))), 0);
 
@@ -470,6 +472,7 @@ export const submitPublicOrder = async (req, res) => {
     const messageData = JSON.stringify({
       orderId,
       saleId,
+      pickupCode,
       items: items.map(i => ({
         id: i.id,
         name: i.name || i.title,
@@ -585,7 +588,7 @@ export const submitPublicOrder = async (req, res) => {
     if (paymentOption !== 'PAY_UPFRONT') {
       const payLabel = paymentOption === 'PAY_DIRECT'
         ? `Direct Payment${txCode ? ` - Ref: ${txCode}` : ''}`
-        : 'Pay on Delivery / Arrival';
+        : 'Pay on Delivery';
 
       await createNotification({
         tenantId,
@@ -616,6 +619,7 @@ export const submitPublicOrder = async (req, res) => {
       data: {
         orderId,
         saleId,
+        pickupCode,
         totalAmount,
         paymentOption,
         checkoutRequestId,

@@ -2501,3 +2501,26 @@ export const deleteSystemNotification = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Failed to delete notification' });
   }
 };
+
+export const getCloudBackupOverview = async (req, res) => {
+  try {
+    const { getBackupStatus, runBackup } = await import('../daemon/backup.js');
+    const status = await getBackupStatus();
+    return res.json({ success: true, data: status });
+  } catch (err) {
+    console.error('getCloudBackupOverview Error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to retrieve backup status: ' + err.message });
+  }
+};
+
+export const triggerCloudBackup = async (req, res) => {
+  try {
+    const { runBackup, getBackupStatus } = await import('../daemon/backup.js');
+    await runBackup();
+    const status = await getBackupStatus();
+    return res.json({ success: true, message: 'Cloud backup snapshot executed successfully!', data: status });
+  } catch (err) {
+    console.error('triggerCloudBackup Error:', err);
+    return res.status(500).json({ success: false, message: 'Backup execution failed: ' + err.message });
+  }
+};

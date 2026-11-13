@@ -31,6 +31,10 @@
   "minio_access_key": "benjamkapa",
   "minio_secret_key": "fortjesus@G2026!",
   "minio_bucket_name": "hlynk-uploads",
+  "r2_account_id": "a37446b26a6a10b72da4eea77160989e",
+  "r2_access_key_id": "f781d0591258c2f9db9b4da2d98eb84f",
+  "r2_secret_access_key": "71284eba055cbdf8419efe3f244f120979835db78ffe70ba97ab97420111d9eb",
+  "r2_bucket": "hlynk-backups",
   "backend_url": "https://api.hlynk.co.ke",
   "mpesa_whitelist_ips": [
     "196.201.214.200",
@@ -81,5 +85,6 @@
     "max": 120,
     "scanner_windowMs": 60000,
     "scanner_max": 10
-  }
+  },
+  "google_drive_backup_folder_id": "1dUjRdCwWKGsO74-CY7zAxxGvKQ1zL8az"
 }

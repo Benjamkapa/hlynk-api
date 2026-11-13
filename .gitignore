@@ -3,6 +3,9 @@ server/.env
 server/.env.*
 .env
 .env.*
+server/configs/google-backup-key.json
+server/configs/google-*.json
+server/configs/params.json
 
 # Dependencies
 server/node_modules/

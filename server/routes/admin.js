@@ -36,6 +36,8 @@ import {
   extendSubscriptionDays,
   downloadDatabaseBackup,
   restoreDatabaseBackup,
+  getCloudBackupOverview,
+  triggerCloudBackup,
   clearTableData,
   deleteRecord,
   getSystemNotifications,
@@ -54,6 +56,8 @@ router.post('/data/clear-table', clearTableData);
 router.post('/data/delete-record', deleteRecord);
 router.get('/backup/db', downloadDatabaseBackup);
 router.post('/backup/restore', restoreDatabaseBackup);
+router.get('/backup/cloud-status', getCloudBackupOverview);
+router.post('/backup/cloud-trigger', triggerCloudBackup);
 router.get('/stats', getSystemStats);
 router.get('/tenants', listTenants);
 router.put('/tenants/:id/upgrade', upgradePlan);

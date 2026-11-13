@@ -109,5 +109,5 @@ export const startSubscriptionDaemon = () => {
     }
   });
 
-  console.log('👿 Subscription & Notification Daemon started.');
+  console.log('👿 Subs/Notification Daemon started.');
 };
