@@ -2,6 +2,7 @@ import * as Minio from 'minio';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import sharp from 'sharp';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const paramsPath = path.join(__dirname, '../configs/params.json');
@@ -58,10 +59,35 @@ export const initStorage = async () => {
  * @returns {String} - The public URL of the uploaded file
  */
 export const uploadFile = async (file, folder = 'general') => {
-    const fileName = `${folder}/${Date.now()}-${file.name.replace(/\s+/g, '_')}`;
+    // Determine if the uploaded file is an image and compress it using sharp
+    let buffer = file.data;
+    let size = file.size;
+    let mimeType = file.mimetype || 'application/octet-stream';
 
-    await minioClient.putObject(bucketName, fileName, file.data, file.size, {
-        'Content-Type': file.mimetype
+    if (mimeType.startsWith('image/')) {
+        try {
+            // Choose output format based on input mime type
+            const isPng = mimeType.includes('png');
+            const format = isPng ? 'png' : 'jpeg';
+            const compressed = await sharp(file.data)
+                .rotate()
+                .resize({ width: 1200, withoutEnlargement: true })
+                .toFormat(format, { quality: 80, progressive: true })
+                .toBuffer();
+            buffer = compressed;
+            size = compressed.length;
+            mimeType = isPng ? 'image/png' : 'image/jpeg';
+            console.debug(`📦 Storage: Compressed image from ${file.size} to ${size} bytes (${format}).`);
+        } catch (err) {
+            console.warn('⚠️ Storage: Image compression failed, uploading original file.', err.message);
+        }
+    }
+
+    const safeName = (file.name || 'file').replace(/\s+/g, '_');
+    const fileName = `${folder}/${Date.now()}-${safeName}`;
+
+    await minioClient.putObject(bucketName, fileName, buffer, size, {
+        'Content-Type': mimeType
     });
 
     // Construct secure public URL via our backend proxy

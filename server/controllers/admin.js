@@ -1047,7 +1047,8 @@ export const getUserFinancialValue = async (req, res) => {
 
 export const upgradePlan = async (req, res) => {
   const { id } = req.params; // tenantId
-  const { planName } = req.body;
+  const plan = req.body.planName || req.body.plan || 'MAX';
+  const planName = plan.toUpperCase();
 
   try {
     const [sub] = await db.query(`SELECT * FROM subscription WHERE tenantId = ? LIMIT 1`, [id]);
@@ -1058,12 +1059,19 @@ export const upgradePlan = async (req, res) => {
     const getPlanName = (p) => p === 'MAX' ? 'Business Pro' : p === 'PLUS' ? 'Growth' : 'Starter';
     const displayPlan = getPlanName(planName);
 
+    // If existing subscription has expired or has no valid end date, ensure it has at least 30 days active
+    const now = new Date();
+    const existingEnd = sub[0].endDate ? new Date(sub[0].endDate) : null;
+    let newEndDate = existingEnd && existingEnd > now ? existingEnd : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
     // Force switch to active status with new plan
     await db.query(`
       UPDATE subscription 
-      SET planName = ?, status = 0, updatedAt = NOW()
+      SET planName = ?, status = 0, endDate = ?, updatedAt = NOW()
       WHERE tenantId = ?
-    `, [planName, id]);
+    `, [planName, newEndDate, id]);
+
+    await db.query(`UPDATE tenant SET isTrial = 0, updatedAt = NOW() WHERE id = ?`, [id]);
 
     // Notify Tenant (DB + Push)
     await createNotification({
@@ -1078,9 +1086,9 @@ export const upgradePlan = async (req, res) => {
     await db.query(`
       INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt) 
       VALUES (?, ?, ?, 'Plan Upgrade', 'Billing', ?, NOW())
-    `, [ulid(), id, req.user.userId, `Upgraded to ${planName} (${displayPlan})`]);
+    `, [ulid(), id, req.user?.userId || 'system', `Upgraded to ${planName} (${displayPlan})`]);
 
-    return res.json({ success: true, message: 'Subscription upgraded' });
+    return res.json({ success: true, message: 'Subscription upgraded', planName, endDate: newEndDate });
   } catch (err) {
     console.error('Upgrade Plan Error:', err);
     return res.status(500).json({ success: false, message: err.message || 'Failed to upgrade plan' });
@@ -1143,13 +1151,14 @@ export const activateTenant = async (req, res) => {
 
 export const extendSubscriptionDays = async (req, res) => {
   const { id } = req.params; // tenantId
-  const { days, reason } = req.body;
+  const { days, extraDays, reason, plan, planName } = req.body;
+  const numDays = days !== undefined ? days : extraDays;
 
-  if (!days || isNaN(Number(days))) {
+  if (numDays === undefined || isNaN(Number(numDays))) {
     return res.status(400).json({ success: false, message: 'Valid number of days required' });
   }
 
-  const daysNum = Number(days);
+  const daysNum = Number(numDays);
 
   try {
     const [subs] = await db.query(`SELECT * FROM subscription WHERE tenantId = ? LIMIT 1`, [id]);
@@ -1158,19 +1167,25 @@ export const extendSubscriptionDays = async (req, res) => {
     }
 
     const sub = subs[0];
-    const isTrial = Number(sub.status) === 2 || sub.status === 'TRIAL';
-    const dateField = isTrial ? 'trialEndDate' : 'endDate';
+    const now = new Date();
 
-    // Calculate new end date: extend from current end (or now if expired)
-    const currentEnd = sub[dateField] ? new Date(sub[dateField]) : new Date();
-    const baseDate = currentEnd > new Date() ? currentEnd : new Date();
+    // Check existing expiry (prefer endDate, fallback to trialEndDate, fallback to now)
+    const existingEnd = sub.endDate ? new Date(sub.endDate) : (sub.trialEndDate ? new Date(sub.trialEndDate) : null);
+    const baseDate = (existingEnd && !isNaN(existingEnd.getTime()) && existingEnd > now) ? existingEnd : now;
     const newEnd = new Date(baseDate);
     newEnd.setDate(newEnd.getDate() + daysNum);
 
+    const newStatus = newEnd > now ? 0 : 1; // 0 = ACTIVE
+    const targetPlan = (plan || planName || sub.planName || 'MAX').toUpperCase();
+
     await db.query(
-      `UPDATE subscription SET ${dateField} = ?, updatedAt = NOW() WHERE tenantId = ?`,
-      [newEnd, id]
+      `UPDATE subscription SET planName = ?, endDate = ?, status = ?, updatedAt = NOW() WHERE tenantId = ?`,
+      [targetPlan, newEnd, newStatus, id]
     );
+
+    if (newStatus === 0) {
+      await db.query(`UPDATE tenant SET isTrial = 0, updatedAt = NOW() WHERE id = ?`, [id]);
+    }
 
     const direction = daysNum > 0 ? 'extended' : 'reduced';
     const absDays = Math.abs(daysNum);
@@ -1192,9 +1207,9 @@ export const extendSubscriptionDays = async (req, res) => {
     await db.query(`
       INSERT INTO activitylog (id, tenantId, userId, action, logName, details, createdAt)
       VALUES (?, ?, ?, 'Subscription Days Adjusted', 'Billing', ?, NOW())
-    `, [ulid(), id, req.user.userId, `${direction} by ${absDays} days via admin. New ${dateField}: ${newEnd.toISOString()}. ${reason || ''}`.trim()]);
+    `, [ulid(), id, req.user?.userId || 'system', `${direction} by ${absDays} days via admin. New endDate: ${newEnd.toISOString()}. Plan: ${targetPlan}. ${reason || ''}`.trim()]);
 
-    return res.json({ success: true, message: `Subscription ${direction} by ${absDays} days. New expiry: ${newEnd.toDateString()}`, data: { newEnd } });
+    return res.json({ success: true, message: `Subscription ${direction} by ${absDays} days. New expiry: ${newEnd.toDateString()}`, data: { newEnd, plan: targetPlan, status: newStatus } });
   } catch (err) {
     console.error('[EXTEND-DAYS] Error:', err);
     return res.status(500).json({ success: false, message: err.message || 'Failed to extend subscription' });
