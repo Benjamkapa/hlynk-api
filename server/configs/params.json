@@ -86,5 +86,11 @@
     "scanner_windowMs": 60000,
     "scanner_max": 10
   },
-  "google_drive_backup_folder_id": "1dUjRdCwWKGsO74-CY7zAxxGvKQ1zL8az"
+  "google_drive_backup_folder_id": "1dUjRdCwWKGsO74-CY7zAxxGvKQ1zL8az",
+  "smtp_host": "smtp-relay.brevo.com",
+  "smtp_port": 587,
+  "smtp_user": "c4ee77001@smtp-brevo.com",
+  "smtp_pass": "",
+  "email_from": "info@hlynk.co.ke",
+  "email_from_name": "hlynk"
 }
