@@ -98,6 +98,6 @@ export const deleteStaff = async (req, res) => {
     await db.query(`DELETE FROM user WHERE id = ? AND tenantId = ?`, [staffId, tenantId]);
     return res.json({ success: true, data: { message: 'Staff deleted' } });
   } catch (err) {
-    return res.status(500).json({ success: false, message: 'Delete failed' });
+    return res.status(500).json({ success: false, message: 'Deletion failed' });
   }
 };
