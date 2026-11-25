@@ -13,6 +13,7 @@ import { fileURLToPath } from 'url';
 import os from 'os';
 import { execSync } from 'child_process';
 import { parseDevice, logSessionImpersonate, logSessionTerminate } from '../utils/sessionLogger.js';
+import { sendAccountDeletedEmail } from '../utils/email.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const params = JSON.parse(fs.readFileSync(path.join(__dirname, '../configs/params.json'), 'utf8'));
@@ -659,9 +660,15 @@ export const deleteUser = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Cannot delete Super Admin' });
     }
     const userName = u[0]?.name || u[0]?.email || 'User';
+    const userEmail = u[0]?.email || null;
     const targetUserId = req.params.id;
     const userRole = u[0]?.role;
     const userTenantId = u[0]?.tenantId;
+    let userBusinessName = null;
+    if (userTenantId) {
+      const [tRow] = await db.query(`SELECT businessName FROM tenant WHERE id = ? LIMIT 1`, [userTenantId]).catch(() => [[]]);
+      userBusinessName = tRow?.[0]?.businessName || null;
+    }
 
     // Purge user sessions and push tokens immediately
     await db.query(`DELETE FROM session WHERE userId = ?`, [targetUserId]).catch(() => {});
@@ -720,6 +727,15 @@ export const deleteUser = async (req, res) => {
         data: { url: '/admin/user-operations' }
       });
     } catch (e) { }
+
+    if (userEmail) {
+      sendAccountDeletedEmail({
+        email: userEmail,
+        name: u[0]?.name,
+        businessName: userBusinessName,
+        deletedBy: 'admin'
+      }).catch((e) => console.error('⚠️  Farewell email failed (admin deleteUser):', e?.message || e));
+    }
 
     return res.json({ success: true, message: 'User permanently deleted and session invalidated' });
   } catch (err) {
@@ -1223,6 +1239,10 @@ export const deleteTenant = async (req, res) => {
   try {
     const [tRows] = await connection.query(`SELECT businessName FROM tenant WHERE id = ?`, [tenantId]);
     const bName = tRows[0]?.businessName || 'Business';
+    const [affectedUsers] = await connection.query(
+      `SELECT name, email FROM user WHERE tenantId = ? AND role != 'SUPER_ADMIN' AND email IS NOT NULL AND email != ''`,
+      [tenantId]
+    ).catch(() => [[]]);
 
     await connection.query('SET FOREIGN_KEY_CHECKS = 0');
     await connection.beginTransaction();
@@ -1286,6 +1306,15 @@ export const deleteTenant = async (req, res) => {
     await connection.commit();
     await connection.query('SET FOREIGN_KEY_CHECKS = 1');
     connection.release();
+
+    for (const u of (affectedUsers || [])) {
+      sendAccountDeletedEmail({
+        email: u.email,
+        name: u.name,
+        businessName: bName,
+        deletedBy: 'admin'
+      }).catch((e) => console.error('⚠️  Farewell email failed (admin deleteTenant):', e?.message || e));
+    }
 
     // Log deletion into activitylog with tenantId = 'SYSTEM'
     try {

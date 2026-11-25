@@ -10,6 +10,7 @@ import { createAdminNotification } from './notifications.js';
 import { logSessionLogin, logSessionLogout, logSessionRefresh, logSessionAlert } from '../utils/sessionLogger.js';
 import { isAdminIPAuthorized } from '../middleware/ipWhitelist.js';
 import { validateKenyanPhone } from '../utils/phone.js';
+import { sendWelcomeEmail } from '../utils/email.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const params = JSON.parse(fs.readFileSync(path.join(__dirname, '../configs/params.json'), 'utf8'));
@@ -281,6 +282,11 @@ export const googleAuth = async (req, res) => {
         
         
         await connection.commit();
+
+        // 🎉 Send welcome email to the new provider (fire-and-forget – never blocks signup)
+        sendWelcomeEmail({ email, name: ownerName, businessName }).catch((e) =>
+          console.error('⚠️  Welcome email failed (new provider):', e?.message || e)
+        );
 
         // 3. Notify Admins (Native Push + In-App)
         await createAdminNotification({

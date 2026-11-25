@@ -3,6 +3,7 @@ import { ulid } from 'ulid';
 import { uploadFile } from '../utils/storage.js';
 import { createAdminNotification } from './notifications.js';
 import { validateKenyanPhone } from '../utils/phone.js';
+import { sendAccountDeletedEmail } from '../utils/email.js';
 
 const slugify = (name) => (name || 'stay').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
@@ -464,12 +465,18 @@ export const clearData = async (req, res) => {
 export const deleteProfileAndFacility = async (req, res) => {
   const { tenantId, userId } = req.user;
   let bName = 'A business';
+  let affectedUsers = [];
 
   try {
     const [tRows] = await db.query(`SELECT businessName FROM tenant WHERE id = ?`, [tenantId]);
     if (tRows.length > 0) {
       bName = tRows[0].businessName || bName;
     }
+    const [uRows] = await db.query(
+      `SELECT name, email FROM user WHERE tenantId = ? AND role != 'SUPER_ADMIN' AND email IS NOT NULL AND email != ''`,
+      [tenantId]
+    );
+    affectedUsers = uRows || [];
   } catch (err) {}
 
   const connection = await db.getConnection();
@@ -536,6 +543,16 @@ export const deleteProfileAndFacility = async (req, res) => {
 
     await connection.commit();
     await connection.query('SET FOREIGN_KEY_CHECKS = 1');
+
+    // Send farewell email to the owner and any affected staff
+    for (const u of affectedUsers) {
+      sendAccountDeletedEmail({
+        email: u.email,
+        name: u.name,
+        businessName: bName,
+        deletedBy: 'self'
+      }).catch((e) => console.error('⚠️  Farewell email failed (provider self-delete):', e?.message || e));
+    }
 
     try {
       await createAdminNotification({

@@ -4,6 +4,7 @@ import { ulid } from 'ulid';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { sendBroadcastEmail } from '../utils/email.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '../.env'), quiet: true });
@@ -297,10 +298,19 @@ export const broadcastNotification = async (req, res) => {
         }
 
         let targetTenants = [];
+        let emailTargets = [];
 
         if (target === 'all') {
             const [tenants] = await db.query('SELECT id FROM tenant');
             targetTenants = tenants.map(t => t.id);
+
+            const [providers] = await db.query(`
+                SELECT u.email, u.name, t.businessName
+                FROM user u
+                JOIN tenant t ON u.tenantId = t.id
+                WHERE u.role = 'PROVIDER' AND u.isActive = 1 AND u.email IS NOT NULL AND u.email != ''
+            `);
+            emailTargets = providers;
         } else if (target === 'specific') {
             // Support both array and comma-separated string
             const emailList = Array.isArray(emails) 
@@ -311,11 +321,18 @@ export const broadcastNotification = async (req, res) => {
                 return res.status(400).json({ success: false, message: 'Invalid or empty email list' });
             }
 
-            const [users] = await db.query('SELECT DISTINCT tenantId FROM user WHERE email IN (?)', [emailList]);
-            targetTenants = users.map(u => u.tenantId).filter(id => id !== null);
+            const [users] = await db.query(`
+                SELECT u.tenantId, u.email, u.name, t.businessName
+                FROM user u
+                LEFT JOIN tenant t ON u.tenantId = t.id
+                WHERE u.email IN (?)
+            `, [emailList]);
+
+            targetTenants = [...new Set(users.map(u => u.tenantId).filter(id => id !== null))];
+            emailTargets = users.filter(u => u.email && u.email.includes('@'));
         }
 
-        if (targetTenants.length === 0) {
+        if (targetTenants.length === 0 && emailTargets.length === 0) {
             return res.status(404).json({ success: false, message: 'No matching users found' });
         }
 
@@ -324,10 +341,29 @@ export const broadcastNotification = async (req, res) => {
             createNotification({ tenantId, title, message, type })
         ));
 
+        // Also dispatch branded broadcast emails to all matched recipients
+        let emailsSent = 0;
+        if (emailTargets.length > 0) {
+            const emailResults = await Promise.allSettled(
+                emailTargets.map(u =>
+                    sendBroadcastEmail({
+                        email: u.email,
+                        name: u.name,
+                        businessName: u.businessName,
+                        title,
+                        message,
+                        type
+                    })
+                )
+            );
+            emailsSent = emailResults.filter(r => r.status === 'fulfilled' && r.value?.success).length;
+        }
+
         res.status(200).json({ 
             success: true, 
-            message: `Successfully sent to ${targetTenants.length} vendors`,
-            count: targetTenants.length
+            message: `Successfully sent to ${targetTenants.length} vendors (${emailsSent} emails delivered)`,
+            count: targetTenants.length,
+            emailsSent
         });
     } catch (error) {
         console.error('Broadcast Error:', error);

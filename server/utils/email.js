@@ -397,330 +397,83 @@ export const sendBroadcastEmail = async ({ email, name, businessName, title, mes
   });
 };
 
+/**
+ * 5. Account Removed / Deleted Farewell Email
+ */
+export const sendAccountDeletedEmail = async ({ email, name, businessName, deletedBy = 'self' }) => {
+  const greeting = name ? `Dear ${esc(name)},` : 'Hello,';
+  const bizText = businessName ? ` for <strong>${esc(businessName)}</strong>` : '';
+  const reasonText =
+    deletedBy === 'admin'
+      ? `Your hlynk account${bizText} has been removed by a platform administrator.`
+      : deletedBy === 'owner'
+        ? `Your staff access${bizText} on hlynk has been removed by your business administrator.`
+        : `Your hlynk account${bizText} and its associated records have been permanently deleted as requested.`;
+
+  const bodyHtml = `
+    ${badge('warning', 'Account removed')}
+    ${heading('Sorry to see you go.')}
+    <p>${greeting}</p>
+    <p>${reasonText}</p>
+    <p>Thank you for spending time with hlynk. If this was done in error, or if you ever decide to return and set up a fresh workspace, our team is always happy to help.</p>
+  `;
+
+  const html = renderEmailLayout({
+    title: 'Account Removed — hlynk',
+    bodyHtml,
+    ctaText: 'Contact Support',
+    ctaUrl: 'mailto:info@hlynk.co.ke',
+    footerNote: 'If you did not expect this change, please reach out to info@hlynk.co.ke immediately.',
+  });
+
+  return sendEmail({
+    to: email,
+    subject: `Your hlynk account${businessName ? ` (${businessName})` : ''} has been removed`,
+    html,
+  });
+};
+
+/**
+ * 6. Polite & Catchy 3-Day Inactivity Reminder
+ */
+export const sendInactivityReminderEmail = async ({ email, name, businessName, daysInactive = 3 }) => {
+  const greeting = name ? `Hey ${esc(name)},` : 'Hey there,';
+  const bizName = businessName ? esc(businessName) : 'your business';
+
+  const bodyHtml = `
+    ${badge('success', 'We miss you')}
+    ${heading('Your biashara misses you.')}
+    <p>${greeting}</p>
+    <p>It has been <strong>${daysInactive} days</strong> since we last saw activity on <strong>${bizName}</strong>.</p>
+    <p>Your inventory, sales tools, and M-Pesa tracking are right where you left them — ready whenever you are to ring up your next sale and keep your numbers sharp.</p>
+    ${steps([
+      { title: 'Check today’s stock.', text: 'Keep tabs on fast-moving items in seconds.' },
+      { title: 'Record a quick sale.', text: 'Issue clean digital receipts in one tap.' },
+    ])}
+  `;
+
+  const html = renderEmailLayout({
+    title: 'Quick check-in from hlynk',
+    bodyHtml,
+    ctaText: 'Jump back into hlynk',
+    ctaUrl: 'https://hlynk.co.ke/dashboard',
+    footerNote: 'Need a hand getting set up or importing your products? Just reply to this email.',
+  });
+
+  return sendEmail({
+    to: email,
+    subject: `${businessName ? `${businessName} — ` : ''}Your hlynk workspace is waiting for you`,
+    html,
+  });
+};
+
 export default {
   sendEmail,
   sendWelcomeEmail,
   sendSubscriptionReminderEmail,
   sendSubscriptionExpiredEmail,
   sendBroadcastEmail,
+  sendAccountDeletedEmail,
+  sendInactivityReminderEmail,
   getTransporter,
 };
-
-// import nodemailer from 'nodemailer';
-// import fs from 'fs';
-// import path from 'path';
-// import { fileURLToPath } from 'url';
-// import dotenv from 'dotenv';
-
-// const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// dotenv.config({ path: path.join(__dirname, '../.env'), quiet: true });
-
-// // Read params.json if available
-// let params = {};
-// try {
-//   const paramsPath = path.join(__dirname, '../configs/params.json');
-//   if (fs.existsSync(paramsPath)) {
-//     params = JSON.parse(fs.readFileSync(paramsPath, 'utf8'));
-//   }
-// } catch (e) {}
-
-// let transporter = null;
-
-// export const getTransporter = () => {
-//   if (transporter) return transporter;
-
-//   const SMTP_HOST = process.env.BREVO_SMTP_HOST || process.env.SMTP_HOST || params.smtp_host || 'smtp-relay.brevo.com';
-//   const SMTP_PORT = parseInt(process.env.BREVO_SMTP_PORT || process.env.SMTP_PORT || params.smtp_port || '587', 10);
-//   const SMTP_USER = process.env.BREVO_SMTP_USER || process.env.SMTP_USER || params.smtp_user || '';
-//   const SMTP_PASS = process.env.BREVO_SMTP_KEY || process.env.SMTP_PASS || params.smtp_pass || params.brevo_api_key || '';
-
-//   if (!SMTP_USER || !SMTP_PASS) {
-//     return null;
-//   }
-
-//   transporter = nodemailer.createTransport({
-//     host: SMTP_HOST,
-//     port: SMTP_PORT,
-//     secure: SMTP_PORT === 465, // true for 465, false for 587
-//     auth: {
-//       user: SMTP_USER,
-//       pass: SMTP_PASS,
-//     },
-//     tls: {
-//       rejectUnauthorized: process.env.NODE_ENV === 'production',
-//     },
-//   });
-
-//   return transporter;
-// };
-
-// /**
-//  * Common base wrapper for Hlynk branded emails
-//  */
-// const renderEmailLayout = ({ title, bodyHtml, ctaText, ctaUrl, footerNote }) => {
-//   const currentYear = new Date().getFullYear();
-//   return `
-// <!DOCTYPE html>
-// <html lang="en">
-// <head>
-//   <meta charset="utf-8">
-//   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-//   <title>${title}</title>
-//   <style>
-//     body { margin: 0; padding: 0; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b; }
-//     .wrapper { width: 100%; table-layout: fixed; background-color: #f8fafc; padding: 40px 10px; }
-//     .main { background: #ffffff; max-width: 600px; margin: 0 auto; border-radius: 12px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
-//     .header { background: #0D4A3E; padding: 32px 24px; text-align: center; }
-//     .header h1 { margin: 0; color: #ffffff; font-size: 26px; font-weight: 700; letter-spacing: -0.5px; }
-//     .header p { margin: 6px 0 0; color: #a7f3d0; font-size: 14px; }
-//     .content { padding: 32px 24px; font-size: 15px; line-height: 1.6; color: #334155; }
-//     .cta-container { text-align: center; margin: 32px 0 20px; }
-//     .btn { display: inline-block; background-color: #0D4A3E; color: #ffffff !important; padding: 13px 32px; font-weight: 600; font-size: 15px; text-decoration: none; border-radius: 8px; box-shadow: 0 2px 4px rgba(13,74,62,0.2); }
-//     .btn:hover { background-color: #0b3d33; }
-//     .footer { padding: 24px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #f1f5f9; background: #fafafa; }
-//     .footer a { color: #0D4A3E; text-decoration: underline; }
-//     .badge { display: inline-block; padding: 4px 10px; border-radius: 9999px; font-size: 12px; font-weight: 600; margin-bottom: 16px; }
-//     .badge-success { background: #dcfce7; color: #166534; }
-//     .badge-warning { background: #fef3c7; color: #92400e; }
-//     .badge-urgent { background: #fee2e2; color: #991b1b; }
-//     .box { background: #f8fafc; border-left: 4px solid #0D4A3E; padding: 16px; margin: 20px 0; border-radius: 4px; }
-//   </style>
-// </head>
-// <body>
-//   <table class="wrapper" cellpadding="0" cellspacing="0" border="0">
-//     <tr>
-//       <td align="center">
-//         <table class="main" cellpadding="0" cellspacing="0" border="0" width="100%">
-//           <tr>
-//             <td class="header" align="center">
-//               <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 700; letter-spacing: -0.5px;">hlynk</h1>
-//               <p style="margin: 6px 0 0; color: #a7f3d0; font-size: 13px; font-weight: 500;">Operating System for Kenyan Biashara</p>
-//             </td>
-//           </tr>
-//           <tr>
-//             <td class="content">
-//               ${bodyHtml}
-//               ${ctaText && ctaUrl ? `
-//                 <div class="cta-container">
-//                   <a href="${ctaUrl}" class="btn" target="_blank">${ctaText} &rarr;</a>
-//                 </div>
-//               ` : ''}
-//               ${footerNote ? `<p style="font-size: 13px; color: #64748b; margin-top: 24px;">${footerNote}</p>` : ''}
-//             </td>
-//           </tr>
-//           <tr>
-//             <td class="footer">
-//               <p>© ${currentYear} hlynk. All rights reserved.</p>
-//               <p>Need support? Email us at <a href="mailto:info@hlynk.co.ke">info@hlynk.co.ke</a> or call support.</p>
-//               <p style="margin-top:8px;">
-//                 <a href="https://wa.me/254750954980" style="margin-right:8px; text-decoration:none;">💬 WhatsApp</a>
-//                 <a href="https://www.tiktok.com/@hlynk_inc" style="margin-right:8px; text-decoration:none;">🎵 TikTok</a>
-//                 <a href="https://www.instagram.com/hlynk_inc" style="margin-right:8px; text-decoration:none;">📸 Instagram</a>
-//                 <a href="tel:+254790590653" style="margin-right:8px; text-decoration:none;">📞 Call</a>
-//               </p>
-//             </td>
-//           </tr>
-//         </table>
-//       </td>
-//     </tr>
-//   </table>
-// </body>
-// </html>
-//   `.trim();
-// };
-
-// /**
-//  * Core generic send function
-//  */
-// export const sendEmail = async ({ to, subject, html, text }) => {
-//   try {
-//     const client = getTransporter();
-
-//     if (!client) {
-//       console.warn(`[Email] Brevo / SMTP credentials not configured. Skipping email to "${to}" (Subject: "${subject}")`);
-//       return { success: false, reason: 'SMTP_NOT_CONFIGURED' };
-//     }
-
-//     const fromName = process.env.EMAIL_FROM_NAME || 'hlynk';
-//     const fromEmail = process.env.EMAIL_FROM_ADDRESS || process.env.EMAIL_FROM || params.email_from || 'info@hlynk.co.ke';
-
-//     const mailOptions = {
-//       from: `"${fromName}" <${fromEmail}>`,
-//       to,
-//       subject,
-//       text: text || html.replace(/<[^>]*>?/gm, ''), // plain text fallback
-//       html,
-//     };
-
-//     const info = await client.sendMail(mailOptions);
-//     console.log(`✉️ [Email] Sent successfully to ${to}. MessageId: ${info.messageId}`);
-//     return { success: true, messageId: info.messageId };
-//   } catch (error) {
-//     console.error(`🔴 [Email] Failed sending email to ${to}:`, error.message);
-//     return { success: false, error: error.message };
-//   }
-// };
-
-// /**
-//  * 1. Welcome Email for Newly Signed In / Registered Users
-//  */
-// export const sendWelcomeEmail = async ({ email, name, businessName }) => {
-//   const greeting = name ? `Hi ${name},` : 'Hello,';
-//   const bizTitle = businessName ? ` for <strong>${businessName}</strong>` : '';
-
-//   const bodyHtml = `
-//     <span class="badge badge-success">🎉 Welcome aboard!</span>
-//     <h2 style="margin-top: 0; color: #0f172a; font-size: 20px;">Your hlynk dashboard is ready 🚀</h2>
-//     <p>${greeting}</p>
-//     <p>We’re thrilled to have you${bizTitle} on board. Get up‑and‑running in three quick steps:</p>
-//     <ul style="margin: 8px 0 0 20px; color: #475569;">
-//       <li>📦 Add products in <strong>Inventory</strong>.</li>
-//       <li>💰 Record sales via <strong>POS</strong>.</li>
-//       <li>🔗 Share your Business link.</li>
-//     </ul>
-//     <p>Enjoy a <strong>14‑day free trial</strong> – no card needed.</p>
-//   `;
-
-//   const html = renderEmailLayout({
-//     title: 'Welcome to hlynk',
-//     bodyHtml,
-//     ctaText: 'Open My Dashboard',
-//     ctaUrl: 'https://hlynk.co.ke/dashboard',
-//     footerNote: 'If you ever need onboarding help, our support team is ready on WhatsApp and email.'
-//   });
-
-//   return sendEmail({
-//     to: email,
-//     subject: `Welcome to hlynk, ${businessName || name || 'Partner'}! 🚀`,
-//     html
-//   });
-// };
-
-// /**
-//  * 2. Subscription Expiry Reminder (e.g. 3 Days Remaining)
-//  */
-// export const sendSubscriptionReminderEmail = async ({ email, name, businessName, daysRemaining = 3, planName = 'Business Pro', expiryDate }) => {
-//   const greeting = name ? `Hi ${name},` : 'Hello,';
-//   const dateStr = expiryDate ? new Date(expiryDate).toLocaleDateString('en-KE', { dateStyle: 'medium' }) : 'soon';
-
-//   const bodyHtml = `
-//     <span class="badge badge-warning">⏳ Expiry Reminder (${daysRemaining} Days Left)</span>
-//     <h2 style="margin-top: 0; color: #0f172a; font-size: 20px;">Your subscription is expiring soon</h2>
-//     <p>${greeting}</p>
-//     <p>This is a quick reminder that your <strong>${planName}</strong> plan for <strong>${businessName || 'your business'}</strong> is scheduled to expire on <strong>${dateStr}</strong> (${daysRemaining} day${daysRemaining !== 1 ? 's' : ''} left).</p>
-    
-//     <p>To avoid any disruption to your day-to-day sales, barcode scanning, M-Pesa reconciliation, and receipts, please renew your subscription before the expiry date.</p>
-    
-//     <div class="box">
-//       <strong>Plan Details:</strong><br/>
-//       Business: ${businessName || 'N/A'}<br/>
-//       Tier: ${planName}<br/>
-//       Renewable easily via M-Pesa STK push directly on your phone.
-//     </div>
-//   `;
-
-//   const html = renderEmailLayout({
-//     title: 'Subscription Expiry Reminder',
-//     bodyHtml,
-//     ctaText: 'Renew Subscription Now',
-//     ctaUrl: 'https://hlynk.co.ke/dashboard/subscription',
-//     footerNote: 'Renewing early extends seamlessly from your current expiry date without losing any active days.'
-//   });
-
-//   return sendEmail({
-//     to: email,
-//     subject: `Reminder: Your hlynk subscription expires in ${daysRemaining} days (${businessName || 'Action Required'})`,
-//     html
-//   });
-// };
-
-// /**
-//  * 3. Subscription Expired & 3-Day Post-Expiry Grace Reminder
-//  */
-// export const sendSubscriptionExpiredEmail = async ({ email, name, businessName, daysExpired = 0, planName = 'Business Pro' }) => {
-//   const greeting = name ? `Hi ${name},` : 'Hello,';
-//   const isGracePeriod = daysExpired > 0;
-  
-//   const badgeClass = isGracePeriod ? 'badge-urgent' : 'badge-warning';
-//   const badgeText = isGracePeriod ? `⚠️ Expired ${daysExpired} Days Ago` : '⚠️ Plan Expired Today';
-//   const headline = isGracePeriod 
-//     ? 'Action required: Your account expired 3 days ago'
-//     : 'Your subscription has ended';
-
-//   const bodyHtml = `
-//     <span class="badge ${badgeClass}">${badgeText}</span>
-//     <h2 style="margin-top: 0; color: #0f172a; font-size: 20px;">${headline}</h2>
-//     <p>${greeting}</p>
-//     <p>The subscription for <strong>${businessName || 'your business'}</strong> (${planName}) ${isGracePeriod ? `expired ${daysExpired} days ago` : 'has expired today'}.</p>
-    
-//     <p>Your business records, inventory catalogs, and past sales receipts are securely saved, but active selling and multi-device access are currently paused until renewal.</p>
-    
-//     <div class="box">
-//       <strong>How to restore full access:</strong>
-//       <ol style="margin: 8px 0 0 0; padding-left: 20px; color: #475569;">
-//         <li>Click the button below to open your billing portal.</li>
-//         <li>Enter your M-Pesa phone number.</li>
-//         <li>Authorize the payment on your phone pin prompt to immediately reactivate.</li>
-//       </ol>
-//     </div>
-//   `;
-
-//   const html = renderEmailLayout({
-//     title: 'hlynk Subscription Notice',
-//     bodyHtml,
-//     ctaText: 'Renew & Restore Access',
-//     ctaUrl: 'https://hlynk.co.ke/dashboard/subscription',
-//     footerNote: 'Need flexible arrangements or help with payment? Contact our support desk at info@hlynk.co.ke.'
-//   });
-
-//   return sendEmail({
-//     to: email,
-//     subject: isGracePeriod 
-//       ? `Action Required: Your hlynk service expired ${daysExpired} days ago (${businessName})`
-//       : `Your hlynk subscription expired today (${businessName})`,
-//     html
-//   });
-// };
-
-// /**
-//  * 4. Super Admin Broadcast & Promotional Messages
-//  */
-// export const sendBroadcastEmail = async ({ email, name, businessName, title, message, type = 'info', actionUrl = 'https://hlynk.co.ke/dashboard', actionText = 'Open hlynk' }) => {
-//   const greeting = name ? `Hi ${name},` : 'Hello Partner,';
-//   const badgeClass = type === 'success' ? 'badge-success' : type === 'warning' ? 'badge-warning' : 'badge-success';
-
-//   // Format newlines into paragraphs or break tags
-//   const formattedMsg = message.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br/>');
-
-//   const bodyHtml = `
-//     <span class="badge ${badgeClass}">Announcement</span>
-//     <h2 style="margin-top: 0; color: #0f172a; font-size: 20px;">${title}</h2>
-//     <p>${greeting}</p>
-//     <div style="font-size: 15px; color: #334155; line-height: 1.6;">
-//       <p>${formattedMsg}</p>
-//     </div>
-//   `;
-
-//   const html = renderEmailLayout({
-//     title,
-//     bodyHtml,
-//     ctaText: actionText,
-//     ctaUrl: actionUrl,
-//     footerNote: 'You received this official announcement as an active business partner on the hlynk platform.'
-//   });
-
-//   return sendEmail({
-//     to: email,
-//     subject: title,
-//     html
-//   });
-// };
-
-// export default {
-//   sendEmail,
-//   sendWelcomeEmail,
-//   sendSubscriptionReminderEmail,
-//   sendSubscriptionExpiredEmail,
-//   sendBroadcastEmail,
-//   getTransporter
-// };
