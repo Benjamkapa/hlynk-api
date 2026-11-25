@@ -286,16 +286,19 @@ export const createAdminNotification = async ({ title, message, type = 'system',
  */
 export const broadcastNotification = async (req, res) => {
     try {
-        const { target, emails, title, message, type = 'info' } = req.body;
+        const { target, emails, title, message, type = 'info', sendEmail = true } = req.body;
         
         // Safety check
         if (req.user.role !== 'SUPER_ADMIN') {
             return res.status(403).json({ success: false, message: 'Only Super Admins can broadcast notifications' });
         }
 
-        if (!title || !message) {
-            return res.status(400).json({ success: false, message: 'Title and message are required' });
+        if (!message || !String(message).trim()) {
+            return res.status(400).json({ success: false, message: 'Message is required' });
         }
+
+        const customTitle = title && String(title).trim() ? String(title).trim() : '';
+        const notificationTitle = customTitle || 'hlynk Update';
 
         let targetTenants = [];
         let emailTargets = [];
@@ -338,19 +341,19 @@ export const broadcastNotification = async (req, res) => {
 
         // Send to all targets (createNotification handles both DB and Push)
         await Promise.all(targetTenants.map(tenantId => 
-            createNotification({ tenantId, title, message, type })
+            createNotification({ tenantId, title: notificationTitle, message, type })
         ));
 
         // Also dispatch branded broadcast emails to all matched recipients
         let emailsSent = 0;
-        if (emailTargets.length > 0) {
+        if (sendEmail && emailTargets.length > 0) {
             const emailResults = await Promise.allSettled(
                 emailTargets.map(u =>
                     sendBroadcastEmail({
                         email: u.email,
                         name: u.name,
                         businessName: u.businessName,
-                        title,
+                        title: customTitle,
                         message,
                         type
                     })

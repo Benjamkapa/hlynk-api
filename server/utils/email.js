@@ -374,22 +374,24 @@ export const sendSubscriptionExpiredEmail = async ({ email, name, businessName, 
 /**
  * 4. Super Admin Broadcast & Promotional Messages
  */
-export const sendBroadcastEmail = async ({ email, name, businessName, title, message, type = 'info', actionUrl = 'https://hlynk.co.ke/dashboard', actionText = 'Open hlynk' }) => {
-  // const greeting = name ? `Hi ${esc(name)},` : 'Hello Partner,';
+export const sendBroadcastEmail = async ({ email, name, businessName, title = '', message, type = 'info', actionUrl = 'https://hlynk.co.ke/dashboard', actionText = 'Open hlynk' }) => {
+  const greeting = name ? `Hi ${esc(name)},` : 'Hello Partner,';
   const badgeTone = type === 'warning' ? 'warning' : 'success';
+  const cleanTitle = title && String(title).trim() ? String(title).trim() : '';
+  const emailSubject = cleanTitle || 'A quick note from hlynk';
 
   // Escape first, then turn newlines into paragraphs or line breaks
   const formattedMsg = esc(message).replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br/>');
 
   const bodyHtml = `
     ${badge(badgeTone, 'Announcement')}
-    ${heading(esc(title))}
+    ${cleanTitle ? heading(esc(cleanTitle)) : ''}
     <p>${greeting}</p>
     <p>${formattedMsg}</p>
   `;
 
   const html = renderEmailLayout({
-    title,
+    title: emailSubject,
     bodyHtml,
     ctaText: actionText,
     ctaUrl: actionUrl,
@@ -398,7 +400,7 @@ export const sendBroadcastEmail = async ({ email, name, businessName, title, mes
 
   return sendEmail({
     to: email,
-    subject: title,
+    subject: emailSubject,
     html,
   });
 };
