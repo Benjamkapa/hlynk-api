@@ -49,18 +49,18 @@ jobs:
         cache: 'npm'
         cache-dependency-path: server/package-lock.json
 
-    - name: Install dependencies
+    - name: Stop existing PM2 process before updating dependencies
+      run: |
+        source /etc/profile.d/hlynk-env.sh
+        pm2 delete hlynk-server || true
+
+    - name: Clean install dependencies
       working-directory: server
-      run: npm install
+      run: npm ci --omit=dev
 
     - name: Remove pushed .env file
       working-directory: server
       run: rm -f .env
-
-    - name: Stop existing PM2 process if it exists
-      run: |
-        source /etc/profile.d/hlynk-env.sh
-        pm2 delete hlynk-server || true
 
     - name: Start PM2 process
       working-directory: server
