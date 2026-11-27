@@ -31,6 +31,11 @@ export const getTransporter = () => {
   }
 
   transporter = nodemailer.createTransport({
+    pool: true,
+    maxConnections: 5,
+    maxMessages: Infinity,
+    rateDelta: 1000,
+    rateLimit: 15,
     host: SMTP_HOST,
     port: SMTP_PORT,
     secure: SMTP_PORT === 465, // true for 465, false for 587
@@ -38,6 +43,9 @@ export const getTransporter = () => {
       user: SMTP_USER,
       pass: SMTP_PASS,
     },
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 20000,
     tls: {
       rejectUnauthorized: process.env.NODE_ENV === 'production',
     },
@@ -243,12 +251,21 @@ export const sendEmail = async ({ to, subject, html, text }) => {
       html,
     };
 
-    const info = await client.sendMail(mailOptions);
-    console.log(`✉️ [Email] Sent successfully to ${to}`);
-    return { success: true, messageId: info.messageId };
+    try {
+      const info = await client.sendMail(mailOptions);
+      console.log(`✉️ [Email] Sent successfully to ${to}`);
+      return { success: true, messageId: info.messageId };
+    } catch (firstErr) {
+      // Retry once after a brief pause for transient SMTP connection/rate-limit drops
+      await new Promise((r) => setTimeout(r, 800));
+      const info = await client.sendMail(mailOptions);
+      console.log(`✉️ [Email] Sent successfully to ${to} (on retry)`);
+      return { success: true, messageId: info.messageId };
+    }
   } catch (error) {
-    console.error(`🔴 [Email] Failed sending email to ${to}:`, error.message);
-    return { success: false, error: error.message };
+    const details = [error.code, error.responseCode, error.response || error.message].filter(Boolean).join(' | ');
+    console.error(`🔴 [Email] Failed sending email to ${to}: ${details}`);
+    return { success: false, error: details };
   }
 };
 

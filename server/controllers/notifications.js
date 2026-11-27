@@ -339,18 +339,26 @@ export const broadcastNotification = async (req, res) => {
             return res.status(404).json({ success: false, message: 'No matching users found' });
         }
 
-        // Send to all targets (createNotification handles both DB and Push)
-        await Promise.all(targetTenants.map(tenantId => 
+        // Deduplicate email targets by normalized email address
+        const seenEmails = new Set();
+        const uniqueEmailTargets = emailTargets.filter((u) => {
+            const normalized = String(u.email || '').trim().toLowerCase();
+            if (!normalized || !normalized.includes('@') || seenEmails.has(normalized)) return false;
+            seenEmails.add(normalized);
+            return true;
+        });
+
+        // Send in-app/push notifications (isolated per tenant so one failure doesn't block others)
+        await Promise.allSettled(targetTenants.map(tenantId => 
             createNotification({ tenantId, title: notificationTitle, message, type })
         ));
 
-        // Also dispatch branded broadcast emails to all matched recipients
-        let emailsSent = 0;
-        if (sendEmail && emailTargets.length > 0) {
-            const emailResults = await Promise.allSettled(
-                emailTargets.map(u =>
+        // Dispatch all emails in parallel through Nodemailer's pooled SMTP transporter (5 concurrent connections, 15/sec)
+        const dispatchBroadcastEmails = async (targets) => {
+            const results = await Promise.allSettled(
+                targets.map((u) =>
                     sendBroadcastEmail({
-                        email: u.email,
+                        email: String(u.email).trim(),
                         name: u.name,
                         businessName: u.businessName,
                         title: customTitle,
@@ -359,14 +367,56 @@ export const broadcastNotification = async (req, res) => {
                     })
                 )
             );
-            emailsSent = emailResults.filter(r => r.status === 'fulfilled' && r.value?.success).length;
+            let sent = 0;
+            let failed = 0;
+            let lastError = null;
+            for (const r of results) {
+                if (r.status === 'fulfilled' && r.value?.success) {
+                    sent++;
+                } else {
+                    failed++;
+                    lastError = r.status === 'rejected'
+                        ? r.reason?.message
+                        : (r.value?.error || r.value?.reason || 'Send failed');
+                }
+            }
+            console.log(`📣 [Broadcast] Email blast finished: ${sent}/${targets.length} sent, ${failed} failed${lastError ? ` (last error: ${lastError})` : ''}`);
+            return { sent, failed, lastError };
+        };
+
+        // For >30 recipients (e.g. 100+ blasts), run in background so the HTTP request never hits the 60s timeout
+        if (sendEmail && uniqueEmailTargets.length > 30) {
+            dispatchBroadcastEmails(uniqueEmailTargets).catch((err) =>
+                console.error('Background broadcast blast error:', err)
+            );
+            return res.status(200).json({
+                success: true,
+                message: `Sent to ${targetTenants.length} vendors; blasting ${uniqueEmailTargets.length} emails in background`,
+                count: targetTenants.length,
+                emailsQueued: uniqueEmailTargets.length,
+                emailsSent: 0,
+                emailsFailed: 0
+            });
+        }
+
+        let emailsSent = 0;
+        let emailsFailed = 0;
+        let lastError = null;
+        if (sendEmail && uniqueEmailTargets.length > 0) {
+            const resBlast = await dispatchBroadcastEmails(uniqueEmailTargets);
+            emailsSent = resBlast.sent;
+            emailsFailed = resBlast.failed;
+            lastError = resBlast.lastError;
         }
 
         res.status(200).json({ 
             success: true, 
-            message: `Successfully sent to ${targetTenants.length} vendors (${emailsSent} emails delivered)`,
+            message: emailsFailed > 0
+                ? `Sent to ${targetTenants.length} vendors (${emailsSent}/${uniqueEmailTargets.length} emails delivered, ${emailsFailed} failed${lastError ? `: ${lastError}` : ''})`
+                : `Successfully sent to ${targetTenants.length} vendors (${emailsSent}/${uniqueEmailTargets.length} emails delivered)`,
             count: targetTenants.length,
-            emailsSent
+            emailsSent,
+            emailsFailed
         });
     } catch (error) {
         console.error('Broadcast Error:', error);
@@ -384,14 +434,25 @@ export const searchUsers = async (req, res) => {
         }
 
         const { query = '' } = req.query;
-        
-        // Find users matching email or name, limited to 50 for performance
-        const [users] = await db.query(`
-            SELECT id, name, email, role 
-            FROM user 
-            WHERE email LIKE ? OR name LIKE ?
-            LIMIT 50
-        `, [`%${query}%`, `%${query}%`]);
+        const cleanQuery = String(query).trim();
+
+        let sql = `
+            SELECT u.id, u.name, u.email, u.role, t.businessName
+            FROM user u
+            LEFT JOIN tenant t ON u.tenantId = t.id
+            WHERE u.email IS NOT NULL AND u.email != ''
+        `;
+        const params = [];
+
+        if (cleanQuery) {
+            const like = `%${cleanQuery}%`;
+            sql += ` AND (u.email LIKE ? OR u.name LIKE ? OR t.businessName LIKE ?)`;
+            params.push(like, like, like);
+        }
+
+        sql += ` ORDER BY (u.role = 'PROVIDER') DESC, t.businessName ASC, u.name ASC LIMIT 200`;
+
+        const [users] = await db.query(sql, params);
 
         res.status(200).json({ 
             success: true, 
