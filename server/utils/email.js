@@ -177,7 +177,6 @@ const renderEmailLayout = ({ title, preheader = '', bodyHtml, ctaText, ctaUrl, f
                     </table>`
                         : ''
                     }
-                    ${footerNote ? `<p style="margin:18px 0 0 0; font-family:${SANS}; font-size:13px; line-height:20px; color:${C.muted};">${footerNote}</p>` : ''}
                   </td>
                 </tr>
 
@@ -204,7 +203,7 @@ const renderEmailLayout = ({ title, preheader = '', bodyHtml, ctaText, ctaUrl, f
               </p>
               <p style="margin:0 0 10px 0; font-family:${SANS}; font-size:11px; line-height:17px; color:${C.footerText}; text-align:left;">
                 You are receiving this email because you have an account on hlynk. Need support? Email us at
-                <a href="mailto:info@hlynk.co.ke" style="color:#CDE6DB;">info@hlynk.co.ke</a> or call support.
+                <a href="mailto:info@hlynk.co.ke" style="color:#CDE6DB;">info@hlynk.co.ke</a> or call <a href="tel:+254750954980">0750954980</a>.
               </p>
               <p style="margin:0; font-family:${SANS}; font-size:11px; line-height:17px; color:${C.footerText}; text-align:left;">
                 &copy; ${currentYear} hlynk. All rights reserved.
