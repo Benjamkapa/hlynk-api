@@ -244,7 +244,7 @@ export const sendEmail = async ({ to, subject, html, text }) => {
     };
 
     const info = await client.sendMail(mailOptions);
-    console.log(`✉️ [Email] Sent successfully to ${to}. MessageId: ${info.messageId}`);
+    console.log(`✉️ [Email] Sent successfully to ${to}`);
     return { success: true, messageId: info.messageId };
   } catch (error) {
     console.error(`🔴 [Email] Failed sending email to ${to}:`, error.message);
