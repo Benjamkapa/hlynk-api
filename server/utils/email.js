@@ -99,9 +99,6 @@ const badge = (tone, text) =>
     ? `<p style="margin:0 0 6px 0; font-family:${SANS}; font-size:13px; line-height:18px; font-weight:600; color:${BADGE_TONES[tone]};">${text}</p>`
     : '';
 
-const heading = (text) =>
-  `<h2 style="margin:0 0 22px 0; font-family:${SANS}; font-size:24px; line-height:32px; font-weight:400; color:${C.deep};">${text}</h2>`;
-
 // Simple divided list
 const steps = (items) =>
   `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0 8px 0;">${items
@@ -118,8 +115,11 @@ const box = (innerHtml) =>
  * Common base wrapper for hlynk branded emails.
  * Same signature as before: { title, bodyHtml, ctaText, ctaUrl, footerNote }
  */
-const renderEmailLayout = ({ title, bodyHtml, ctaText, ctaUrl, footerNote }) => {
+const renderEmailLayout = ({ title, preheader = '', bodyHtml, ctaText, ctaUrl, footerNote }) => {
   const currentYear = new Date().getFullYear();
+  const preheaderHtml = preheader
+    ? `<div style="display:none; max-height:0; overflow:hidden; opacity:0; mso-hide:all; font-size:1px; line-height:1px; color:${C.bg};">${esc(preheader)}</div>`
+    : '';
   return `
 <!DOCTYPE html>
 <html lang="en" xmlns="http://www.w3.org/1999/xhtml">
@@ -144,11 +144,7 @@ const renderEmailLayout = ({ title, bodyHtml, ctaText, ctaUrl, footerNote }) => 
   </style>
 </head>
 <body style="margin:0; padding:0; background-color:${C.bg};">
-  <div style="display:none; max-height:0; overflow:hidden; opacity:0; mso-hide:all; font-size:1px; line-height:1px; color:${C.bg};">
-    ${esc(title)}
-    &#8199;&#847; &#8199;&#847; &#8199;&#847; &#8199;&#847; &#8199;&#847; &#8199;&#847;
-  </div>
-
+  ${preheaderHtml}
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${C.bg}">
     <tr>
       <td class="outer" align="center" style="padding:32px 12px;">
@@ -266,7 +262,6 @@ export const sendWelcomeEmail = async ({ email, name, businessName }) => {
 
   const bodyHtml = `
     ${badge('success', 'Welcome aboard')}
-    ${heading('Your hlynk dashboard is ready')}
     <p>${greeting}</p>
     <p>Thank you for joining us${bizTitle}. Here is where we suggest you begin:</p>
     ${steps([
@@ -301,7 +296,6 @@ export const sendSubscriptionReminderEmail = async ({ email, name, businessName,
 
   const bodyHtml = `
     ${badge('warning', `Expires in ${daysRemaining} day${daysRemaining !== 1 ? 's' : ''}`)}
-    ${heading('Your subscription is expiring soon')}
     <p>${greeting}</p>
     <p>This is a quick reminder that your <strong>${esc(planName)}</strong> plan for <strong>${esc(businessName || 'your business')}</strong> is scheduled to expire on <strong>${dateStr}</strong> (${daysRemaining} day${daysRemaining !== 1 ? 's' : ''} left).</p>
     <p>To avoid any disruption to your sales, barcode scanning, M-Pesa reconciliation and receipts, please renew before the expiry date.</p>
@@ -337,13 +331,9 @@ export const sendSubscriptionExpiredEmail = async ({ email, name, businessName, 
 
   const badgeTone = isGracePeriod ? 'urgent' : 'warning';
   const badgeText = isGracePeriod ? `Expired ${daysExpired} day${daysExpired !== 1 ? 's' : ''} ago` : 'Plan expired today';
-  const headline = isGracePeriod
-    ? `Action required: your account expired ${daysExpired} day${daysExpired !== 1 ? 's' : ''} ago`
-    : 'Your subscription has ended';
 
   const bodyHtml = `
     ${badge(badgeTone, badgeText)}
-    ${heading(headline)}
     <p>${greeting}</p>
     <p>The subscription for <strong>${esc(businessName || 'your business')}</strong> (${esc(planName)}) ${isGracePeriod ? `expired ${daysExpired} day${daysExpired !== 1 ? 's' : ''} ago` : 'has expired today'}.</p>
     <p>Your business records, inventory and past sales receipts are securely saved. Active selling and multi-device access are paused until you renew.</p>
@@ -385,7 +375,6 @@ export const sendBroadcastEmail = async ({ email, name, businessName, title = ''
 
   const bodyHtml = `
     ${badge(badgeTone, 'Announcement')}
-    ${cleanTitle ? heading(esc(cleanTitle)) : ''}
     <p>${greeting}</p>
     <p>${formattedMsg}</p>
   `;
@@ -420,7 +409,6 @@ export const sendAccountDeletedEmail = async ({ email, name, businessName, delet
 
   const bodyHtml = `
     ${badge('warning', 'Account removed')}
-    ${heading('Sorry to see you go')}
     <p>${greeting}</p>
     <p>${reasonText}</p>
     <p>Thank you for spending time with hlynk. If this was done in error, or if you ever decide to return and set up a fresh workspace, our team is always happy to help.</p>
@@ -450,7 +438,6 @@ export const sendInactivityReminderEmail = async ({ email, name, businessName, d
 
   const bodyHtml = `
     ${badge('success', 'We miss you')}
-    ${heading('Your biashara misses you')}
     <p>${greeting}</p>
     <p>It has been <strong>${daysInactive} days</strong> since we last saw activity on <strong>${bizName}</strong>.</p>
     <p>Your inventory, sales tools and M-Pesa tracking are right where you left them, ready whenever you are.</p>
